@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "Bili 缓冲站",
+  "description": "预先缓存当前哔哩哔哩视频，并在原网页播放器中优先使用本地缓存。",
+  "version": "1.7.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvKANgY0M5agZGFV1Jyh6XY16qlbKPpUMf50fWW8qmD+a6O8m8P8QuJ2RtM1HNY4YCzQgx+XXU8rLRZgvsx4uvRh/OfW2uC/rtmMpHoO98izaNjAmzpHMQl1WZB7sqNwBSDdISCWIoCvbwRMk6s9YnCYzJQ686rvviTwHOmIgvXO/fGqR+8431KwQP7RAkNfc02YKcvFx3YxSYimuS2IJIQLNBR60+OLHv1k5PglQPzcQp4TsuenwoXzGc32is9xPOMrbaVj4czCXZBHxUDt3my6LgP6k0sUfMT0KTDEmlgHoWSiwDChvuj/4S9EZ2DMwwYxoz0g9rdjsH9jblH40iQIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "activeTab",
+    "cookies",
+    "declarativeNetRequestWithHostAccess",
+    "downloads",
+    "offscreen",
+    "storage",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "https://*.bilibili.com/*",
+    "https://*.bilivideo.com/*",
+    "https://*.bilivideo.cn/*",
+    "https://*.hdslb.com/*",
+    "https://*.akamaized.net/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "bili_cdn_headers",
+        "enabled": true,
+        "path": "rules/cdn-headers.json"
+      }
+    ]
+  },
+  "action": {
+    "default_title": "Bili 缓冲站",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "assets/icon-16.png",
+      "32": "assets/icon-32.png",
+      "48": "assets/icon-48.png",
+      "128": "assets/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "assets/icon-16.png",
+    "32": "assets/icon-32.png",
+    "48": "assets/icon-48.png",
+    "128": "assets/icon-128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.bilibili.com/video/*",
+        "https://www.bilibili.com/list/*"
+      ],
+      "js": ["src/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

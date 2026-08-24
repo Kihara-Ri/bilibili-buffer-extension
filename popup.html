@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bili 缓冲站</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="masthead">
+        <div class="brand-lockup">
+          <img class="brand-icon" src="assets/icon-48.png" alt="">
+          <div>
+            <p class="eyebrow">BILI BUFFER</p>
+            <h1>Bili 缓冲站</h1>
+          </div>
+        </div>
+      </header>
+
+      <section class="current-video" aria-labelledby="current-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">当前页面</p>
+            <h2 id="current-heading">正在识别视频</h2>
+          </div>
+          <span id="page-mark" class="page-mark" hidden></span>
+        </div>
+        <p id="current-detail" class="current-detail">
+          <a id="current-owner" class="current-owner" href="#" hidden></a>
+          <span id="current-detail-separator" hidden> · </span>
+          <span id="current-detail-text">请稍候…</span>
+        </p>
+
+        <div id="quality-row" class="quality-row" hidden>
+          <span class="quality-label">缓存画质</span>
+          <div id="quality-picker" class="quality-picker">
+            <button
+              id="quality-trigger"
+              class="quality-trigger"
+              type="button"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              aria-describedby="auth-note"
+              popovertarget="quality-menu"
+              disabled
+            >
+              <span id="quality-trigger-label" class="quality-trigger-label">正在读取可用画质…</span>
+              <svg class="quality-caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div id="quality-menu" class="quality-menu" popover role="listbox" aria-label="缓存画质"></div>
+          </div>
+        </div>
+        <p id="auth-note" class="auth-note" hidden></p>
+
+        <button id="cache-button" class="cache-button" type="button" disabled aria-describedby="action-hint">
+          <span id="button-progress" class="button-progress" aria-hidden="true"></span>
+          <span class="button-content">
+            <span id="button-label" class="button-label">正在读取页面</span>
+            <span id="button-speed" class="button-speed"></span>
+          </span>
+        </button>
+        <p id="action-hint" class="action-hint" role="status" aria-live="polite">插件只会缓存当前分 P。</p>
+      </section>
+
+      <section class="library" aria-labelledby="library-heading">
+        <div class="section-heading library-heading">
+          <div>
+            <p class="eyebrow">本地片库</p>
+            <h2 id="library-heading">已经缓存</h2>
+          </div>
+          <span id="library-summary" class="library-summary">0 个</span>
+        </div>
+        <div id="video-list" class="video-list" aria-live="polite"></div>
+      </section>
+
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="src/popup.js"></script>
+  </body>
+</html>

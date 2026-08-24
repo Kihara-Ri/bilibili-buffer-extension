@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="utf-8"><title>Popup 首屏恢复测试</title></head>
+  <body>
+    <main>
+      <h2 id="current-heading">正在识别视频</h2>
+      <a id="current-owner" href="#" hidden></a>
+      <span id="current-detail-separator" hidden></span>
+      <span id="current-detail-text">请稍候…</span>
+      <span id="page-mark" hidden></span>
+      <div id="quality-row" hidden>
+        <button id="quality-trigger" type="button" popovertarget="quality-menu" disabled>
+          <span id="quality-trigger-label">正在读取可用画质…</span>
+        </button>
+        <div id="quality-menu" popover></div>
+      </div>
+      <p id="auth-note" hidden></p>
+      <button id="cache-button" type="button" disabled>
+        <span id="button-progress"></span>
+        <span id="button-label">正在读取页面</span>
+        <span id="button-speed"></span>
+      </button>
+      <p id="action-hint"></p>
+      <span id="library-summary"></span>
+      <div id="video-list"></div>
+      <div id="toast"></div>
+    </main>
+    <pre id="result">running</pre>
+    <script type="module" src="./popup-instant-integration.mjs"></script>
+  </body>
+</html>

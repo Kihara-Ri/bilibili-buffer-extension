@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Bili 缓冲站图标</title>
+  <desc id="desc">透明背景上的圆角蓝色电视，屏幕内有粉色缓存轨道和播放三角</desc>
+  <path d="M43 25 54 37M85 25 74 37" fill="none" stroke="#176b87" stroke-width="7" stroke-linecap="round"/>
+  <rect x="18" y="34" width="92" height="72" rx="25" fill="#13a9df"/>
+  <rect x="27" y="43" width="74" height="54" rx="17" fill="#f7fcff"/>
+  <path d="m56 56 22 14-22 14Z" fill="#fb7299"/>
+  <path d="M40 91h48" fill="none" stroke="#cceef9" stroke-width="5" stroke-linecap="round"/>
+  <path d="M40 91h31" fill="none" stroke="#fb7299" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="90" cy="91" r="5" fill="#176b87"/>
+  <path d="M39 107v2M89 107v2" fill="none" stroke="#176b87" stroke-width="7" stroke-linecap="round"/>
+</svg>

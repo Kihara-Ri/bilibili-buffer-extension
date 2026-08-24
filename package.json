@@ -1,0 +1,11 @@
+{
+  "name": "bili-buffer-extension",
+  "version": "1.7.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev-reload-server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check src/background.js && node --check src/offscreen.js && node --check src/range-downloader.js && node --check src/popup-snapshot.js && node --check src/popup.js && node --check src/content.js && node --check src/dev-reload.js && node --check scripts/dev-reload-server.mjs && node --check scripts/benchmark-range-download.mjs && node --check tests/offscreen-integration.mjs && node --check tests/background-popup-integration.mjs && node --check tests/popup-instant-integration.mjs"
+  }
+}

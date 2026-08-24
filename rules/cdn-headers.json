@@ -1,0 +1,29 @@
+[
+  {
+    "id": 1,
+    "priority": 100,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        {
+          "header": "Referer",
+          "operation": "set",
+          "value": "https://www.bilibili.com/"
+        }
+      ]
+    },
+    "condition": {
+      "initiatorDomains": [
+        "ppoagkhgdcfchiodhgadpenibndbnhcj"
+      ],
+      "requestDomains": [
+        "bilivideo.com",
+        "bilivideo.cn",
+        "akamaized.net"
+      ],
+      "resourceTypes": [
+        "xmlhttprequest"
+      ]
+    }
+  }
+]
