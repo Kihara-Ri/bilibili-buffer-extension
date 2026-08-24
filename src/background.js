@@ -16,7 +16,7 @@ import {
   toPublicError
 } from "./utils.js";
 import { listVideos, putVideo } from "./db.js";
-import { startDevReload } from "./dev-reload.js";
+import { startDevReloadBackground } from "./dev-reload.js";
 import {
   choosePopupCodec,
   choosePopupQuality,
@@ -43,7 +43,7 @@ let creatingOffscreen;
 let popupSnapshotQueue = Promise.resolve();
 const popupSnapshotMemory = new Map();
 
-startDevReload();
+if (chrome.runtime.id) startDevReloadBackground(ensureOffscreenDocument);
 void restoreActiveDownloads();
 chrome.cookies.onChanged.addListener((changeInfo) => {
   const cookie = changeInfo?.cookie;

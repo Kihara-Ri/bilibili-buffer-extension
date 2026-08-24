@@ -17,12 +17,22 @@ await rm(path.join(unpacked, "src", "dev-reload.js"), { force: true });
 const backgroundPath = path.join(unpacked, "src", "background.js");
 const background = await readFile(backgroundPath, "utf8");
 const releaseBackground = background
-  .replace('import { startDevReload } from "./dev-reload.js";\n', "")
-  .replace("\nstartDevReload();\n", "\n");
-if (releaseBackground === background || releaseBackground.includes("startDevReload")) {
+  .replace('import { startDevReloadBackground } from "./dev-reload.js";\n', "")
+  .replace("\nif (chrome.runtime.id) startDevReloadBackground(ensureOffscreenDocument);\n", "\n");
+if (releaseBackground === background || releaseBackground.includes("startDevReloadBackground")) {
   throw new Error("无法从发布构建中剥离开发态热更新入口");
 }
 await writeFile(backgroundPath, releaseBackground);
+
+const offscreenPath = path.join(unpacked, "src", "offscreen.js");
+const offscreen = await readFile(offscreenPath, "utf8");
+const releaseOffscreen = offscreen
+  .replace('import { startDevReloadPolling } from "./dev-reload.js";\n', "")
+  .replace("\nif (chrome.runtime.id) startDevReloadPolling();\n", "\n");
+if (releaseOffscreen === offscreen || releaseOffscreen.includes("startDevReloadPolling")) {
+  throw new Error("无法从发布构建中剥离 Offscreen 热更新轮询器");
+}
+await writeFile(offscreenPath, releaseOffscreen);
 
 const manifestPath = path.join(unpacked, "manifest.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));

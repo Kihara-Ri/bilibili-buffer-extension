@@ -33,7 +33,9 @@
 npm run dev
 ```
 
-热更新服务会监听扩展的 JS、JSON、HTML、CSS 与图标文件。扩展通过仅绑定本机的开发端点检查修订号，变化后约 1 秒内执行 `chrome.runtime.reload()`。固定的 manifest 公钥保证扩展 ID 稳定；原位重载不会清除 IndexedDB，已经缓存的视频会保留，未完成下载会从最后一个已持久化分块自动续传。
+热更新服务会监听扩展的 JS、JSON、HTML、CSS 与图标文件。开发版由不会随 MV3 Service Worker 空闲休眠的 Offscreen Document 轮询仅绑定本机的修订端点；变化后约 1 秒内通知后台，把待刷新标记写入可跨扩展重载保留的 `chrome.storage.local`，再执行 `chrome.runtime.reload()`。新后台消费标记后只刷新已经打开的 B 站视频/列表页，使 `document_start` 的 MAIN/ISOLATED 脚本也自动更新。固定的 manifest 公钥保证扩展 ID 稳定；原位重载和页面刷新不会清除 IndexedDB，已经缓存的视频会保留，未完成下载会从最后一个已持久化分块自动续传。开发时正在播放的 B 站页面会被刷新，这是取得真正内容脚本热更新所必需的行为。
+
+如果 Chrome 当前加载的是修复前的旧热更新器，需要在 `chrome://extensions` 对本扩展手动点一次“重新加载”，让新版 Offscreen 监听器接管；这是升级热更新器本身的一次性引导，之后修改工作区文件会自动重载扩展和 B 站页面，不需要每次再点。
 
 不要删除 manifest 中的 `key`，也不要手动清除扩展存储；这两项分别关系到扩展身份和缓存数据连续性。
 

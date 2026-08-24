@@ -29,6 +29,7 @@ import {
   downloadByteRanges,
   rankRangeCandidates
 } from "./range-downloader.js";
+import { startDevReloadPolling } from "./dev-reload.js";
 
 const CHUNK_SIZE = 4 * 1024 * 1024;
 const PROGRESS_WRITE_INTERVAL = 450;
@@ -36,6 +37,7 @@ const META_WRITE_INTERVAL = 1500;
 const activeDownloads = new Map();
 const playbackUrls = new Map();
 
+if (chrome.runtime.id) startDevReloadPolling();
 void initialize();
 
 async function initialize() {
