@@ -6,7 +6,7 @@
   window[NS] = true;
 
   const markObserverReady = () => {
-    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.0.0";
+    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.1.0";
   };
   markObserverReady();
   if (!document.documentElement) document.addEventListener("DOMContentLoaded", markObserverReady, { once: true });
@@ -16,6 +16,8 @@
   const ESTIMATOR_BACKUP_KEY = "__bili_buffer_estimator_backup_v1";
   const MEDIA_RE = /^https?:\/\/[^/]*(?:bilivideo\.com|bilivideo\.cn|akamaized\.net)\//i;
   const MB = 1024 * 1024;
+  const PREHEAT_LAYER_CLASS = "bili-buffer-preheat-layer";
+  const PREHEAT_STYLE_ID = "bili-buffer-preheat-progress-style";
   const DEFAULTS = {
     mode: "auto",
     slowTtfbMs: 800,
@@ -29,6 +31,7 @@
   const cfg = { ...DEFAULTS };
   const tracks = new Map();
   const observedVideos = new WeakSet();
+  let lastPageKey = currentPageKey();
   const stats = {
     requests: 0,
     slowRequests: 0,
@@ -82,6 +85,18 @@
 
   function hostFor(input) {
     try { return new URL(input, location.href).hostname; } catch { return ""; }
+  }
+
+  function currentPageKey() {
+    try {
+      const pageUrl = new URL(location.href);
+      const pathVideoId = /\/video\/(BV[0-9A-Za-z]+|av\d+)/i.exec(pageUrl.pathname)?.[1];
+      const videoId = pathVideoId || pageUrl.searchParams.get("bvid") || pageUrl.searchParams.get("oid") || pageUrl.pathname;
+      const page = Math.max(1, Number.parseInt(pageUrl.searchParams.get("p") || "1", 10) || 1);
+      return `${String(videoId).toUpperCase()}:p${page}`;
+    } catch {
+      return String(location.pathname || location.href);
+    }
   }
 
   function pathFor(input) {
@@ -150,14 +165,19 @@
     const key = `${host}|${path}`;
     let track = tracks.get(key);
     if (!track) {
+      for (const existing of tracks.values()) {
+        if (existing.path === path) existing.active = false;
+      }
       track = {
         key,
         path,
         url,
         host,
+        active: true,
         size: 0,
         anchor: 0,
         covered: [],
+        prefetchedRanges: [],
         inflight: [],
         cold: false,
         prefetchedBytes: 0,
@@ -168,8 +188,12 @@
       };
       tracks.set(key, track);
     } else {
+      for (const existing of tracks.values()) {
+        if (existing !== track && existing.path === path) existing.active = false;
+      }
       track.url = url;
       track.host = hostFor(url) || track.host;
+      track.active = true;
       track.lastSeen = Date.now();
     }
     return track;
@@ -421,7 +445,9 @@
       const expected = contentRange.end - contentRange.start + 1;
       if (bytes !== expected) throw new Error("预热响应提前结束");
       addRange(track.covered, start, start + bytes);
+      addRange(track.prefetchedRanges, start, start + bytes);
       track.prefetchedBytes += bytes;
+      track.lastSeen = Date.now();
       stats.prefetchChunks += 1;
       stats.prefetchBytes += bytes;
       host.prefetchSuccesses += 1;
@@ -430,6 +456,7 @@
       const elapsed = performance.now() - startedAt;
       if (elapsed < 12000 && host.prefetchConcurrency < cfg.maxConcurrency) host.prefetchConcurrency += 1;
       if (elapsed < 8000) host.chunkBytes = MB;
+      renderPreheatProgress();
     } catch {
       stats.prefetchErrors += 1;
       host.prefetchErrors += 1;
@@ -588,6 +615,84 @@
     };
   }
 
+  function normalizedPrefetchedRanges() {
+    const normalized = [];
+    for (const track of tracks.values()) {
+      if (track.active === false || !(track.size > 0) || !track.prefetchedRanges?.length) continue;
+      for (const [start, end] of track.prefetchedRanges) {
+        const left = Math.max(0, Math.min(1, start / track.size));
+        const right = Math.max(0, Math.min(1, end / track.size));
+        if (right > left) addRange(normalized, left, right);
+      }
+    }
+    return normalized;
+  }
+
+  function ensurePreheatProgressStyle() {
+    if (document.getElementById?.(PREHEAT_STYLE_ID)) return;
+    const style = document.createElement?.("style");
+    if (!style) return;
+    style.id = PREHEAT_STYLE_ID;
+    style.textContent = `
+      .${PREHEAT_LAYER_CLASS} {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        pointer-events: none;
+      }
+      .${PREHEAT_LAYER_CLASS} > span {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        min-width: 2px;
+        background: oklch(0.72 0.16 238 / 0.96);
+        box-shadow: inset 0 1px 0 oklch(0.91 0.05 238 / 0.72);
+      }
+    `;
+    (document.head || document.documentElement)?.append(style);
+  }
+
+  function renderPreheatProgress() {
+    ensurePreheatProgressStyle();
+    const ranges = normalizedPrefetchedRanges();
+    const rangeKey = ranges.map(([start, end]) => `${start.toFixed(6)}-${end.toFixed(6)}`).join(",");
+    const schedules = document.querySelectorAll([
+      ".bpx-player-progress > .bpx-player-progress-schedule-wrap > .bpx-player-progress-schedule",
+      ".bpx-player-shadow-progress-schedule-wrap > .bpx-player-progress-schedule"
+    ].join(","));
+    for (const schedule of schedules) {
+      let layer = [...schedule.children].find((child) => child.classList?.contains(PREHEAT_LAYER_CLASS));
+      if (!ranges.length) {
+        layer?.remove();
+        continue;
+      }
+      if (!layer) {
+        layer = document.createElement("div");
+        layer.className = PREHEAT_LAYER_CLASS;
+        layer.setAttribute("aria-hidden", "true");
+        schedule.append(layer);
+      }
+      if (layer.dataset.rangeKey === rangeKey) continue;
+      const segments = ranges.map(([start, end]) => {
+        const segment = document.createElement("span");
+        segment.style.left = `${start * 100}%`;
+        segment.style.width = `${(end - start) * 100}%`;
+        return segment;
+      });
+      layer.replaceChildren(...segments);
+      layer.dataset.rangeKey = rangeKey;
+    }
+  }
+
+  function resetTracksAfterNavigation() {
+    const nextPageKey = currentPageKey();
+    if (nextPageKey === lastPageKey) return false;
+    lastPageKey = nextPageKey;
+    tracks.clear();
+    renderPreheatProgress();
+    return true;
+  }
+
   window.addEventListener("message", (event) => {
     if (event.source !== window) return;
     const message = event.data;
@@ -627,6 +732,9 @@
     queueEstimatorCleanup,
     shouldPrefetch,
     pickJob,
+    normalizedPrefetchedRanges,
+    renderPreheatProgress,
+    resetTracksAfterNavigation,
     setPlayedSec(value) { stats.playedSec = Number(value) || 0; },
     publicStats
   };
@@ -637,9 +745,11 @@
   scanVideos();
   new MutationObserver(scanVideos).observe(document, { childList: true, subtree: true });
   setInterval(() => {
+    resetTracksAfterNavigation();
     if (anyVideoPlaying()) stats.playedSec += 1;
     scanVideos();
   }, 1000);
+  setInterval(renderPreheatProgress, 750);
   setInterval(() => {
     if (!["auto", "always"].includes(cfg.mode) || document.hidden || currentBufferAhead() < cfg.minBufferAheadSec) return;
     while (stats.prefetching < cfg.maxConcurrency) {

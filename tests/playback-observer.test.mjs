@@ -21,6 +21,32 @@ test("同一路径切换 CDN host 时分别记录热区间", () => {
   assert.equal(first, renewed);
   assert.notEqual(first, otherEdge);
   assert.equal(internals.tracks.size, 2);
+  assert.equal(first.active, false);
+  assert.equal(otherEdge.active, true);
+});
+
+test("插件预热字节区间会映射并合并为进度条比例", () => {
+  const { internals } = loadObserver();
+  const video = internals.trackFor("https://a.bilivideo.com/path/video.m4s");
+  video.size = 1000;
+  internals.addRange(video.prefetchedRanges, 100, 300);
+  const audio = internals.trackFor("https://a.bilivideo.com/path/audio.m4s");
+  audio.size = 100;
+  internals.addRange(audio.prefetchedRanges, 20, 40);
+
+  assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), [[0.1, 0.4]]);
+});
+
+test("追踪参数变化保留预热色段，切换分 P 才清空", () => {
+  const { internals, location } = loadObserver();
+  internals.trackFor("https://a.bilivideo.com/path/video.m4s");
+  location.href = "https://www.bilibili.com/video/BV1test/?vd_source=changed";
+  assert.equal(internals.resetTracksAfterNavigation(), false);
+  assert.equal(internals.tracks.size, 1);
+
+  location.href = "https://www.bilibili.com/video/BV1test/?p=2";
+  assert.equal(internals.resetTracksAfterNavigation(), true);
+  assert.equal(internals.tracks.size, 0);
 });
 
 test("自动预热需同时满足播放时长与冷区间条件", () => {
@@ -130,11 +156,12 @@ function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) 
     postMessage() {}
   };
   window.window = window;
+  const location = { href: "https://www.bilibili.com/video/BV1test/" };
   const context = vm.createContext({
     window,
     document,
     localStorage,
-    location: { href: "https://www.bilibili.com/video/BV1test/" },
+    location,
     URL,
     Headers,
     AbortController,
@@ -155,6 +182,7 @@ function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) 
   return {
     internals: window.__biliBufferPlaybackAssistInternals,
     localStorage,
+    location,
     observedTargets,
     eventListeners
   };

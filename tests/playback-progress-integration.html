@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>预热进度条集成测试</title>
+    <style>
+      body { background: #202124; color: #eef4f8; font: 14px sans-serif; padding: 24px; }
+      .bpx-player-progress,
+      .bpx-player-shadow-progress-area { position: relative; width: 600px; height: 4px; }
+      .bpx-player-progress-schedule-wrap,
+      .bpx-player-shadow-progress-schedule-wrap,
+      .bpx-player-progress-schedule { position: absolute; inset: 0; overflow: hidden; }
+      .bpx-player-progress-schedule { background: rgba(255, 255, 255, 0.2); }
+      .bpx-player-progress-schedule-buffer { position: absolute; inset: 0; background: rgba(255, 255, 255, 0.3); transform: scaleX(0.7); transform-origin: left; }
+      .bpx-player-progress-schedule-current { position: absolute; inset: 0; z-index: 99; background: #ff6699; transform: scaleX(0.08); transform-origin: left; }
+      .bpx-player-shadow-progress-area { height: 2px; margin-top: 24px; }
+      #result { margin-top: 24px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <div class="bpx-player-progress">
+      <div class="bpx-player-progress-schedule-wrap">
+        <div class="bpx-player-progress-schedule">
+          <div class="bpx-player-progress-schedule-buffer"></div>
+          <div class="bpx-player-progress-schedule-current"></div>
+        </div>
+      </div>
+    </div>
+    <div class="bpx-player-shadow-progress-area">
+      <div class="bpx-player-shadow-progress-schedule-wrap">
+        <div class="bpx-player-progress-schedule"></div>
+      </div>
+    </div>
+    <pre id="result">running</pre>
+    <script type="module" src="./playback-progress-integration.mjs"></script>
+  </body>
+</html>
