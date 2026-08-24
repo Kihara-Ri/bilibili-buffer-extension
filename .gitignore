@@ -5,3 +5,4 @@ _metadata/
 # Local development output
 *.log
 coverage/
+dist/

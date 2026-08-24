@@ -51,6 +51,10 @@
             <div id="quality-menu" class="quality-menu" popover role="listbox" aria-label="缓存画质"></div>
           </div>
         </div>
+        <div id="codec-row" class="codec-row" hidden>
+          <span class="quality-label">视频编码</span>
+          <div id="codec-options" class="choice-strip" role="radiogroup" aria-label="视频编码"></div>
+        </div>
         <p id="auth-note" class="auth-note" hidden></p>
 
         <button id="cache-button" class="cache-button" type="button" disabled aria-describedby="action-hint">
@@ -61,6 +65,34 @@
           </span>
         </button>
         <p id="action-hint" class="action-hint" role="status" aria-live="polite">插件只会缓存当前分 P。</p>
+      </section>
+
+      <section id="assist-panel" class="assist-panel" aria-labelledby="assist-heading" hidden>
+        <div class="assist-heading-row">
+          <div>
+            <p class="eyebrow">播放辅助</p>
+            <h2 id="assist-heading">CDN 状态</h2>
+          </div>
+          <span id="assist-status" class="assist-status">等待页面数据</span>
+        </div>
+        <div id="assist-modes" class="choice-strip assist-modes" role="radiogroup" aria-label="播放辅助模式">
+          <button type="button" data-assist-mode="observe" role="radio">观察</button>
+          <button type="button" data-assist-mode="auto" role="radio">自动预热</button>
+          <button type="button" data-assist-mode="off" role="radio">关闭</button>
+        </div>
+        <div class="assist-metrics" aria-live="polite">
+          <span><small>TTFB P95</small><strong id="assist-ttfb">–</strong></span>
+          <span><small>慢请求</small><strong id="assist-slow">0</strong></span>
+          <span><small>缓冲</small><strong id="assist-buffer">–</strong></span>
+          <span><small>预热</small><strong id="assist-prefetch">0 MB</strong></span>
+        </div>
+        <div id="estimator-row" class="estimator-row" hidden>
+          <span id="estimator-note">播放器带宽估计可能异常</span>
+          <div>
+            <button id="estimator-clear" type="button">清理</button>
+            <button id="estimator-restore" type="button">恢复</button>
+          </div>
+        </div>
       </section>
 
       <section class="library" aria-labelledby="library-heading">

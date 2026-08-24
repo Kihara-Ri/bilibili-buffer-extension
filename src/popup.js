@@ -1,13 +1,16 @@
 import {
+  CODEC_LABELS,
   formatBytes,
   formatDuration,
   formatSpeed,
   getVideoPageId,
+  isVideoCodecSelectionMatch,
   makeBiliSpaceUrl,
+  normalizeCodecPreference,
   normalizeHttpUrl,
   shouldShowInLibrary
 } from "./utils.js";
-import { choosePopupQuality } from "./popup-snapshot.js";
+import { choosePopupCodec, choosePopupQuality } from "./popup-snapshot.js";
 
 const elements = {
   currentHeading: document.querySelector("#current-heading"),
@@ -20,12 +23,25 @@ const elements = {
   qualityTrigger: document.querySelector("#quality-trigger"),
   qualityTriggerLabel: document.querySelector("#quality-trigger-label"),
   qualityMenu: document.querySelector("#quality-menu"),
+  codecRow: document.querySelector("#codec-row"),
+  codecOptions: document.querySelector("#codec-options"),
   authNote: document.querySelector("#auth-note"),
   cacheButton: document.querySelector("#cache-button"),
   buttonProgress: document.querySelector("#button-progress"),
   buttonLabel: document.querySelector("#button-label"),
   buttonSpeed: document.querySelector("#button-speed"),
   actionHint: document.querySelector("#action-hint"),
+  assistPanel: document.querySelector("#assist-panel"),
+  assistStatus: document.querySelector("#assist-status"),
+  assistModes: document.querySelector("#assist-modes"),
+  assistTtfb: document.querySelector("#assist-ttfb"),
+  assistSlow: document.querySelector("#assist-slow"),
+  assistBuffer: document.querySelector("#assist-buffer"),
+  assistPrefetch: document.querySelector("#assist-prefetch"),
+  estimatorRow: document.querySelector("#estimator-row"),
+  estimatorNote: document.querySelector("#estimator-note"),
+  estimatorClear: document.querySelector("#estimator-clear"),
+  estimatorRestore: document.querySelector("#estimator-restore"),
   videoList: document.querySelector("#video-list"),
   librarySummary: document.querySelector("#library-summary"),
   toast: document.querySelector("#toast")
@@ -36,12 +52,18 @@ const state = {
   pageInfo: null,
   qualityOptions: [],
   selectedQuality: 0,
+  codecOptionsByQuality: {},
+  selectedCodec: "auto",
   qualitiesLoading: false,
   qualityError: "",
   auth: null,
   videos: [],
   qualityMenuSignature: "",
   focusQualityOptionOnOpen: false,
+  assistConfig: null,
+  assistStats: null,
+  assistCommandResult: null,
+  assistTimer: null,
   refreshTimer: null,
   toastTimer: null
 };
@@ -52,6 +74,10 @@ elements.qualityMenu.addEventListener("click", selectQualityFromMenu);
 elements.qualityMenu.addEventListener("keydown", navigateQualityMenu);
 elements.qualityMenu.addEventListener("toggle", handleQualityMenuToggle);
 elements.qualityTrigger.addEventListener("keydown", openQualityMenuFromKeyboard);
+elements.codecOptions.addEventListener("click", selectCodec);
+elements.assistModes.addEventListener("click", selectAssistMode);
+elements.estimatorClear.addEventListener("click", () => runAssistCommand("clearEstimator"));
+elements.estimatorRestore.addEventListener("click", () => runAssistCommand("restoreEstimator"));
 window.addEventListener("resize", () => {
   if (isQualityMenuOpen()) positionQualityMenu();
 });
@@ -75,6 +101,7 @@ void initialize();
 async function initialize() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   state.tab = tabs[0] || null;
+  void refreshAssistState();
   const libraryPromise = refreshLibrary();
   const restored = await restorePopupSnapshot();
   if (!restored) {
@@ -84,7 +111,11 @@ async function initialize() {
   }
   await libraryPromise;
   state.refreshTimer = setInterval(refreshLibrary, 700);
-  window.addEventListener("pagehide", () => clearInterval(state.refreshTimer), { once: true });
+  state.assistTimer = setInterval(refreshAssistState, 1000);
+  window.addEventListener("pagehide", () => {
+    clearInterval(state.refreshTimer);
+    clearInterval(state.assistTimer);
+  }, { once: true });
 }
 
 async function restorePopupSnapshot() {
@@ -131,6 +162,7 @@ async function refreshPopupData({ silent = false } = {}) {
 function applyPopupSnapshot(snapshot) {
   state.pageInfo = snapshot.pageInfo || null;
   state.qualityOptions = Array.isArray(snapshot.qualities) ? snapshot.qualities : [];
+  state.codecOptionsByQuality = snapshot.codecOptionsByQuality || {};
   state.auth = snapshot.auth || null;
   state.qualityError = "";
   state.qualitiesLoading = false;
@@ -142,6 +174,14 @@ function applyPopupSnapshot(snapshot) {
     snapshot.selectedQuality,
     snapshot.defaultQuality
   );
+  const activeCodec = normalizeCodecPreference(active?.requestedCodec, active?.codec || "");
+  state.selectedCodec = choosePopupCodec(
+    getCodecOptions(state.selectedQuality),
+    activeCodec,
+    snapshot.selectedCodec,
+    snapshot.defaultCodec,
+    "auto"
+  ) || "auto";
   renderCurrent();
 }
 
@@ -160,7 +200,15 @@ async function refreshLibrary() {
 function syncSelectedQualityWithActiveDownload() {
   const active = getCurrentPageVideos().find((video) => video.status === "downloading");
   const activeQuality = Number(active?.requestedQuality || active?.quality) || 0;
-  if (activeQuality) state.selectedQuality = activeQuality;
+  if (activeQuality) {
+    state.selectedQuality = activeQuality;
+    state.selectedCodec = choosePopupCodec(
+      getCodecOptions(activeQuality),
+      normalizeCodecPreference(active?.requestedCodec, active?.codec || ""),
+      state.selectedCodec,
+      "auto"
+    ) || "auto";
+  }
 }
 
 function renderCurrent() {
@@ -177,6 +225,7 @@ function renderCurrent() {
 
   const cached = findCurrentVideo();
   renderQualityControl(cached);
+  renderAssist();
   if (!cached) {
     if (state.qualitiesLoading) {
       setButtonState("disabled", "正在读取可用画质", "", 0, true);
@@ -225,6 +274,8 @@ function renderUnsupported(title, detail) {
   elements.currentDetailText.textContent = detail;
   elements.pageMark.hidden = true;
   elements.qualityRow.hidden = true;
+  elements.codecRow.hidden = true;
+  elements.assistPanel.hidden = true;
   elements.authNote.hidden = true;
   closeQualityMenu();
   setButtonState("disabled", "当前页面无法缓存", "", 0, true);
@@ -261,7 +312,8 @@ function findCurrentVideo() {
   if (!videos.length) return null;
   if (state.selectedQuality) {
     const selected = videos.find((video) => (
-      Number(video.requestedQuality || video.quality) === state.selectedQuality
+      Number(video.requestedQuality || video.quality) === state.selectedQuality &&
+      isVideoCodecSelectionMatch(video, state.selectedCodec)
     ));
     return selected || null;
   }
@@ -294,6 +346,7 @@ function renderQualityControl(cached) {
     );
     updateQualitySelection();
   }
+  renderCodecControl(cached);
 
   if (state.qualityError) {
     elements.authNote.textContent = state.qualityError;
@@ -310,6 +363,147 @@ function renderQualityControl(cached) {
   } else {
     elements.authNote.textContent = "未检测到 B 站登录 Cookie；登录或大会员画质可能不可用。";
     elements.authNote.dataset.tone = "warning";
+  }
+}
+
+function getCodecOptions(quality = state.selectedQuality) {
+  return Array.isArray(state.codecOptionsByQuality?.[String(quality)])
+    ? state.codecOptionsByQuality[String(quality)]
+    : [];
+}
+
+function renderCodecControl(cached) {
+  const options = getCodecOptions();
+  elements.codecRow.hidden = !options.length;
+  if (!options.length) {
+    state.selectedCodec = "auto";
+    elements.codecOptions.replaceChildren();
+    return;
+  }
+  state.selectedCodec = choosePopupCodec(options, state.selectedCodec, "auto") || "auto";
+  const disabled = cached?.status === "downloading";
+  const fragment = document.createDocumentFragment();
+  for (const option of options) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.role = "radio";
+    button.dataset.codec = option.codec;
+    button.setAttribute("aria-checked", String(option.codec === state.selectedCodec));
+    button.disabled = disabled;
+    const bitrate = Number(option.minBandwidth) > 0
+      ? ` ${formatBitrate(option.minBandwidth)}`
+      : "";
+    button.textContent = `${option.label || CODEC_LABELS[option.codec] || option.codec}${bitrate}`;
+    fragment.append(button);
+  }
+  elements.codecOptions.replaceChildren(fragment);
+}
+
+function formatBitrate(bitsPerSecond) {
+  const mbps = Number(bitsPerSecond) / 1_000_000;
+  return Number.isFinite(mbps) && mbps > 0 ? `${mbps.toFixed(mbps >= 10 ? 0 : 1)}M` : "";
+}
+
+function selectCodec(event) {
+  const button = event.target.closest("[data-codec]");
+  if (!button || button.disabled) return;
+  state.selectedCodec = choosePopupCodec(getCodecOptions(), button.dataset.codec, "auto") || "auto";
+  persistPopupSelection();
+  renderCurrent();
+}
+
+async function refreshAssistState() {
+  if (!state.tab?.id) return;
+  try {
+    const result = await send("GET_ASSIST_STATE", { tabId: state.tab.id });
+    state.assistConfig = result.config || state.assistConfig;
+    state.assistStats = result.stats || null;
+    state.assistCommandResult = result.commandResult || state.assistCommandResult;
+  } catch {
+    state.assistStats = null;
+  }
+  renderAssist();
+}
+
+function renderAssist() {
+  if (!state.pageInfo?.supported) {
+    elements.assistPanel.hidden = true;
+    return;
+  }
+  elements.assistPanel.hidden = false;
+  const config = state.assistConfig || { mode: "auto" };
+  const stats = state.assistStats;
+  for (const button of elements.assistModes.querySelectorAll("[data-assist-mode]")) {
+    const selected = button.dataset.assistMode === config.mode;
+    button.setAttribute("aria-checked", String(selected));
+  }
+
+  const ttfbs = Object.values(stats?.hosts || {})
+    .map((host) => Number(host.ttfbP95))
+    .filter(Number.isFinite);
+  const p95 = ttfbs.length ? Math.max(...ttfbs) : 0;
+  elements.assistTtfb.textContent = p95 ? `${Math.round(p95)}ms` : "–";
+  elements.assistSlow.textContent = String(stats?.slowRequests || 0);
+  elements.assistBuffer.textContent = Number.isFinite(Number(stats?.bufferAheadSec))
+    ? `${Number(stats.bufferAheadSec).toFixed(1)}s`
+    : "–";
+  elements.assistPrefetch.textContent = `${Number(stats?.prefetchMB || 0).toFixed(1)} MB`;
+
+  let status = "等待页面媒体请求";
+  let warning = false;
+  if (config.mode === "off") status = "已关闭";
+  else if (!stats) status = "刷新视频页后开始观测";
+  else if (stats.slowRequests > 0) {
+    status = config.mode === "auto"
+      ? `发现冷区间 · 预热中 ${stats.prefetching || 0}`
+      : "发现冷区间 · 可开启自动预热";
+    warning = true;
+  } else if (config.mode === "auto" && stats.warmingUp) {
+    status = `观察 ${stats.playedSec || 0}/${stats.minWatchedSec || 20}s`;
+  } else {
+    status = `链路正常${stats.stalls ? ` · ${stats.stalls} 次停顿` : ""}`;
+  }
+  elements.assistStatus.textContent = status;
+  elements.assistStatus.dataset.tone = warning ? "warning" : "normal";
+
+  const estimator = stats?.estimator;
+  const cleared = state.assistCommandResult?.name === "clearEstimator" && state.assistCommandResult?.success;
+  const restored = state.assistCommandResult?.name === "restoreEstimator" && state.assistCommandResult?.success;
+  elements.estimatorRow.hidden = !(estimator?.suspect || cleared || restored);
+  if (cleared) elements.estimatorNote.textContent = "异常估计已备份并清理，可恢复";
+  else if (restored) elements.estimatorNote.textContent = "已恢复上一次估计器备份";
+  else elements.estimatorNote.textContent = "播放器带宽估计可能受慢请求影响";
+  elements.estimatorClear.hidden = cleared;
+  elements.estimatorRestore.hidden = !cleared;
+}
+
+async function selectAssistMode(event) {
+  const button = event.target.closest("[data-assist-mode]");
+  if (!button || !state.tab?.id) return;
+  const mode = button.dataset.assistMode;
+  try {
+    const result = await send("SET_ASSIST_CONFIG", { patch: { mode } });
+    state.assistConfig = result.config;
+    renderAssist();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function runAssistCommand(name) {
+  if (!state.tab?.id) return;
+  elements.estimatorClear.disabled = true;
+  elements.estimatorRestore.disabled = true;
+  try {
+    await send("ASSIST_COMMAND", { tabId: state.tab.id, name });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await refreshAssistState();
+    showToast(name === "clearEstimator" ? "带宽估计已备份并清理" : "带宽估计已恢复");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    elements.estimatorClear.disabled = false;
+    elements.estimatorRestore.disabled = false;
   }
 }
 
@@ -372,6 +566,7 @@ function selectQualityFromMenu(event) {
   const option = event.target.closest(".quality-option");
   if (!option) return;
   state.selectedQuality = Number(option.dataset.quality) || 0;
+  state.selectedCodec = choosePopupCodec(getCodecOptions(state.selectedQuality), state.selectedCodec, "auto") || "auto";
   persistPopupSelection();
   closeQualityMenu();
   renderCurrent();
@@ -383,7 +578,8 @@ function persistPopupSelection() {
   void send("SET_POPUP_SELECTION", {
     tabId: state.tab.id,
     url: state.tab.url,
-    quality: state.selectedQuality
+    quality: state.selectedQuality,
+    codec: state.selectedCodec
   }).catch(() => {});
 }
 
@@ -492,7 +688,8 @@ async function startCache() {
     await send("START_CACHE", {
       url: state.tab.url,
       tabId: state.tab.id,
-      quality: state.selectedQuality
+      quality: state.selectedQuality,
+      codec: state.selectedCodec
     });
     await refreshLibrary();
   } catch (error) {
@@ -570,7 +767,7 @@ function createVideoItem(video) {
   const meta = document.createElement("p");
   meta.className = "video-meta";
   const statusText = video.status === "complete"
-    ? video.qualityLabel || "MP4"
+    ? [video.qualityLabel || "MP4", video.codecLabel || CODEC_LABELS[video.codec]].filter(Boolean).join(" · ")
     : video.status === "downloading"
       ? "缓存中"
       : "可继续";

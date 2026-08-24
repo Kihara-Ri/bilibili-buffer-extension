@@ -46,8 +46,16 @@ globalThis.chrome = {
               url: "https://www.bilibili.com/video/BV1Kg8t6NEmN/"
             },
             qualities: [{ quality: 80, label: "1080P", requiresVip: false, requiresLogin: false }],
+            codecOptionsByQuality: {
+              "80": [
+                { codec: "auto", label: "自动（省流）", minBandwidth: 1_600_000 },
+                { codec: "avc", label: "AVC", minBandwidth: 1_600_000 }
+              ]
+            },
             defaultQuality: 80,
             selectedQuality: 80,
+            defaultCodec: "auto",
+            selectedCodec: "auto",
             auth: { viaPageSession: true, vipActive: false },
             savedAt: Date.now()
           }
@@ -56,6 +64,9 @@ globalThis.chrome = {
       if (message.type === "LIST_VIDEOS") {
         await delay(120);
         return { ok: true, videos: [] };
+      }
+      if (message.type === "GET_ASSIST_STATE") {
+        return { ok: true, config: { mode: "auto", estimatorGuard: true }, stats: null };
       }
       if (message.type === "SET_POPUP_SELECTION") return { ok: true, saved: true };
       throw new Error(`未预期的请求：${message.type}`);

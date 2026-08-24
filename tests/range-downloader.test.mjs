@@ -29,6 +29,38 @@ test("CDN 测速会把更快且总大小一致的候选排在前面", async () =
   ], { fetchImpl, probeSize: 128 });
   assert.equal(ranked.urls[0], "https://fast.example/video");
   assert.equal(ranked.totalBytes, 1024);
+  assert.ok(Number.isFinite(ranked.probes[0].ttfbMs));
+  assert.ok(Number.isFinite(ranked.probes[0].throughputKbps));
+});
+
+test("成功但首字节持续偏慢时，后续分块主动改用备用 CDN", async () => {
+  const data = Uint8Array.from({ length: 12 }, (_, index) => index);
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push([url, init.headers.Range]);
+    if (url.includes("primary")) await new Promise((resolve) => setTimeout(resolve, 220));
+    const [, startText, endText] = init.headers.Range.match(/bytes=(\d+)-(\d+)/);
+    return rangeResponse(data, Number(startText), Number(endText));
+  };
+  const result = await downloadByteRanges({
+    urls: ["https://primary.example/video", "https://backup.example/video"],
+    start: 0,
+    totalBytes: data.length,
+    rangeSize: 4,
+    concurrency: 1,
+    slowTtfbMs: 200,
+    fetchImpl,
+    onCommit: async () => {}
+  });
+  assert.deepEqual(calls.map(([url]) => new URL(url).hostname), [
+    "primary.example",
+    "backup.example",
+    "backup.example"
+  ]);
+  assert.equal(result.metrics.slowRequestCount, 1);
+  assert.equal(result.metrics.cdnSwitchCount, 1);
+  assert.equal(result.metrics.cdnHost, "backup.example");
+  assert.ok(result.metrics.hosts["primary.example"].ttfbP50 >= 200);
 });
 
 test("CDN 测速的卡死候选会超时，不会拖住已成功的节点", async () => {

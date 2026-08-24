@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 import {
   buildQualityOptions,
   buildCachedDownloadPlan,
+  buildMediaCodecOptions,
   buildMediaQualityOptions,
   formatBytes,
   formatDuration,
   getPersistedMediaSource,
+  isVideoCodecSelectionMatch,
+  getCodecFamily,
   hasCompleteByteCount,
   getVideoPageId,
   makeBiliSpaceUrl,
@@ -14,6 +17,7 @@ import {
   makeQualityVideoId,
   makeMimeCodec,
   normalizeQualityId,
+  normalizeCodecPreference,
   normalizeHttpUrl,
   parseBiliVideoUrl,
   parseContentRange,
@@ -50,7 +54,9 @@ test("区分非 B 站与非视频 B 站页面", () => {
 test("格式化缓存元数据", () => {
   assert.equal(makeVideoId("BVabc", 42), "BVabc:42");
   assert.equal(makeQualityVideoId("BVabc:42", 80), "BVabc:42:q80");
+  assert.equal(makeQualityVideoId("BVabc:42", 80, "av1"), "BVabc:42:q80:cav1");
   assert.equal(getVideoPageId({ id: "BVabc:42:q80", bvid: "BVabc", cid: 42 }), "BVabc:42");
+  assert.equal(getVideoPageId({ id: "BVabc:42:q80:cauto" }), "BVabc:42");
   assert.equal(formatBytes(1024 * 1024), "1.00 MB");
   assert.equal(formatDuration(3661), "1:01:01");
   assert.equal(normalizeHttpUrl("http://i0.hdslb.com/a.jpg"), "https://i0.hdslb.com/a.jpg");
@@ -115,6 +121,39 @@ test("可缓存画质以实际返回的 DASH 或单段 MP4 轨道为准", () => 
   });
   assert.deepEqual(options.map((option) => option.quality), [80, 64]);
   assert.equal(makeMimeCodec("video/mp4", "avc1.640032"), 'video/mp4; codecs="avc1.640032"');
+});
+
+test("编码选项按当前画质的实际 DASH 轨道生成", () => {
+  const options = buildMediaCodecOptions({
+    dash: { video: [
+      { id: 80, codecs: "avc1.640032", bandwidth: 5_000_000 },
+      { id: 80, codecs: "hev1.1.6.L120.90", bandwidth: 2_000_000 },
+      { id: 80, codecs: "av01.0.08M.08", bandwidth: 1_800_000 },
+      { id: 64, codecs: "avc1.640028", bandwidth: 2_200_000 }
+    ] }
+  }, 80);
+  assert.deepEqual(options.map((option) => option.codec), ["auto", "av1", "hevc", "avc"]);
+  assert.equal(options[0].minBandwidth, 1_800_000);
+  assert.equal(buildMediaCodecOptions({
+    dash: { video: [{ id: 80, codecs: "avc1.640032" }] }
+  }, 80)[0].minBandwidth, 0);
+  assert.equal(getCodecFamily("hvc1.2.4"), "hevc");
+  assert.equal(normalizeCodecPreference("AV1"), "av1");
+});
+
+test("新增编码维度仍能匹配旧缓存和自动选择的实际轨道", () => {
+  const legacyAvc = { tracks: { video: { codecs: "avc1.640032" } } };
+  const automaticAv1 = {
+    requestedCodec: "auto",
+    codec: "av1",
+    tracks: { video: { codecs: "av01.0.08M.08" } }
+  };
+  assert.equal(isVideoCodecSelectionMatch(legacyAvc, "auto"), true);
+  assert.equal(isVideoCodecSelectionMatch(legacyAvc, "avc"), true);
+  assert.equal(isVideoCodecSelectionMatch(legacyAvc, "av1"), false);
+  assert.equal(isVideoCodecSelectionMatch(automaticAv1, "auto"), true);
+  assert.equal(isVideoCodecSelectionMatch(automaticAv1, "av1"), true);
+  assert.equal(isVideoCodecSelectionMatch(automaticAv1, "avc"), false);
 });
 
 test("保存文件名会移除路径和系统保留字符", () => {

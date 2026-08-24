@@ -58,11 +58,14 @@ export async function rankRangeCandidates(urls, options = {}) {
   return {
     urls: [...rankedUrls, ...remaining],
     totalBytes,
-    probes: ranked.map(({ url, host, bytes, elapsedMs, score }) => ({
+    probes: ranked.map(({ url, host, bytes, elapsedMs, ttfbMs, bodyMs, throughputKbps, score }) => ({
       url,
       host,
       bytes,
       elapsedMs,
+      ttfbMs,
+      bodyMs,
+      throughputKbps,
       score
     }))
   };
@@ -80,6 +83,8 @@ export async function downloadByteRanges(options) {
     rangeSize: Math.max(1, Math.floor(Number(options.rangeSize) || DEFAULT_RANGE_SIZE)),
     requestCount: 0,
     retryCount: 0,
+    slowRequestCount: 0,
+    cdnSwitchCount: 0,
     networkBytes: 0,
     committedBytes: 0,
     rangeCount: ranges.length,
@@ -90,6 +95,8 @@ export async function downloadByteRanges(options) {
   const urls = uniqueHttpUrls(options.urls);
   if (!urls.length) throw new Error("没有可用的 CDN 地址");
   const fetchImpl = options.fetchImpl || platformFetch;
+  const candidateStats = new Map(urls.map((url, index) => [url, makeCandidateStat(url, index)]));
+  let preferredUrl = urls[0];
   const completed = new Map();
   let nextRange = 0;
   let nextCommit = 0;
@@ -127,11 +134,18 @@ export async function downloadByteRanges(options) {
       nextRange += 1;
       if (index >= ranges.length) return;
       try {
-        const result = await fetchRangeWithFallback(urls, ranges[index], {
+        const rankedUrls = rankDynamicCandidates(urls, candidateStats, options.slowTtfbMs);
+        if (rankedUrls[0] !== preferredUrl) {
+          preferredUrl = rankedUrls[0];
+          metrics.cdnSwitchCount += 1;
+        }
+        const result = await fetchRangeWithFallback(rankedUrls, ranges[index], {
           fetchImpl,
           signal: options.signal,
           totalBytes: options.totalBytes,
           timeoutMs: options.timeoutMs,
+          slowTtfbMs: options.slowTtfbMs,
+          candidateStats,
           metrics,
           receive
         });
@@ -152,6 +166,11 @@ export async function downloadByteRanges(options) {
   if (fatalError) throw fatalError;
   if (nextCommit !== ranges.length) throw new Error("并发分块没有形成连续结果");
   metrics.completedAt = Date.now();
+  metrics.cdnHost = getHost(preferredUrl);
+  metrics.hosts = publicCandidateStats(candidateStats);
+  const ttfbs = [...candidateStats.values()].flatMap((entry) => entry.ttfbs);
+  metrics.ttfbP50 = percentile(ttfbs, 0.5);
+  metrics.ttfbP95 = percentile(ttfbs, 0.95);
   return { metrics };
 }
 
@@ -175,13 +194,18 @@ async function probeCandidate(url, options) {
     attempt.cleanup();
   }
   const elapsedMs = Math.max(now() - startedAt, 1);
+  // 测速排序仍按端到端有效吞吐，TTFB 与正文吞吐另行保留，避免小探针的正文计时噪声反客为主。
+  const score = result.data.size * 8 / elapsedMs;
   return {
     url,
     host: getHost(url),
     totalBytes: result.totalBytes,
     bytes: result.data.size,
     elapsedMs,
-    score: result.data.size / elapsedMs
+    ttfbMs: result.ttfbMs,
+    bodyMs: result.bodyMs,
+    throughputKbps: result.throughputKbps,
+    score
   };
 }
 
@@ -204,8 +228,13 @@ async function fetchRangeWithFallback(urls, range, options) {
           options.receive(bytes, { host: getHost(url), range });
         }
       });
+      recordCandidateSuccess(options.candidateStats?.get(url), result, options.slowTtfbMs);
+      if (isSlowCandidateResult(options.candidateStats?.get(url), result, options.slowTtfbMs)) {
+        options.metrics.slowRequestCount += 1;
+      }
       return { ...result, range, url, host: getHost(url) };
     } catch (error) {
+      recordCandidateFailure(options.candidateStats?.get(url));
       if (attemptBytes) options.receive(-attemptBytes, { host: getHost(url), range, rollback: true });
       if (options.signal?.aborted) throw error;
       if (attempt.didTimeout()) {
@@ -222,11 +251,13 @@ async function fetchRangeWithFallback(urls, range, options) {
 }
 
 async function readRange(url, start, end, options) {
+  const startedAt = now();
   const response = await options.fetchImpl(url, {
     credentials: "omit",
     headers: { Range: `bytes=${start}-${end}` },
     signal: options.signal
   });
+  const headersAt = now();
   if (!response.ok) {
     if (response.status === 403) throw new Error("CDN 拒绝了范围下载（HTTP 403）");
     if (response.status === 429) throw new Error("CDN 请求过于频繁（HTTP 429）");
@@ -267,11 +298,116 @@ async function readRange(url, start, end, options) {
   }
   const expectedBytes = contentRange.end - contentRange.start + 1;
   if (received !== expectedBytes) throw new Error("CDN 范围响应提前结束");
+  const completedAt = now();
+  const ttfbMs = Math.max(0, headersAt - startedAt);
+  const totalMs = Math.max(0, completedAt - startedAt);
+  const bodyMs = Math.max(completedAt - headersAt, 0.1);
   return {
     data: new Blob(parts, { type: "application/octet-stream" }),
     totalBytes: contentRange.total,
-    contentRange
+    contentRange,
+    ttfbMs,
+    bodyMs,
+    totalMs,
+    throughputKbps: received * 8 / bodyMs
   };
+}
+
+function makeCandidateStat(url, initialIndex) {
+  return {
+    url,
+    host: getHost(url),
+    initialIndex,
+    successes: 0,
+    errors: 0,
+    ttfbs: [],
+    hotTtfbs: [],
+    throughputsKbps: [],
+    lastTtfbMs: null
+  };
+}
+
+function candidateSlowThreshold(stat, configuredThreshold) {
+  const baseline = percentile(stat?.hotTtfbs || [], 0.5);
+  return Math.max(200, Number(configuredThreshold) || 800, baseline ? baseline * 6 : 0);
+}
+
+function isSlowCandidateResult(stat, result, configuredThreshold) {
+  return Number(result?.ttfbMs) > candidateSlowThreshold(stat, configuredThreshold);
+}
+
+function recordCandidateSuccess(stat, result, configuredThreshold) {
+  if (!stat) return;
+  stat.successes += 1;
+  stat.lastTtfbMs = Number(result.ttfbMs) || 0;
+  boundedPush(stat.ttfbs, stat.lastTtfbMs, 100);
+  boundedPush(stat.throughputsKbps, Number(result.throughputKbps) || 0, 100);
+  if (!isSlowCandidateResult(stat, result, configuredThreshold)) {
+    boundedPush(stat.hotTtfbs, stat.lastTtfbMs, 100);
+  }
+}
+
+function recordCandidateFailure(stat) {
+  if (stat) stat.errors += 1;
+}
+
+function rankDynamicCandidates(urls, stats, configuredThreshold) {
+  return urls.slice().sort((leftUrl, rightUrl) => {
+    const left = stats.get(leftUrl);
+    const right = stats.get(rightUrl);
+    const leftTier = candidateTier(left, configuredThreshold);
+    const rightTier = candidateTier(right, configuredThreshold);
+    if (leftTier !== rightTier) return leftTier - rightTier;
+    if (leftTier === 0 || leftTier === 2) {
+      const ttfbDifference = (percentile(left.ttfbs, 0.5) ?? Infinity) - (percentile(right.ttfbs, 0.5) ?? Infinity);
+      if (ttfbDifference) return ttfbDifference;
+      const throughputDifference = (percentile(right.throughputsKbps, 0.5) || 0) - (percentile(left.throughputsKbps, 0.5) || 0);
+      if (throughputDifference) return throughputDifference;
+    }
+    return left.initialIndex - right.initialIndex;
+  });
+}
+
+function candidateTier(stat, configuredThreshold) {
+  if (!stat?.successes) return stat?.errors ? 3 : 1;
+  if (stat.errors > stat.successes) return 3;
+  return stat.lastTtfbMs > candidateSlowThreshold(stat, configuredThreshold) ? 2 : 0;
+}
+
+function publicCandidateStats(stats) {
+  const hosts = {};
+  for (const stat of stats.values()) {
+    const current = hosts[stat.host] || {
+      successes: 0,
+      errors: 0,
+      ttfbs: [],
+      throughputsKbps: []
+    };
+    current.successes += stat.successes;
+    current.errors += stat.errors;
+    current.ttfbs.push(...stat.ttfbs);
+    current.throughputsKbps.push(...stat.throughputsKbps);
+    hosts[stat.host] = current;
+  }
+  return Object.fromEntries(Object.entries(hosts).map(([host, stat]) => [host, {
+    successes: stat.successes,
+    errors: stat.errors,
+    ttfbP50: percentile(stat.ttfbs, 0.5),
+    ttfbP95: percentile(stat.ttfbs, 0.95),
+    throughputKbpsP50: percentile(stat.throughputsKbps, 0.5)
+  }]));
+}
+
+function percentile(values, fraction) {
+  if (!values.length) return null;
+  const sorted = values.slice().sort((left, right) => left - right);
+  return sorted[Math.min(sorted.length - 1, Math.floor(fraction * (sorted.length - 1)))];
+}
+
+function boundedPush(values, value, limit) {
+  if (!Number.isFinite(value)) return;
+  values.push(value);
+  if (values.length > limit) values.splice(0, values.length - limit);
 }
 
 function uniqueHttpUrls(urls) {

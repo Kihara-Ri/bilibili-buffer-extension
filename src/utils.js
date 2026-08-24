@@ -14,6 +14,34 @@ export const QUALITY_LABELS = Object.freeze({
 
 export const AUTO_QUALITY = 127;
 
+export const CODEC_LABELS = Object.freeze({
+  auto: "自动（省流）",
+  av1: "AV1",
+  hevc: "HEVC",
+  avc: "AVC"
+});
+
+export function normalizeCodecPreference(value, fallback = "auto") {
+  const codec = String(value || "").trim().toLowerCase();
+  return Object.hasOwn(CODEC_LABELS, codec) ? codec : fallback;
+}
+
+export function getCodecFamily(value) {
+  const codec = String(value || "").trim().toLowerCase();
+  if (codec.startsWith("av01")) return "av1";
+  if (codec.startsWith("hvc1") || codec.startsWith("hev1")) return "hevc";
+  if (codec.startsWith("avc1")) return "avc";
+  return "other";
+}
+
+export function isVideoCodecSelectionMatch(video, requestedCodec) {
+  const selected = normalizeCodecPreference(requestedCodec);
+  if (selected === "auto") return true;
+  const actual = getCodecFamily(video?.tracks?.video?.codecs);
+  if (actual === selected || video?.codec === selected) return true;
+  return normalizeCodecPreference(video?.requestedCodec, "") === selected;
+}
+
 export function normalizeQualityId(value, fallback = 0) {
   const quality = Number(value);
   return Number.isSafeInteger(quality) && quality > 0 && quality <= 127
@@ -97,6 +125,53 @@ export function buildMediaQualityOptions(playurlData) {
     });
 }
 
+export function buildMediaCodecOptions(playurlData, requestedQuality) {
+  const data = playurlData && typeof playurlData === "object" ? playurlData : {};
+  const quality = normalizeQualityId(requestedQuality);
+  const tracks = (Array.isArray(data.dash?.video) ? data.dash.video : [])
+    .filter((track) => normalizeQualityId(track?.id) === quality)
+    .map((track) => ({
+      codec: getCodecFamily(track?.codecs),
+      codecs: String(track?.codecs || ""),
+      bandwidth: Math.max(0, Number(track?.bandwidth) || 0)
+    }))
+    .filter((track) => track.codec !== "other" && track.codecs);
+  const byCodec = new Map();
+  for (const track of tracks) {
+    const current = byCodec.get(track.codec);
+    if (!current) {
+      byCodec.set(track.codec, {
+        codec: track.codec,
+        label: CODEC_LABELS[track.codec],
+        minBandwidth: track.bandwidth,
+        maxBandwidth: track.bandwidth,
+        codecs: [track.codecs]
+      });
+      continue;
+    }
+    current.minBandwidth = Math.min(current.minBandwidth || track.bandwidth, track.bandwidth);
+    current.maxBandwidth = Math.max(current.maxBandwidth, track.bandwidth);
+    if (!current.codecs.includes(track.codecs)) current.codecs.push(track.codecs);
+  }
+  const preferenceOrder = { av1: 0, hevc: 1, avc: 2 };
+  const concrete = [...byCodec.values()].sort((left, right) => (
+    (left.minBandwidth || Number.MAX_SAFE_INTEGER) - (right.minBandwidth || Number.MAX_SAFE_INTEGER) ||
+    preferenceOrder[left.codec] - preferenceOrder[right.codec]
+  ));
+  if (!concrete.length) return [];
+  const knownBandwidths = concrete
+    .map((option) => Number(option.minBandwidth) || 0)
+    .filter((bandwidth) => bandwidth > 0);
+  return [
+    {
+      codec: "auto",
+      label: CODEC_LABELS.auto,
+      minBandwidth: knownBandwidths.length ? Math.min(...knownBandwidths) : 0
+    },
+    ...concrete
+  ];
+}
+
 export function makeMimeCodec(mimeType, codecs) {
   const mime = String(mimeType || "").trim();
   const codec = String(codecs || "").trim();
@@ -124,6 +199,14 @@ export function getPersistedMediaSource(video) {
       quality: normalizeQualityId(video.quality || video.requestedQuality),
       qualityLabel: video.qualityLabel || QUALITY_LABELS[video.quality] || "DASH",
       requestedQuality: normalizeQualityId(video.requestedQuality || video.quality),
+      codec: video.codec || getCodecFamily(video.tracks?.video?.codecs),
+      codecLabel: video.codecLabel || CODEC_LABELS[video.codec] || "",
+      requestedCodec: normalizeCodecPreference(
+        video.requestedCodec,
+        getCodecFamily(video.tracks?.video?.codecs) === "other"
+          ? "auto"
+          : getCodecFamily(video.tracks?.video?.codecs)
+      ),
       format: video.format || "dash"
     };
   }
@@ -138,6 +221,9 @@ export function getPersistedMediaSource(video) {
     quality: normalizeQualityId(video.quality || video.requestedQuality),
     qualityLabel: video.qualityLabel || QUALITY_LABELS[video.quality] || "MP4",
     requestedQuality: normalizeQualityId(video.requestedQuality || video.quality),
+    codec: video.codec || "avc",
+    codecLabel: video.codecLabel || "AVC",
+    requestedCodec: normalizeCodecPreference(video.requestedCodec),
     format: video.format || "mp4",
     mimeType: video.mimeType || "video/mp4"
   };
@@ -178,15 +264,18 @@ export function makeVideoId(bvid, cid) {
   return `${bvid}:${cid}`;
 }
 
-export function makeQualityVideoId(pageId, quality) {
+export function makeQualityVideoId(pageId, quality, codecPreference = "") {
   const normalized = normalizeQualityId(quality);
-  return normalized ? `${pageId}:q${normalized}` : pageId;
+  if (!normalized) return pageId;
+  const base = `${pageId}:q${normalized}`;
+  const codec = normalizeCodecPreference(codecPreference, "");
+  return codec ? `${base}:c${codec}` : base;
 }
 
 export function getVideoPageId(video) {
   if (video?.pageId) return video.pageId;
   if (video?.bvid && video?.cid) return makeVideoId(video.bvid, video.cid);
-  return String(video?.id || "").replace(/:q\d+$/, "");
+  return String(video?.id || "").replace(/:q\d+(?::c(?:auto|av1|hevc|avc))?$/, "");
 }
 
 export function formatBytes(value) {

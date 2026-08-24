@@ -1,12 +1,16 @@
 import {
   AUTO_QUALITY,
   buildCachedDownloadPlan,
+  buildMediaCodecOptions,
   buildMediaQualityOptions,
+  getCodecFamily,
   getVideoPageId,
   hasCompleteByteCount,
+  isVideoCodecSelectionMatch,
   makeBiliSpaceUrl,
   makeVideoId,
   makeQualityVideoId,
+  normalizeCodecPreference,
   normalizeQualityId,
   parseBiliVideoUrl,
   toPublicError
@@ -14,6 +18,7 @@ import {
 import { listVideos, putVideo } from "./db.js";
 import { startDevReload } from "./dev-reload.js";
 import {
+  choosePopupCodec,
   choosePopupQuality,
   isPopupSnapshotFresh,
   isPopupSnapshotMatch,
@@ -23,6 +28,17 @@ import {
 
 const OFFSCREEN_PATH = "offscreen.html";
 const POPUP_SNAPSHOTS_KEY = "popupPageSnapshotsV1";
+const ASSIST_CONFIG_KEY = "playbackAssistConfigV1";
+const ASSIST_DEFAULTS = Object.freeze({
+  mode: "auto",
+  slowTtfbMs: 800,
+  leadSeconds: 45,
+  minWatchedSec: 20,
+  minBufferAheadSec: 10,
+  maxPrefetchMBPerTrack: 200,
+  maxConcurrency: 4,
+  estimatorGuard: true
+});
 let creatingOffscreen;
 let popupSnapshotQueue = Promise.resolve();
 const popupSnapshotMemory = new Map();
@@ -54,7 +70,13 @@ async function handleMessage(message, sender) {
     case "REFRESH_POPUP_DATA":
       return { snapshot: await refreshPopupSnapshot(message.url, message.tabId) };
     case "SET_POPUP_SELECTION":
-      return { saved: await savePopupSelection(message.tabId, message.url, message.quality) };
+      return { saved: await savePopupSelection(message.tabId, message.url, message.quality, message.codec) };
+    case "GET_ASSIST_STATE":
+      return getAssistState(message.tabId);
+    case "SET_ASSIST_CONFIG":
+      return { config: await setAssistConfig(message.patch) };
+    case "ASSIST_COMMAND":
+      return sendAssistCommand(message.tabId, message.name);
     case "GET_PAGE_INFO":
       return { pageInfo: await getPageInfo(message.url) };
     case "GET_QUALITY_OPTIONS": {
@@ -64,10 +86,13 @@ async function handleMessage(message, sender) {
       const playurl = await requestPlayurl(pageInfo, AUTO_QUALITY, message.tabId, auth);
       const qualities = buildMediaQualityOptions(playurl.data);
       if (!qualities.length) throw new Error("B 站没有返回可缓存的 MP4 或 DASH 画质");
+      const codecOptionsByQuality = buildCodecOptionsByQuality(playurl.data, qualities);
       return {
         pageInfo,
         qualities,
+        codecOptionsByQuality,
         defaultQuality: qualities[0].quality,
+        defaultCodec: choosePopupCodec(codecOptionsByQuality[String(qualities[0].quality)], "auto"),
         auth: playurl.auth
       };
     }
@@ -77,13 +102,15 @@ async function handleMessage(message, sender) {
       pageInfo.tabId = message.tabId;
       pageInfo.requestedQuality = normalizeQualityId(message.quality, AUTO_QUALITY);
       pageInfo.requestedQualityExplicit = normalizeQualityId(message.quality) > 0;
+      pageInfo.requestedCodec = normalizeCodecPreference(message.codec);
       const pageId = pageInfo.id;
       const matchingCache = (await listVideos()).find((video) => (
         getVideoPageId(video) === pageId &&
-        Number(video.requestedQuality || video.quality) === pageInfo.requestedQuality
+        Number(video.requestedQuality || video.quality) === pageInfo.requestedQuality &&
+        isVideoCodecSelectionMatch(video, pageInfo.requestedCodec)
       ));
       pageInfo.pageId = pageId;
-      pageInfo.id = matchingCache?.id || makeQualityVideoId(pageId, pageInfo.requestedQuality);
+      pageInfo.id = matchingCache?.id || makeQualityVideoId(pageId, pageInfo.requestedQuality, pageInfo.requestedCodec);
       const auth = await getBiliSessionState();
       const playurl = await requestPlayurl(pageInfo, pageInfo.requestedQuality, message.tabId, auth);
       pageInfo.auth = playurl.auth;
@@ -144,13 +171,16 @@ async function refreshPopupSnapshot(inputUrl, tabId) {
   const savedAt = Date.now();
   if (!pageInfo.supported) {
     const snapshot = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       tabId,
       pageKey: makePopupPageKey(inputUrl),
       pageInfo,
       qualities: [],
+      codecOptionsByQuality: {},
       defaultQuality: 0,
       selectedQuality: 0,
+      defaultCodec: "",
+      selectedCodec: "",
       auth: null,
       savedAt,
       selectionUpdatedAt: savedAt
@@ -163,6 +193,7 @@ async function refreshPopupSnapshot(inputUrl, tabId) {
   const playurl = await requestPlayurl(pageInfo, AUTO_QUALITY, tabId, auth);
   const qualities = buildMediaQualityOptions(playurl.data);
   if (!qualities.length) throw new Error("B 站没有返回可缓存的 MP4 或 DASH 画质");
+  const codecOptionsByQuality = buildCodecOptionsByQuality(playurl.data, qualities);
   const latest = await readPopupSnapshot(tabId, inputUrl);
   const selectionSnapshot = (Number(latest?.selectionUpdatedAt) || 0) >= (Number(previous?.selectionUpdatedAt) || 0)
     ? latest
@@ -173,14 +204,23 @@ async function refreshPopupSnapshot(inputUrl, tabId) {
     selectionSnapshot?.selectedQuality,
     defaultQuality
   );
+  const codecOptions = codecOptionsByQuality[String(selectedQuality)] || [];
+  const selectedCodec = choosePopupCodec(
+    codecOptions,
+    selectionSnapshot?.selectedQuality === selectedQuality ? selectionSnapshot?.selectedCodec : "",
+    "auto"
+  );
   const snapshot = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     tabId,
     pageKey: makePopupPageKey(inputUrl),
     pageInfo,
     qualities,
+    codecOptionsByQuality,
     defaultQuality,
     selectedQuality,
+    defaultCodec: choosePopupCodec(codecOptionsByQuality[String(defaultQuality)] || [], "auto"),
+    selectedCodec,
     auth: playurl.auth,
     savedAt,
     selectionUpdatedAt: Number(selectionSnapshot?.selectionUpdatedAt) || savedAt
@@ -189,17 +229,81 @@ async function refreshPopupSnapshot(inputUrl, tabId) {
   return snapshot;
 }
 
-async function savePopupSelection(tabId, inputUrl, requestedQuality) {
+async function savePopupSelection(tabId, inputUrl, requestedQuality, requestedCodec) {
   const snapshot = await readPopupSnapshot(tabId, inputUrl);
   if (!snapshot) return false;
   const selectedQuality = choosePopupQuality(snapshot.qualities, requestedQuality);
   if (!selectedQuality || selectedQuality !== normalizeQualityId(requestedQuality)) return false;
+  const codecOptions = snapshot.codecOptionsByQuality?.[String(selectedQuality)] || [];
+  const selectedCodec = choosePopupCodec(codecOptions, requestedCodec, "auto");
   await storePopupSnapshot({
     ...snapshot,
     selectedQuality,
+    selectedCodec,
     selectionUpdatedAt: Date.now()
   });
   return true;
+}
+
+function buildCodecOptionsByQuality(playurlData, qualities) {
+  return Object.fromEntries((Array.isArray(qualities) ? qualities : []).map((option) => [
+    String(option.quality),
+    buildMediaCodecOptions(playurlData, option.quality)
+  ]));
+}
+
+async function getAssistConfig() {
+  try {
+    const stored = await chrome.storage.local.get(ASSIST_CONFIG_KEY);
+    return { ...ASSIST_DEFAULTS, ...(stored?.[ASSIST_CONFIG_KEY] || {}) };
+  } catch {
+    return { ...ASSIST_DEFAULTS };
+  }
+}
+
+function sanitizeAssistConfig(patch, current) {
+  const next = { ...current };
+  if (patch && ["off", "observe", "auto", "always"].includes(patch.mode)) next.mode = patch.mode;
+  if (patch && typeof patch.estimatorGuard === "boolean") next.estimatorGuard = patch.estimatorGuard;
+  for (const [key, min, max] of [
+    ["slowTtfbMs", 200, 10000],
+    ["leadSeconds", 10, 120],
+    ["minWatchedSec", 0, 120],
+    ["minBufferAheadSec", 3, 60],
+    ["maxPrefetchMBPerTrack", 16, 1024],
+    ["maxConcurrency", 1, 6]
+  ]) {
+    if (!Object.hasOwn(patch || {}, key)) continue;
+    const value = Number(patch[key]);
+    if (Number.isFinite(value)) next[key] = Math.max(min, Math.min(max, value));
+  }
+  return next;
+}
+
+async function getAssistState(tabId) {
+  const config = await getAssistConfig();
+  if (!Number.isInteger(tabId)) return { config, stats: null };
+  try {
+    const state = await chrome.tabs.sendMessage(tabId, { type: "BILI_BUFFER_GET_ASSIST_STATE" });
+    return { config, stats: state?.stats || null, commandResult: state?.commandResult || null };
+  } catch {
+    return { config, stats: null };
+  }
+}
+
+async function setAssistConfig(patch) {
+  const current = await getAssistConfig();
+  const config = sanitizeAssistConfig(patch, current);
+  await chrome.storage.local.set({ [ASSIST_CONFIG_KEY]: config });
+  return config;
+}
+
+async function sendAssistCommand(tabId, name) {
+  if (!Number.isInteger(tabId)) throw new Error("无法识别当前标签页");
+  if (!["clearEstimator", "restoreEstimator"].includes(name)) throw new Error("未知的播放辅助指令");
+  const result = await chrome.tabs.sendMessage(tabId, { type: "BILI_BUFFER_ASSIST_COMMAND", name });
+  if (!result?.ok) throw new Error(result?.error || "当前 B 站页面没有响应");
+  return { sent: true };
 }
 
 async function readPopupSnapshot(tabId, inputUrl) {
@@ -480,11 +584,20 @@ async function restoreActiveDownloads() {
     for (const video of interrupted) {
       try {
         const requestedQuality = normalizeQualityId(video.requestedQuality ?? video.quality, AUTO_QUALITY);
+        const persistedCodec = getCodecFamily(video.tracks?.video?.codecs);
         const fnval = video.mediaKind === "dash" ? "4048" : "1";
         const playurl = await requestPlayurl(video, requestedQuality, video.tabId, auth, fnval);
         const result = await sendToOffscreen({
           type: "START_DOWNLOAD",
-          video: { ...video, auth: playurl.auth, playurlData: playurl.data }
+          video: {
+            ...video,
+            requestedCodec: normalizeCodecPreference(
+              video.requestedCodec,
+              persistedCodec === "other" ? "auto" : persistedCodec
+            ),
+            auth: playurl.auth,
+            playurlData: playurl.data
+          }
         });
         if (!result?.ok) console.warn("[Bili 缓冲站] 自动续传失败：", result?.error);
       } catch (error) {

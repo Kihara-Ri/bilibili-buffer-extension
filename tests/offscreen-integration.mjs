@@ -6,6 +6,11 @@ const audioBytes = makeBytes(2 * MiB + 73, 91);
 const broadcasts = [];
 let messageListener;
 
+Object.defineProperty(globalThis, "MediaSource", {
+  configurable: true,
+  value: { isTypeSupported: () => true }
+});
+
 globalThis.chrome = {
   runtime: {
     onMessage: {
@@ -59,6 +64,7 @@ try {
       duration: 60,
       requestedQuality: 80,
       requestedQualityExplicit: true,
+      requestedCodec: "auto",
       playurlData: {
         quality: 80,
         accept_quality: [80],
@@ -66,15 +72,26 @@ try {
         support_formats: [{ quality: 80, display_desc: "1080P" }],
         dash: {
           duration: 60,
-          video: [{
-            id: 80,
-            codecid: 7,
-            mimeType: "video/mp4",
-            codecs: "avc1.640032",
-            bandwidth: 1_600_000,
-            baseUrl: "https://primary.test/video",
-            backupUrl: ["https://backup.test/video"]
-          }],
+          video: [
+            {
+              id: 80,
+              codecid: 7,
+              mimeType: "video/mp4",
+              codecs: "avc1.640032",
+              bandwidth: 3_600_000,
+              baseUrl: "https://primary.test/video",
+              backupUrl: ["https://backup.test/video"]
+            },
+            {
+              id: 80,
+              codecid: 13,
+              mimeType: "video/mp4",
+              codecs: "av01.0.08M.08",
+              bandwidth: 1_600_000,
+              baseUrl: "https://primary.test/video",
+              backupUrl: ["https://backup.test/video"]
+            }
+          ],
           audio: [{
             id: 30280,
             codecid: 0,
@@ -106,6 +123,7 @@ try {
   assert(equalBytes(storedVideo, videoBytes), "视频轨落盘顺序或字节不正确");
   assert(equalBytes(storedAudio, audioBytes), "音频轨落盘顺序或字节不正确");
   assert(completed.downloadedBytes === videoBytes.length + audioBytes.length, "聚合字节数不正确");
+  assert(completed.codec === "av1", "自动编码没有选择同画质下码率最低的 AV1");
   assert(completed.tracks.video.metrics.concurrency === 2, "视频轨应使用 2 路并发");
   assert(completed.tracks.audio.metrics.concurrency === 1, "音频轨应使用 1 路并发");
   assert(completed.tracks.video.metrics.cdnHost === "backup.test", "没有优先选择测速更快的视频 CDN");

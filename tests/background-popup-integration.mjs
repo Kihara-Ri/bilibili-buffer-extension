@@ -5,6 +5,7 @@ let playurlRequests = 0;
 let offscreenCreates = 0;
 let playurlDelayMs = 0;
 const sessionStorage = {};
+const localStorage = {};
 
 globalThis.chrome = {
   runtime: {
@@ -20,6 +21,10 @@ globalThis.chrome = {
     onChanged: { addListener(listener) { cookieChangeListener = listener; } }
   },
   storage: {
+    local: {
+      async get(key) { return { [key]: structuredClone(localStorage[key]) }; },
+      async set(values) { Object.assign(localStorage, structuredClone(values)); }
+    },
     session: {
       async get(key) { return { [key]: structuredClone(sessionStorage[key]) }; },
       async set(values) { Object.assign(sessionStorage, structuredClone(values)); }
@@ -27,6 +32,9 @@ globalThis.chrome = {
   },
   tabs: {
     async sendMessage(_tabId, message) {
+      if (message.type === "BILI_BUFFER_GET_ASSIST_STATE") {
+        return { ok: true, stats: { requests: 3, slowRequests: 1 } };
+      }
       if (message.type !== "BILI_BUFFER_FETCH_PLAYURL") throw new Error("未知页面消息");
       playurlRequests += 1;
       if (playurlDelayMs) await delay(playurlDelayMs);
@@ -66,6 +74,7 @@ const url = "https://www.bilibili.com/video/BV1Kg8t6NEmN/?spm_id_from=test&t=10"
 try {
   const first = await send({ type: "REFRESH_POPUP_DATA", tabId: 7, url });
   assert(first.ok && first.snapshot?.selectedQuality === 112, "首次合并解析失败");
+  assert(first.snapshot?.selectedCodec === "auto", "默认编码应为自动省流");
   assert(viewRequests === 1 && playurlRequests === 1, "首次打开应只请求一次视频信息和一次播放清单");
 
   const reopened = await send({
@@ -76,10 +85,14 @@ try {
   assert(reopened.ok && reopened.snapshot && !reopened.stale, "重新打开没有命中会话快照");
   assert(viewRequests === 1 && playurlRequests === 1, "快照命中后不应重复请求 B 站接口");
 
-  const selection = await send({ type: "SET_POPUP_SELECTION", tabId: 7, url, quality: 80 });
+  const selection = await send({ type: "SET_POPUP_SELECTION", tabId: 7, url, quality: 80, codec: "av1" });
   assert(selection.ok && selection.saved, "画质选择没有保存");
   const selected = await send({ type: "GET_POPUP_SNAPSHOT", tabId: 7, url });
   assert(selected.snapshot?.selectedQuality === 80, "重新打开没有恢复用户画质");
+  assert(selected.snapshot?.selectedCodec === "av1", "重新打开没有恢复用户编码");
+
+  const assist = await send({ type: "GET_ASSIST_STATE", tabId: 7 });
+  assert(assist.ok && assist.config.mode === "auto" && assist.stats.slowRequests === 1, "播放辅助状态桥接失败");
 
   const library = await send({ type: "LIST_VIDEOS" });
   assert(library.ok && Array.isArray(library.videos), "片库直接读取失败");
@@ -156,7 +169,8 @@ function makePlayurlPayload() {
       dash: {
         video: [
           { id: 112, mimeType: "video/mp4", codecs: "avc1.640032" },
-          { id: 80, mimeType: "video/mp4", codecs: "avc1.640028" }
+          { id: 80, mimeType: "video/mp4", codecs: "av01.0.08M.08", bandwidth: 1_500_000 },
+          { id: 80, mimeType: "video/mp4", codecs: "avc1.640028", bandwidth: 3_000_000 }
         ]
       }
     }

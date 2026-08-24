@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  choosePopupCodec,
   choosePopupQuality,
   isPopupSnapshotFresh,
   isPopupSnapshotMatch,
@@ -35,4 +36,11 @@ test("Popup 保留仍可用的用户画质选择", () => {
   assert.equal(choosePopupQuality(qualities, 80, 112), 80);
   assert.equal(choosePopupQuality(qualities, 120, 112), 112);
   assert.equal(choosePopupQuality(qualities), 112);
+});
+
+test("Popup 保留当前画质仍可用的编码选择", () => {
+  const codecs = [{ codec: "auto" }, { codec: "av1" }, { codec: "avc" }];
+  assert.equal(choosePopupCodec(codecs, "av1", "auto"), "av1");
+  assert.equal(choosePopupCodec(codecs, "hevc", "auto"), "auto");
+  assert.equal(choosePopupCodec([]), "");
 });

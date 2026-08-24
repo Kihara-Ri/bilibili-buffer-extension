@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bili 缓冲站",
-  "description": "预先缓存当前哔哩哔哩视频，并在原网页播放器中优先使用本地缓存。",
-  "version": "1.7.0",
+  "description": "预热 B 站 CDN 冷区间，并将最高可用画质完整缓存到本地播放。",
+  "version": "2.0.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvKANgY0M5agZGFV1Jyh6XY16qlbKPpUMf50fWW8qmD+a6O8m8P8QuJ2RtM1HNY4YCzQgx+XXU8rLRZgvsx4uvRh/OfW2uC/rtmMpHoO98izaNjAmzpHMQl1WZB7sqNwBSDdISCWIoCvbwRMk6s9YnCYzJQ686rvviTwHOmIgvXO/fGqR+8431KwQP7RAkNfc02YKcvFx3YxSYimuS2IJIQLNBR60+OLHv1k5PglQPzcQp4TsuenwoXzGc32is9xPOMrbaVj4czCXZBHxUDt3my6LgP6k0sUfMT0KTDEmlgHoWSiwDChvuj/4S9EZ2DMwwYxoz0g9rdjsH9jblH40iQIDAQAB",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -52,6 +52,24 @@
     "128": "assets/icon-128.png"
   },
   "content_scripts": [
+    {
+      "matches": [
+        "https://www.bilibili.com/video/*",
+        "https://www.bilibili.com/list/*"
+      ],
+      "js": ["src/playback-observer.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.bilibili.com/video/*",
+        "https://www.bilibili.com/list/*"
+      ],
+      "js": ["src/playback-bridge.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    },
     {
       "matches": [
         "https://www.bilibili.com/video/*",

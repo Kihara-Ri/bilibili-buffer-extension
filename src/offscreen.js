@@ -12,9 +12,12 @@ import {
 import {
   AUTO_QUALITY,
   buildMediaQualityOptions,
+  CODEC_LABELS,
+  getCodecFamily,
   getPersistedMediaSource,
   hasCompleteByteCount,
   makeMimeCodec,
+  normalizeCodecPreference,
   normalizeQualityId,
   parseContentRange,
   QUALITY_LABELS,
@@ -174,6 +177,21 @@ function chooseRepresentation(tracks, predicate = () => true) {
     })[0] || null;
 }
 
+function chooseVideoRepresentation(tracks, quality, codecPreference) {
+  const preference = normalizeCodecPreference(codecPreference);
+  let candidates = (Array.isArray(tracks) ? tracks : [])
+    .filter((track) => normalizeQualityId(track?.id) === quality && isSupportedTrack(track));
+  if (preference !== "auto") {
+    candidates = candidates.filter((track) => getCodecFamily(track?.codecs) === preference);
+  }
+  const efficientOrder = { av1: 0, hevc: 1, avc: 2, other: 3 };
+  return candidates.sort((left, right) => (
+    (Number(left.bandwidth) || Number.MAX_SAFE_INTEGER) -
+      (Number(right.bandwidth) || Number.MAX_SAFE_INTEGER) ||
+    efficientOrder[getCodecFamily(left.codecs)] - efficientOrder[getCodecFamily(right.codecs)]
+  ))[0] || null;
+}
+
 function toDashTrack(name, representation) {
   const mimeType = representation.mimeType || representation.mime_type;
   return {
@@ -204,6 +222,11 @@ async function resolveMediaSource(video) {
   const data = video.playurlData;
   const auth = video.auth || { hasSessionCookie: false };
   const persistedSource = getPersistedMediaSource(video);
+  const persistedCodec = getCodecFamily(persistedSource?.tracks?.video?.codecs);
+  const requestedCodec = normalizeCodecPreference(
+    video.requestedCodec,
+    persistedCodec === "other" ? "auto" : persistedCodec
+  );
   if (!data) {
     if (persistedSource) return persistedSource;
     throw new Error("没有可恢复的播放地址，请重新打开原视频后继续缓存");
@@ -215,16 +238,14 @@ async function resolveMediaSource(video) {
     : qualityOptions[0]?.quality || actualQuality;
   const actualOption = qualityOptions.find((option) => option.quality === selectedQuality);
 
-  const dashVideo = chooseRepresentation(
-    data.dash?.video,
-    (track) => normalizeQualityId(track?.id) === selectedQuality
-  );
+  const dashVideo = chooseVideoRepresentation(data.dash?.video, selectedQuality, requestedCodec);
   const standardAudio = Array.isArray(data.dash?.audio) ? data.dash.audio : [];
   const dolbyAudio = Array.isArray(data.dash?.dolby?.audio) ? data.dash.dolby.audio : [];
   const flacAudio = data.dash?.flac?.audio ? [data.dash.flac.audio] : [];
   const dashAudio = chooseRepresentation([...standardAudio, ...dolbyAudio, ...flacAudio]);
 
   if (dashVideo) {
+    const selectedCodec = getCodecFamily(dashVideo.codecs);
     const tracks = { video: toDashTrack("video", dashVideo) };
     if (dashAudio) tracks.audio = toDashTrack("audio", dashAudio);
     return {
@@ -234,8 +255,21 @@ async function resolveMediaSource(video) {
       quality: selectedQuality,
       qualityLabel: actualOption?.label || QUALITY_LABELS[selectedQuality] || `画质 ${selectedQuality}`,
       requestedQuality: selectedQuality,
+      codec: selectedCodec,
+      codecLabel: CODEC_LABELS[selectedCodec] || String(dashVideo.codecs || ""),
+      requestedCodec,
       format: "dash"
     };
+  }
+
+  if (requestedCodec !== "auto" && requestedCodec !== "avc") {
+    const requestedTrackExists = Array.isArray(data.dash?.video) && data.dash.video.some((track) => (
+      normalizeQualityId(track?.id) === selectedQuality && getCodecFamily(track?.codecs) === requestedCodec
+    ));
+    if (requestedTrackExists) {
+      throw new Error(`浏览器不支持当前 ${CODEC_LABELS[requestedCodec]} 轨道，请改用自动或 AVC`);
+    }
+    throw new Error(`B 站没有返回所选画质的 ${CODEC_LABELS[requestedCodec]} 轨道`);
   }
 
   if (explicitlyRequested && !actualOption) {
@@ -262,6 +296,9 @@ async function resolveMediaSource(video) {
     quality: actualQuality,
     qualityLabel: actualOption?.label || QUALITY_LABELS[data.quality] || data.format || "MP4",
     requestedQuality: selectedQuality,
+    codec: "avc",
+    codecLabel: "AVC",
+    requestedCodec,
     format: data.format || "mp4",
     mimeType: "video/mp4"
   };
@@ -321,6 +358,9 @@ async function downloadProgressiveSource(video, existing, source, job) {
     quality: source.quality,
     qualityLabel: source.qualityLabel,
     requestedQuality: source.requestedQuality,
+    codec: source.codec,
+    codecLabel: source.codecLabel,
+    requestedCodec: source.requestedCodec,
     format: source.format,
     duration: source.duration || video.duration,
     tracks: null,
@@ -460,6 +500,11 @@ function createDownloadCoordinator(baseMeta, initialStates) {
       probeMs: 0,
       requestCount: 0,
       retryCount: 0,
+      slowRequestCount: 0,
+      cdnSwitchCount: 0,
+      ttfbP50: null,
+      ttfbP95: null,
+      hosts: {},
       networkBytes: 0,
       committedBytes: Number(state.resumeBytes) || 0,
       dbWriteMs: 0,
@@ -624,8 +669,14 @@ function createDownloadCoordinator(baseMeta, initialStates) {
       Object.assign(state.metrics, {
         concurrency: metrics.concurrency,
         rangeSize: metrics.rangeSize,
+        cdnHost: metrics.cdnHost || state.metrics.cdnHost,
         requestCount: metrics.requestCount,
         retryCount: metrics.retryCount,
+        slowRequestCount: metrics.slowRequestCount,
+        cdnSwitchCount: metrics.cdnSwitchCount,
+        ttfbP50: metrics.ttfbP50,
+        ttfbP95: metrics.ttfbP95,
+        hosts: metrics.hosts || {},
         rangeCount: metrics.rangeCount,
         networkBytes: metrics.networkBytes,
         completedAt: metrics.completedAt
@@ -657,6 +708,11 @@ function publicDownloadMetrics(metrics) {
     probeMs: Math.round(metrics.probeMs || 0),
     requestCount: metrics.requestCount,
     retryCount: metrics.retryCount,
+    slowRequestCount: metrics.slowRequestCount || 0,
+    cdnSwitchCount: metrics.cdnSwitchCount || 0,
+    ttfbP50: Number.isFinite(metrics.ttfbP50) ? Math.round(metrics.ttfbP50) : null,
+    ttfbP95: Number.isFinite(metrics.ttfbP95) ? Math.round(metrics.ttfbP95) : null,
+    hosts: metrics.hosts || {},
     networkBytes: metrics.networkBytes,
     committedBytes: metrics.committedBytes,
     dbWriteMs: Math.round(metrics.dbWriteMs || 0),
@@ -672,6 +728,8 @@ function aggregateDownloadMetrics(states) {
     concurrency: metrics.reduce((sum, value) => sum + (Number(value.concurrency) || 0), 0),
     requestCount: metrics.reduce((sum, value) => sum + (Number(value.requestCount) || 0), 0),
     retryCount: metrics.reduce((sum, value) => sum + (Number(value.retryCount) || 0), 0),
+    slowRequestCount: metrics.reduce((sum, value) => sum + (Number(value.slowRequestCount) || 0), 0),
+    cdnSwitchCount: metrics.reduce((sum, value) => sum + (Number(value.cdnSwitchCount) || 0), 0),
     networkBytes: metrics.reduce((sum, value) => sum + (Number(value.networkBytes) || 0), 0),
     committedBytes: metrics.reduce((sum, value) => sum + (Number(value.committedBytes) || 0), 0),
     dbWriteMs: Math.round(metrics.reduce((sum, value) => sum + (Number(value.dbWriteMs) || 0), 0)),
@@ -714,6 +772,9 @@ async function downloadDashSource(video, existing, source, job) {
     quality: source.quality,
     qualityLabel: source.qualityLabel,
     requestedQuality: source.requestedQuality,
+    codec: source.codec,
+    codecLabel: source.codecLabel,
+    requestedCodec: source.requestedCodec,
     format: source.format,
     duration: source.duration || video.duration,
     tracks,

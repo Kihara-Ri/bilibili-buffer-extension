@@ -43,3 +43,14 @@ export function choosePopupQuality(qualities, ...preferences) {
   }
   return normalizeQualityId(options[0]?.quality);
 }
+
+export function choosePopupCodec(codecOptions, ...preferences) {
+  const available = new Set((Array.isArray(codecOptions) ? codecOptions : [])
+    .map((option) => String(option?.codec || "").toLowerCase())
+    .filter(Boolean));
+  for (const preference of preferences) {
+    const codec = String(preference || "").toLowerCase();
+    if (available.has(codec)) return codec;
+  }
+  return available.has("auto") ? "auto" : [...available][0] || "";
+}
