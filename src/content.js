@@ -1,6 +1,6 @@
 (() => {
   document.documentElement.dataset.biliBufferVersion = chrome.runtime.getManifest().version;
-  document.documentElement.dataset.biliBufferContentReady = "2.1.0";
+  document.documentElement.dataset.biliBufferContentReady = "2.1.1";
   let lastUrl = location.href;
   let activePlayback = null;
 

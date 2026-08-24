@@ -479,7 +479,15 @@ h2 {
 }
 
 .assist-modes {
-  justify-content: flex-start;
+  flex-wrap: nowrap;
+  justify-content: stretch;
+}
+
+.assist-modes button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-inline: 4px;
+  white-space: nowrap;
 }
 
 .assist-metrics {

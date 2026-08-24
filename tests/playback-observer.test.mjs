@@ -66,6 +66,18 @@ test("自动预热需同时满足播放时长与冷区间条件", () => {
   assert.equal(internals.shouldPrefetch(track), false);
 });
 
+test("始终预热在播放门槛后不需要冷请求也会启动", () => {
+  const { internals } = loadObserver();
+  const track = internals.trackFor("https://upos-sz-mirrorcosov.bilivideo.com/path/video.m4s");
+  track.anchor = 1024;
+  internals.cfg.mode = "always";
+
+  assert.equal(internals.shouldPrefetch(track), false);
+  internals.setPlayedSec(20);
+  assert.equal(track.cold, false);
+  assert.equal(internals.shouldPrefetch(track), true);
+});
+
 test("估计器护栏只在同 host 热样本充足且刚发生慢请求时清洗", async () => {
   const host = "upos-sz-mirrorcosov.bilivideo.com";
   const estimator = {

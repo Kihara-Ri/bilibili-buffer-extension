@@ -68,6 +68,9 @@ globalThis.chrome = {
       if (message.type === "GET_ASSIST_STATE") {
         return { ok: true, config: { mode: "auto", estimatorGuard: true }, stats: null };
       }
+      if (message.type === "SET_ASSIST_CONFIG") {
+        return { ok: true, config: { mode: message.patch.mode, estimatorGuard: true } };
+      }
       if (message.type === "SET_POPUP_SELECTION") return { ok: true, saved: true };
       throw new Error(`未预期的请求：${message.type}`);
     }
@@ -77,17 +80,24 @@ globalThis.chrome = {
 await import("../src/popup.js");
 await delay(180);
 observer.disconnect();
+document.querySelector("[data-assist-mode='always']").click();
+await delay(20);
+
+const selectedAssistMode = document.querySelector("[data-assist-mode][aria-checked='true']")?.dataset.assistMode;
 
 const result = {
   ok: document.querySelector("#current-heading").textContent === "已恢复的视频标题" &&
     document.querySelector("#button-label").textContent === "缓存" &&
-    !calls.includes("REFRESH_POPUP_DATA"),
+    !calls.includes("REFRESH_POPUP_DATA") &&
+    calls.includes("SET_ASSIST_CONFIG") &&
+    selectedAssistMode === "always",
   moduleLoadMs: Math.round(snapshotRequestedAt - openedAt),
   snapshotToReadyMs: Math.round((readyAt || performance.now()) - snapshotRequestedAt),
   libraryDelayMs: 120,
   calls,
   title: document.querySelector("#current-heading").textContent,
   button: document.querySelector("#button-label").textContent,
+  selectedAssistMode,
   listenerInstalled: typeof listener === "function"
 };
 document.querySelector("#result").textContent = JSON.stringify(result, null, 2);

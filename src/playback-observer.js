@@ -6,7 +6,7 @@
   window[NS] = true;
 
   const markObserverReady = () => {
-    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.1.0";
+    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.1.1";
   };
   markObserverReady();
   if (!document.documentElement) document.addEventListener("DOMContentLoaded", markObserverReady, { once: true });
@@ -608,8 +608,10 @@
       stallMs: Math.round(stats.stallMs + (stats.waitingSince ? performance.now() - stats.waitingSince : 0)),
       playedSec: stats.playedSec,
       bufferAheadSec: +currentBufferAhead().toFixed(1),
+      pageHidden: document.hidden,
       warmingUp: stats.playedSec < cfg.minWatchedSec,
       minWatchedSec: cfg.minWatchedSec,
+      minBufferAheadSec: cfg.minBufferAheadSec,
       estimator: readEstimator(),
       hosts
     };

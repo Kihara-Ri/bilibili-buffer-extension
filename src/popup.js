@@ -453,15 +453,26 @@ function renderAssist() {
   let warning = false;
   if (config.mode === "off") status = "已关闭";
   else if (!stats) status = "刷新视频页后开始观测";
-  else if (stats.slowRequests > 0) {
-    status = config.mode === "auto"
-      ? `发现冷区间 · 预热中 ${stats.prefetching || 0}`
-      : "发现冷区间 · 可开启自动预热";
+  else if (config.mode === "observe") {
+    status = stats.slowRequests > 0 ? "发现冷区间 · 仅观察" : "仅观察 · 不会预热";
+    warning = stats.slowRequests > 0;
+  } else if (stats.pageHidden) {
+    status = "页面不可见 · 预热暂停";
+  } else if (stats.warmingUp) {
+    status = `${config.mode === "always" ? "准备预热" : "观察"} ${stats.playedSec || 0}/${stats.minWatchedSec || 20}s`;
+  } else if (Number(stats.bufferAheadSec) < Number(stats.minBufferAheadSec || config.minBufferAheadSec || 10)) {
+    status = `缓冲不足 ${Number(stats.bufferAheadSec || 0).toFixed(1)}s · 预热暂停`;
+  } else if (config.mode === "always") {
+    if (stats.prefetching > 0) status = `始终预热 · ${stats.prefetching} 路进行中`;
+    else if (stats.prefetchMB > 0) status = `始终预热 · 已完成 ${Number(stats.prefetchMB).toFixed(1)} MB`;
+    else status = "始终预热 · 等待媒体区间";
+  } else if (stats.slowRequests > 0) {
+    if (stats.prefetching > 0) status = `发现冷区间 · ${stats.prefetching} 路预热中`;
+    else if (stats.prefetchMB > 0) status = `冷区间 · 已预热 ${Number(stats.prefetchMB).toFixed(1)} MB`;
+    else status = "发现冷区间 · 等待预热";
     warning = true;
-  } else if (config.mode === "auto" && stats.warmingUp) {
-    status = `观察 ${stats.playedSec || 0}/${stats.minWatchedSec || 20}s`;
   } else {
-    status = `链路正常${stats.stalls ? ` · ${stats.stalls} 次停顿` : ""}`;
+    status = `链路正常 · 未触发预热${stats.stalls ? ` · ${stats.stalls} 次停顿` : ""}`;
   }
   elements.assistStatus.textContent = status;
   elements.assistStatus.dataset.tone = warning ? "warning" : "normal";
