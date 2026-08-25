@@ -83,7 +83,7 @@ window.addEventListener("resize", () => {
 });
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.target !== "popup") return;
-  if (["CACHE_PROGRESS", "CACHE_COMPLETE", "CACHE_ERROR", "CACHE_DELETED"].includes(message.type)) {
+  if (["CACHE_PROGRESS", "CACHE_RETRY", "CACHE_COMPLETE", "CACHE_ERROR", "CACHE_DELETED"].includes(message.type)) {
     if (message.video) {
       const index = state.videos.findIndex((video) => video.id === message.video.id);
       if (index >= 0) state.videos.splice(index, 1, message.video);
@@ -244,14 +244,23 @@ function renderCurrent() {
 
   if (cached.status === "downloading") {
     const progress = Math.max(0, Math.min(1, Number(cached.progress) || 0));
+    const retrySeconds = Math.max(0, Math.ceil(((Number(cached.nextRetryAt) || 0) - Date.now()) / 1000));
+    const recovering = Boolean(cached.error);
     setButtonState(
       "downloading",
-      `正在缓存 ${Math.round(progress * 100)}%`,
-      cached.speed ? formatSpeed(cached.speed) : "连接中",
+      retrySeconds > 0
+        ? `等待续传 ${Math.round(progress * 100)}%`
+        : recovering
+          ? `正在恢复 ${Math.round(progress * 100)}%`
+          : `正在缓存 ${Math.round(progress * 100)}%`,
+      retrySeconds > 0 ? `${retrySeconds}s` : cached.speed ? formatSpeed(cached.speed) : "连接中",
       progress,
       true
     );
-    setHint(`${formatBytes(cached.downloadedBytes)} / ${formatBytes(cached.totalBytes)}`, false);
+    setHint(
+      cached.error || `${formatBytes(cached.downloadedBytes)} / ${formatBytes(cached.totalBytes)}`,
+      false
+    );
     return;
   }
 
@@ -780,7 +789,7 @@ function createVideoItem(video) {
   const statusText = video.status === "complete"
     ? [video.qualityLabel || "MP4", video.codecLabel || CODEC_LABELS[video.codec]].filter(Boolean).join(" · ")
     : video.status === "downloading"
-      ? "缓存中"
+      ? Number(video.nextRetryAt) > Date.now() ? "等待自动续传" : video.error ? "正在恢复" : "缓存中"
       : "可继续";
   if (video.owner) {
     const ownerUrl = normalizeHttpUrl(video.ownerUrl) || makeBiliSpaceUrl(video.ownerId);

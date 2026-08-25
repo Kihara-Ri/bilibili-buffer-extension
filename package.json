@@ -1,12 +1,12 @@
 {
   "name": "bili-buffer-extension",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev-reload-server.mjs",
     "build": "node scripts/build-release.mjs",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check src/background.js && node --check src/offscreen.js && node --check src/range-downloader.js && node --check src/playback-observer.js && node --check src/playback-bridge.js && node --check src/popup-snapshot.js && node --check src/popup.js && node --check src/content.js && node --check src/dev-reload.js && node --check scripts/dev-reload-server.mjs && node --check scripts/benchmark-range-download.mjs && node --check scripts/build-release.mjs && node --check tests/offscreen-integration.mjs && node --check tests/background-popup-integration.mjs && node --check tests/popup-instant-integration.mjs && node --check tests/playback-progress-integration.mjs"
+    "check": "node --check src/background.js && node --check src/offscreen.js && node --check src/range-downloader.js && node --check src/download-retry.js && node --check src/playback-observer.js && node --check src/playback-bridge.js && node --check src/popup-snapshot.js && node --check src/popup.js && node --check src/content.js && node --check src/dev-reload.js && node --check scripts/dev-reload-server.mjs && node --check scripts/benchmark-range-download.mjs && node --check scripts/build-release.mjs && node --check tests/offscreen-integration.mjs && node --check tests/background-popup-integration.mjs && node --check tests/popup-instant-integration.mjs && node --check tests/playback-progress-integration.mjs"
   }
 }

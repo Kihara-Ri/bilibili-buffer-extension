@@ -2,8 +2,12 @@ let messageListener;
 let cookieChangeListener;
 let viewRequests = 0;
 let playurlRequests = 0;
+let extensionPlayurlRequests = 0;
 let offscreenCreates = 0;
 let playurlDelayMs = 0;
+let pageAvailable = true;
+let alarmListener;
+const alarms = new Map();
 const sessionStorage = {};
 const localStorage = {};
 
@@ -36,6 +40,7 @@ globalThis.chrome = {
         return { ok: true, stats: { requests: 3, slowRequests: 1 } };
       }
       if (message.type !== "BILI_BUFFER_FETCH_PLAYURL") throw new Error("未知页面消息");
+      if (!pageAvailable) throw new Error("页面已关闭");
       playurlRequests += 1;
       if (playurlDelayMs) await delay(playurlDelayMs);
       return { ok: true, payload: makePlayurlPayload() };
@@ -43,6 +48,11 @@ globalThis.chrome = {
   },
   offscreen: {
     async createDocument() { offscreenCreates += 1; }
+  },
+  alarms: {
+    onAlarm: { addListener(listener) { alarmListener = listener; } },
+    async create(name, options) { alarms.set(name, options); },
+    async clear(name) { return alarms.delete(name); }
   },
   action: {
     async setBadgeBackgroundColor() {},
@@ -60,6 +70,13 @@ globalThis.fetch = async (input, init) => {
   if (url.includes("/x/web-interface/view")) {
     viewRequests += 1;
     return new Response(JSON.stringify(makeViewPayload()), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+  if (url.includes("/x/player/playurl")) {
+    extensionPlayurlRequests += 1;
+    return new Response(JSON.stringify(makePlayurlPayload()), {
       status: 200,
       headers: { "Content-Type": "application/json" }
     });
@@ -118,6 +135,21 @@ try {
   const selectionAfterRefresh = await send({ type: "GET_POPUP_SNAPSHOT", tabId: 7, url });
   assert(selectionAfterRefresh.snapshot?.selectedQuality === 112, "静默刷新不得覆盖用户刚选择的画质");
 
+  pageAvailable = false;
+  const refreshedAfterClose = await send({
+    type: "REFRESH_DOWNLOAD_SOURCE",
+    video: {
+      bvid: "BV1Kg8t6NEmN",
+      cid: 456,
+      tabId: 7,
+      requestedQuality: 112,
+      mediaKind: "dash"
+    }
+  });
+  assert(refreshedAfterClose.ok && refreshedAfterClose.playurlData?.dash, "关闭原页后未能从扩展后台刷新播放地址");
+  assert(extensionPlayurlRequests === 1, "关页续传应使用扩展源播放接口");
+  assert(typeof alarmListener === "function", "下载看门狗没有注册");
+
   show({
     ok: true,
     firstOpen: { viewRequests: 1, playurlRequests: 1 },
@@ -125,7 +157,8 @@ try {
     selectedQuality: selected.snapshot.selectedQuality,
     selectionDuringRefresh: selectionAfterRefresh.snapshot.selectedQuality,
     offscreenCreatesForLibrary: offscreenCreates,
-    cookieChangeKeepsStaleSnapshot: invalidated.stale
+    cookieChangeKeepsStaleSnapshot: invalidated.stale,
+    closedPageRefreshRequests: extensionPlayurlRequests
   });
 } catch (error) {
   show({ ok: false, error: error.stack || error.message });

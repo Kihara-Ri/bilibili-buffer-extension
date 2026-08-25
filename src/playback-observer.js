@@ -6,7 +6,7 @@
   window[NS] = true;
 
   const markObserverReady = () => {
-    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.1.1";
+    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.2.0";
   };
   markObserverReady();
   if (!document.documentElement) document.addEventListener("DOMContentLoaded", markObserverReady, { once: true });
@@ -184,7 +184,8 @@
         consecutivePrefetchErrors: 0,
         cooldownUntil: 0,
         prefetchDisabled: false,
-        lastSeen: Date.now()
+        lastSeen: Date.now(),
+        lastPlayerSeen: Date.now()
       };
       tracks.set(key, track);
     } else {
@@ -195,6 +196,7 @@
       track.host = hostFor(url) || track.host;
       track.active = true;
       track.lastSeen = Date.now();
+      track.lastPlayerSeen = Date.now();
     }
     return track;
   }
@@ -618,16 +620,66 @@
   }
 
   function normalizedPrefetchedRanges() {
+    const eligible = [...tracks.values()].filter((track) => (
+      track.active !== false && track.size > 0 && track.prefetchedRanges?.length
+    ));
+    if (!eligible.length) return [];
+
+    const progressive = eligible
+      .filter((track) => !/\.m4s$/i.test(track.path))
+      .sort((left, right) => right.lastPlayerSeen - left.lastPlayerSeen)[0];
+    if (progressive) return normalizedTrackRanges(progressive);
+
+    const dashPair = chooseCurrentDashPair(eligible);
+    if (!dashPair) return [];
+    return intersectRanges(
+      normalizedTrackRanges(dashPair.video),
+      normalizedTrackRanges(dashPair.audio)
+    );
+  }
+
+  function normalizedTrackRanges(track) {
     const normalized = [];
-    for (const track of tracks.values()) {
-      if (track.active === false || !(track.size > 0) || !track.prefetchedRanges?.length) continue;
-      for (const [start, end] of track.prefetchedRanges) {
-        const left = Math.max(0, Math.min(1, start / track.size));
-        const right = Math.max(0, Math.min(1, end / track.size));
-        if (right > left) addRange(normalized, left, right);
-      }
+    if (!(track?.size > 0)) return normalized;
+    for (const [start, end] of track.prefetchedRanges || []) {
+      const left = Math.max(0, Math.min(1, start / track.size));
+      const right = Math.max(0, Math.min(1, end / track.size));
+      if (right > left) addRange(normalized, left, right);
     }
     return normalized;
+  }
+
+  function chooseCurrentDashPair(candidates) {
+    const dash = candidates.filter((track) => /\.m4s$/i.test(track.path));
+    let selected = null;
+    for (let leftIndex = 0; leftIndex < dash.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < dash.length; rightIndex += 1) {
+        const left = dash[leftIndex];
+        const right = dash[rightIndex];
+        const video = left.size >= right.size ? left : right;
+        const audio = video === left ? right : left;
+        if (video.size < audio.size * 1.5) continue;
+        const score = Math.min(video.lastPlayerSeen || 0, audio.lastPlayerSeen || 0);
+        if (!selected || score > selected.score) selected = { video, audio, score };
+      }
+    }
+    return selected;
+  }
+
+  function intersectRanges(leftRanges, rightRanges) {
+    const result = [];
+    let leftIndex = 0;
+    let rightIndex = 0;
+    while (leftIndex < leftRanges.length && rightIndex < rightRanges.length) {
+      const left = leftRanges[leftIndex];
+      const right = rightRanges[rightIndex];
+      const start = Math.max(left[0], right[0]);
+      const end = Math.min(left[1], right[1]);
+      if (end > start) addRange(result, start, end);
+      if (left[1] <= right[1]) leftIndex += 1;
+      else rightIndex += 1;
+    }
+    return result;
   }
 
   function ensurePreheatProgressStyle() {
@@ -677,6 +729,7 @@
       if (layer.dataset.rangeKey === rangeKey) continue;
       const segments = ranges.map(([start, end]) => {
         const segment = document.createElement("span");
+        segment.className = "bili-buffer-preheat-segment";
         segment.style.left = `${start * 100}%`;
         segment.style.width = `${(end - start) * 100}%`;
         return segment;
@@ -735,6 +788,9 @@
     shouldPrefetch,
     pickJob,
     normalizedPrefetchedRanges,
+    normalizedTrackRanges,
+    chooseCurrentDashPair,
+    intersectRanges,
     renderPreheatProgress,
     resetTracksAfterNavigation,
     setPlayedSec(value) { stats.playedSec = Number(value) || 0; },

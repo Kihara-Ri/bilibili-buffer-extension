@@ -25,6 +25,11 @@ import {
   makePopupPageKey,
   POPUP_SNAPSHOT_MAX_AGE
 } from "./popup-snapshot.js";
+import {
+  DOWNLOAD_WATCHDOG_ALARM,
+  isDownloadRetryDue,
+  makeDownloadWatchdogSchedule
+} from "./download-retry.js";
 
 const OFFSCREEN_PATH = "offscreen.html";
 const POPUP_SNAPSHOTS_KEY = "popupPageSnapshotsV1";
@@ -40,11 +45,15 @@ const ASSIST_DEFAULTS = Object.freeze({
   estimatorGuard: true
 });
 let creatingOffscreen;
+let restoringDownloads;
 let popupSnapshotQueue = Promise.resolve();
 const popupSnapshotMemory = new Map();
 
 if (chrome.runtime.id) startDevReloadBackground(ensureOffscreenDocument);
 void restoreActiveDownloads();
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm?.name === DOWNLOAD_WATCHDOG_ALARM) void restoreActiveDownloads();
+});
 chrome.cookies.onChanged.addListener((changeInfo) => {
   const cookie = changeInfo?.cookie;
   if (cookie?.name === "SESSDATA" && String(cookie.domain || "").endsWith("bilibili.com")) {
@@ -117,6 +126,7 @@ async function handleMessage(message, sender) {
       pageInfo.playurlData = playurl.data;
       const result = await sendToOffscreen({ type: "START_DOWNLOAD", video: pageInfo });
       if (!result.ok) throw new Error(result.error);
+      await ensureDownloadWatchdog();
       const { auth: _auth, playurlData: _playurlData, ...publicPageInfo } = pageInfo;
       return { pageInfo: publicPageInfo, ...result };
     }
@@ -146,13 +156,23 @@ async function handleMessage(message, sender) {
     case "DELETE_VIDEO":
       return unwrap(await sendToOffscreen({ type: "DELETE_VIDEO", videoId: message.videoId }));
     case "CACHE_PROGRESS":
+      await handleCacheEvent(message);
+      return { received: true };
+    case "CACHE_RETRY":
+      await ensureDownloadWatchdog(message.video?.nextRetryAt);
+      await handleCacheEvent(message);
+      return { received: true };
     case "CACHE_COMPLETE":
     case "CACHE_ERROR":
       await handleCacheEvent(message);
+      void syncDownloadWatchdog();
       return { received: true };
     case "CACHE_DELETED":
       broadcastToPopup(message);
+      void syncDownloadWatchdog();
       return { received: true };
+    case "REFRESH_DOWNLOAD_SOURCE":
+      return refreshDownloadSource(message.video);
     case "PLAYBACK_ACTIVE":
       if (sender.tab?.id) {
         await chrome.action.setBadgeBackgroundColor({ color: "#1682a7", tabId: sender.tab.id });
@@ -387,6 +407,29 @@ async function sendToOffscreen(message) {
   return chrome.runtime.sendMessage({ ...message, target: "offscreen" });
 }
 
+async function refreshDownloadSource(video) {
+  if (!video?.bvid || !video?.cid) throw new Error("缓存任务缺少视频身份，无法刷新播放地址");
+  const auth = await getBiliSessionState();
+  const requestedQuality = normalizeQualityId(video.requestedQuality ?? video.quality, AUTO_QUALITY);
+  const fnval = video.mediaKind === "dash" ? "4048" : "1";
+  const playurl = await requestPlayurl(video, requestedQuality, video.tabId, auth, fnval);
+  return { auth: playurl.auth, playurlData: playurl.data };
+}
+
+async function ensureDownloadWatchdog(nextRetryAt = 0) {
+  await chrome.alarms.create(DOWNLOAD_WATCHDOG_ALARM, makeDownloadWatchdogSchedule(nextRetryAt));
+}
+
+async function syncDownloadWatchdog() {
+  const active = (await listVideos()).filter((video) => video.status === "downloading");
+  const nextRetryAt = active.reduce((earliest, video) => {
+    const retryAt = Number(video.nextRetryAt) || 0;
+    return retryAt > Date.now() && (!earliest || retryAt < earliest) ? retryAt : earliest;
+  }, 0);
+  if (active.length) await ensureDownloadWatchdog(nextRetryAt);
+  else await chrome.alarms.clear(DOWNLOAD_WATCHDOG_ALARM);
+}
+
 function unwrap(result) {
   if (!result?.ok) throw new Error(result?.error || "缓存后台没有响应");
   return result;
@@ -562,6 +605,14 @@ function broadcastToPopup(message) {
 }
 
 async function restoreActiveDownloads() {
+  if (restoringDownloads) return restoringDownloads;
+  restoringDownloads = restoreActiveDownloadsNow().finally(() => {
+    restoringDownloads = null;
+  });
+  return restoringDownloads;
+}
+
+async function restoreActiveDownloadsNow() {
   try {
     const interrupted = [];
     for (const video of await listVideos()) {
@@ -580,8 +631,20 @@ async function restoreActiveDownloads() {
         interrupted.push(video);
       }
     }
+    if (!interrupted.length) {
+      await chrome.alarms.clear(DOWNLOAD_WATCHDOG_ALARM);
+      return;
+    }
+    const nextRetryAt = interrupted.reduce((earliest, video) => {
+      const retryAt = Number(video.nextRetryAt) || 0;
+      return retryAt > Date.now() && (!earliest || retryAt < earliest) ? retryAt : earliest;
+    }, 0);
+    await ensureDownloadWatchdog(nextRetryAt);
+    const activeResult = await sendToOffscreen({ type: "GET_ACTIVE_DOWNLOADS" }).catch(() => ({ videoIds: [] }));
+    const activeIds = new Set(activeResult?.videoIds || []);
     const auth = interrupted.length ? await getBiliSessionState() : null;
     for (const video of interrupted) {
+      if (activeIds.has(video.id) || !isDownloadRetryDue(video)) continue;
       try {
         const requestedQuality = normalizeQualityId(video.requestedQuality ?? video.quality, AUTO_QUALITY);
         const persistedCodec = getCodecFamily(video.tracks?.video?.codecs);
@@ -610,6 +673,7 @@ async function restoreActiveDownloads() {
         }
       }
     }
+    await syncDownloadWatchdog();
   } catch (error) {
     console.warn("[Bili 缓冲站] 无法恢复上次的缓存任务：", error);
   }

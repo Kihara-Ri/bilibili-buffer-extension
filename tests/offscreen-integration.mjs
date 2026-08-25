@@ -5,6 +5,7 @@ const videoBytes = makeBytes(9 * MiB + 137, 17);
 const audioBytes = makeBytes(2 * MiB + 73, 91);
 const broadcasts = [];
 let messageListener;
+let sourceRefreshRequests = 0;
 
 Object.defineProperty(globalThis, "MediaSource", {
   configurable: true,
@@ -19,6 +20,14 @@ globalThis.chrome = {
       }
     },
     async sendMessage(message) {
+      if (message.type === "REFRESH_DOWNLOAD_SOURCE") {
+        sourceRefreshRequests += 1;
+        return {
+          ok: true,
+          auth: { hasSessionCookie: false },
+          playurlData: makePlayurlData("renewed.test")
+        };
+      }
       broadcasts.push(message);
       return { ok: true };
     }
@@ -33,6 +42,9 @@ globalThis.fetch = async (url, init = {}) => {
   if (!match) return new Response("Range required", { status: 400 });
   const start = Number(match[1]);
   const end = Math.min(Number(match[2]), source.length - 1);
+  if (!String(url).includes("renewed.test") && start >= 4 * MiB) {
+    return new Response("expired", { status: 403 });
+  }
   const isBackup = String(url).includes("backup.test");
   const rangeOrdinal = Math.floor(start / (4 * MiB));
   await delay((isBackup ? 4 : 24) + (rangeOrdinal === 0 ? 14 : rangeOrdinal === 1 ? 1 : 7));
@@ -65,44 +77,7 @@ try {
       requestedQuality: 80,
       requestedQualityExplicit: true,
       requestedCodec: "auto",
-      playurlData: {
-        quality: 80,
-        accept_quality: [80],
-        accept_description: ["1080P"],
-        support_formats: [{ quality: 80, display_desc: "1080P" }],
-        dash: {
-          duration: 60,
-          video: [
-            {
-              id: 80,
-              codecid: 7,
-              mimeType: "video/mp4",
-              codecs: "avc1.640032",
-              bandwidth: 3_600_000,
-              baseUrl: "https://primary.test/video",
-              backupUrl: ["https://backup.test/video"]
-            },
-            {
-              id: 80,
-              codecid: 13,
-              mimeType: "video/mp4",
-              codecs: "av01.0.08M.08",
-              bandwidth: 1_600_000,
-              baseUrl: "https://primary.test/video",
-              backupUrl: ["https://backup.test/video"]
-            }
-          ],
-          audio: [{
-            id: 30280,
-            codecid: 0,
-            mimeType: "audio/mp4",
-            codecs: "mp4a.40.2",
-            bandwidth: 128_000,
-            baseUrl: "https://primary.test/audio",
-            backupUrl: ["https://backup.test/audio"]
-          }]
-        }
-      },
+      playurlData: makePlayurlData(),
       auth: { hasSessionCookie: false },
       url: "https://www.bilibili.com/video/BV1integration/",
       updatedAt: Date.now()
@@ -114,7 +89,7 @@ try {
     const response = await send({ target: "offscreen", type: "GET_VIDEO", videoId: id });
     if (response.video?.status === "error") throw new Error(response.video.error);
     return response.video?.status === "complete" ? response.video : null;
-  }, 8000);
+  }, 20000);
 
   const videoChunks = await getChunks(id, "video");
   const audioChunks = await getChunks(id, "audio");
@@ -126,8 +101,9 @@ try {
   assert(completed.codec === "av1", "自动编码没有选择同画质下码率最低的 AV1");
   assert(completed.tracks.video.metrics.concurrency === 2, "视频轨应使用 2 路并发");
   assert(completed.tracks.audio.metrics.concurrency === 1, "音频轨应使用 1 路并发");
-  assert(completed.tracks.video.metrics.cdnHost === "backup.test", "没有优先选择测速更快的视频 CDN");
-  assert(completed.tracks.audio.metrics.cdnHost === "backup.test", "没有优先选择测速更快的音频 CDN");
+  assert(completed.tracks.video.metrics.cdnHost === "renewed.test", "刷新后没有切换到新视频 CDN");
+  assert(completed.tracks.audio.metrics.cdnHost === "renewed.test", "刷新后没有切换到新音频 CDN");
+  assert(sourceRefreshRequests >= 1, "签名地址失效后没有刷新播放地址");
 
   document.querySelector("#result").textContent = JSON.stringify({
     ok: true,
@@ -136,7 +112,8 @@ try {
     audioChunks: audioChunks.length,
     videoMetrics: completed.tracks.video.metrics,
     audioMetrics: completed.tracks.audio.metrics,
-    progressEvents: broadcasts.filter((message) => message.type === "CACHE_PROGRESS").length
+    progressEvents: broadcasts.filter((message) => message.type === "CACHE_PROGRESS").length,
+    sourceRefreshRequests
   }, null, 2);
 } catch (error) {
   document.querySelector("#result").textContent = JSON.stringify({ ok: false, error: error.stack || error.message }, null, 2);
@@ -164,6 +141,49 @@ function makeBytes(length, seed) {
   const result = new Uint8Array(length);
   for (let index = 0; index < length; index += 1) result[index] = (index + seed) % 251;
   return result;
+}
+
+function makePlayurlData(host = "primary.test") {
+  const backupHost = host === "primary.test" ? "backup.test" : "";
+  const track = (path) => ({
+    baseUrl: `https://${host}/${path}`,
+    backupUrl: backupHost ? [`https://${backupHost}/${path}`] : []
+  });
+  return {
+    quality: 80,
+    accept_quality: [80],
+    accept_description: ["1080P"],
+    support_formats: [{ quality: 80, display_desc: "1080P" }],
+    dash: {
+      duration: 60,
+      video: [
+        {
+          id: 80,
+          codecid: 7,
+          mimeType: "video/mp4",
+          codecs: "avc1.640032",
+          bandwidth: 3_600_000,
+          ...track("video")
+        },
+        {
+          id: 80,
+          codecid: 13,
+          mimeType: "video/mp4",
+          codecs: "av01.0.08M.08",
+          bandwidth: 1_600_000,
+          ...track("video")
+        }
+      ],
+      audio: [{
+        id: 30280,
+        codecid: 0,
+        mimeType: "audio/mp4",
+        codecs: "mp4a.40.2",
+        bandwidth: 128_000,
+        ...track("audio")
+      }]
+    }
+  };
 }
 
 function equalBytes(left, right) {

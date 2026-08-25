@@ -29,6 +29,7 @@ import {
   downloadByteRanges,
   rankRangeCandidates
 } from "./range-downloader.js";
+import { isRecoverableDownloadError, makeDownloadRetryState } from "./download-retry.js";
 import { startDevReloadPolling } from "./dev-reload.js";
 
 const CHUNK_SIZE = 4 * 1024 * 1024;
@@ -58,6 +59,8 @@ async function handleMessage(message) {
   switch (message.type) {
     case "START_DOWNLOAD":
       return startDownload(message.video);
+    case "GET_ACTIVE_DOWNLOADS":
+      return { videoIds: [...activeDownloads.keys()] };
     case "LIST_VIDEOS":
       return { videos: await listVideos() };
     case "GET_VIDEO":
@@ -307,30 +310,119 @@ async function resolveMediaSource(video) {
 }
 
 async function downloadVideo(video, existing, job) {
-  const { auth: _auth, playurlData: _playurlData, ...safeVideo } = video;
-  try {
-    const source = await resolveMediaSource(video);
-    const meta = source.mediaKind === "dash"
-      ? await downloadDashSource(safeVideo, existing, source, job)
-      : await downloadProgressiveSource(safeVideo, existing, source, job);
-    if (job.deleted) return;
-    await putVideo(meta);
-    broadcastProgress(meta, "CACHE_COMPLETE");
-  } catch (error) {
-    if (job.deleted) return;
-    const current = await getVideo(video.id).catch(() => null) || existing || safeVideo;
-    const { auth: _currentAuth, playurlData: _currentPlayurl, ...safeCurrent } = current;
-    const message = error?.name === "AbortError" ? "缓存已暂停，点击可继续" : toPublicError(error);
-    const failed = {
-      ...safeCurrent,
-      status: "error",
-      speed: 0,
-      error: message,
-      updatedAt: Date.now()
-    };
-    await putVideo(failed);
-    broadcastProgress(failed, "CACHE_ERROR");
+  let currentVideo = video;
+  let currentExisting = existing;
+  let sourceRefreshes = 0;
+  while (!job.deleted) {
+    const { auth: _auth, playurlData: _playurlData, ...safeVideo } = currentVideo;
+    try {
+      const source = await resolveMediaSource(currentVideo);
+      const meta = source.mediaKind === "dash"
+        ? await downloadDashSource(safeVideo, currentExisting, source, job)
+        : await downloadProgressiveSource(safeVideo, currentExisting, source, job);
+      if (job.deleted) return;
+      const completed = { ...meta, autoRetryCount: 0, nextRetryAt: 0, retryDelayMs: 0 };
+      await putVideo(completed);
+      broadcastProgress(completed, "CACHE_COMPLETE");
+      return;
+    } catch (caughtError) {
+      if (job.deleted) return;
+      let error = caughtError;
+      const current = await getVideo(video.id).catch(() => null) || currentExisting || safeVideo;
+      const { auth: _currentAuth, playurlData: _currentPlayurl, ...safeCurrent } = current;
+
+      if (
+        error?.name !== "AbortError" &&
+        isRecoverableDownloadError(error) &&
+        sourceRefreshes < 2
+      ) {
+        try {
+          const refreshed = await refreshDownloadSource(safeCurrent);
+          sourceRefreshes += 1;
+          currentVideo = { ...safeCurrent, auth: refreshed.auth, playurlData: refreshed.playurlData };
+          currentExisting = current;
+          const refreshing = {
+            ...safeCurrent,
+            status: "downloading",
+            speed: 0,
+            error: "连接中断，正在刷新播放地址并续传",
+            updatedAt: Date.now()
+          };
+          await putVideo(refreshing);
+          broadcastProgress(refreshing);
+          await abortableDelay(sourceRefreshes * 1000, job.controller.signal);
+          continue;
+        } catch (refreshError) {
+          error = refreshError;
+        }
+      }
+
+      const retry = error?.name === "AbortError" ? null : makeDownloadRetryState(safeCurrent, error);
+      if (retry) {
+        const waiting = {
+          ...safeCurrent,
+          ...retry,
+          status: "downloading",
+          speed: 0,
+          updatedAt: Date.now()
+        };
+        await putVideo(waiting);
+        broadcastProgress(waiting, "CACHE_RETRY");
+        return;
+      }
+
+      const message = error?.name === "AbortError" ? "缓存已暂停，点击可继续" : toPublicError(error);
+      const failed = {
+        ...safeCurrent,
+        status: "error",
+        speed: 0,
+        error: message,
+        updatedAt: Date.now()
+      };
+      await putVideo(failed);
+      broadcastProgress(failed, "CACHE_ERROR");
+      return;
+    }
   }
+}
+
+async function refreshDownloadSource(video) {
+  const response = await chrome.runtime.sendMessage({
+    target: "background",
+    type: "REFRESH_DOWNLOAD_SOURCE",
+    video: {
+      id: video.id,
+      bvid: video.bvid,
+      cid: video.cid,
+      tabId: video.tabId,
+      requestedQuality: video.requestedQuality ?? video.quality,
+      requestedQualityExplicit: video.requestedQualityExplicit,
+      requestedCodec: video.requestedCodec,
+      mediaKind: video.mediaKind
+    }
+  });
+  if (!response?.ok || !response.playurlData) {
+    throw new Error(response?.error || "无法刷新播放地址");
+  }
+  return response;
+}
+
+function abortableDelay(ms, signal) {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason || new DOMException("任务已取消", "AbortError"));
+  }
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason || new DOMException("任务已取消", "AbortError"));
+    };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 async function downloadProgressiveSource(video, existing, source, job) {
@@ -652,6 +744,9 @@ function createDownloadCoordinator(baseMeta, initialStates) {
         state.chunkCount = nextIndex;
         state.volatileBytes = Math.max(0, state.volatileBytes - committedBytes);
         state.metrics.committedBytes = nextResume;
+        baseMeta.autoRetryCount = 0;
+        baseMeta.nextRetryAt = 0;
+        baseMeta.retryDelayMs = 0;
         const snapshot = buildSnapshot();
         const startedAt = performance.now();
         try {

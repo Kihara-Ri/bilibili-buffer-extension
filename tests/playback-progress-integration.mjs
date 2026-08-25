@@ -9,14 +9,15 @@ try {
   const audio = internals.trackFor("https://a.bilivideo.com/path/audio.m4s");
   audio.size = 100;
   internals.addRange(audio.prefetchedRanges, 20, 35);
+  internals.addRange(audio.prefetchedRanges, 50, 75);
   internals.renderPreheatProgress();
 
   const layers = [...document.querySelectorAll(".bili-buffer-preheat-layer")];
   const firstSegments = [...layers[0].children];
   assert(layers.length === 2, "主进度条和影子进度条都应有预热层");
-  assert(firstSegments.length === 2, "重叠的音视频预热区间应合并");
-  assert(firstSegments[0].style.left === "10%", "第一个预热段起点不正确");
-  assert(firstSegments[0].style.width === "25%", "第一个预热段宽度不正确");
+  assert(firstSegments.length === 2, "音视频共同预热的两段交集应保留");
+  assert(firstSegments[0].style.left === "20%", "第一个双轨预热段起点不正确");
+  assert(firstSegments[0].style.width === "10%", "第一个双轨预热段宽度不正确");
   assert(getComputedStyle(layers[0]).pointerEvents === "none", "覆盖层不得拦截进度条拖动");
   assert(getComputedStyle(firstSegments[0]).backgroundColor !== "rgba(0, 0, 0, 0)", "预热段必须有可见颜色");
 

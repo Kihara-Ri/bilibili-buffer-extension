@@ -25,7 +25,7 @@ test("同一路径切换 CDN host 时分别记录热区间", () => {
   assert.equal(otherEdge.active, true);
 });
 
-test("插件预热字节区间会映射并合并为进度条比例", () => {
+test("只有音视频轨都预热的交集才映射为实心蓝色", () => {
   const { internals } = loadObserver();
   const video = internals.trackFor("https://a.bilivideo.com/path/video.m4s");
   video.size = 1000;
@@ -34,7 +34,25 @@ test("插件预热字节区间会映射并合并为进度条比例", () => {
   audio.size = 100;
   internals.addRange(audio.prefetchedRanges, 20, 40);
 
-  assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), [[0.1, 0.4]]);
+  assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), [[0.2, 0.3]]);
+});
+
+test("只预热 DASH 单轨时不显示可能误导的实心蓝色", () => {
+  const { internals } = loadObserver();
+  const video = internals.trackFor("https://a.bilivideo.com/path/video.m4s");
+  video.size = 1000;
+  internals.addRange(video.prefetchedRanges, 100, 300);
+
+  assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), []);
+});
+
+test("单文件 MP4 预热仍可直接映射进度条", () => {
+  const { internals } = loadObserver();
+  const media = internals.trackFor("https://a.bilivideo.com/path/video.mp4");
+  media.size = 1000;
+  internals.addRange(media.prefetchedRanges, 100, 300);
+
+  assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), [[0.1, 0.3]]);
 });
 
 test("追踪参数变化保留预热色段，切换分 P 才清空", () => {
