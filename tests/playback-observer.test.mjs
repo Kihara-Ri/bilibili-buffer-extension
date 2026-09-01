@@ -65,6 +65,42 @@ test("播放边缘只有接入预热片段时才显示白色分界", () => {
   assert.equal(internals.isPlaybackBoundaryConnected(ranges, null), false);
 });
 
+test("多分段进度条按各段宽度建立唯一的全片时间区间", () => {
+  const { internals } = loadObserver();
+  const segments = fromVm(internals.buildTimelineSegments([30, 40, 30]));
+
+  assert.deepEqual(segments, [
+    { start: 0, end: 0.3, index: 0, count: 3 },
+    { start: 0.3, end: 0.7, index: 1, count: 3 },
+    { start: 0.7, end: 1, index: 2, count: 3 }
+  ]);
+});
+
+test("全片预热范围只投影到实际相交的子进度段", () => {
+  const { internals } = loadObserver();
+  const ranges = [[0.2, 0.3], [0.5, 0.7]];
+  const first = fromVm(internals.projectRangesToTimelineSegment(ranges, 0, 0.3));
+  const second = fromVm(internals.projectRangesToTimelineSegment(ranges, 0.3, 0.7));
+
+  assert.equal(first.length, 1);
+  assert.ok(Math.abs(first[0][0] - 2 / 3) < 1e-12);
+  assert.equal(first[0][1], 1);
+  assert.equal(second.length, 1);
+  assert.ok(Math.abs(second[0][0] - 0.5) < 1e-12);
+  assert.equal(second[0][1], 1);
+  assert.deepEqual(fromVm(internals.projectRangesToTimelineSegment(ranges, 0.7, 1)), []);
+});
+
+test("播放标记只换算到当前播放位置所属的子进度段", () => {
+  const { internals } = loadObserver();
+
+  assert.equal(internals.projectPlaybackRatioToTimelineSegment(0.25, 0, 0.3), 5 / 6);
+  assert.equal(internals.projectPlaybackRatioToTimelineSegment(0.25, 0.3, 0.7), null);
+  assert.equal(internals.projectPlaybackRatioToTimelineSegment(0.3, 0, 0.3), null);
+  assert.equal(internals.projectPlaybackRatioToTimelineSegment(0.3, 0.3, 0.7), 0);
+  assert.equal(internals.projectPlaybackRatioToTimelineSegment(1, 0.7, 1, true), 1);
+});
+
 test("观察器只接受六位十六进制高亮颜色", () => {
   const { internals } = loadObserver();
   assert.equal(internals.normalizePreheatColor(" #AABBCC "), "#aabbcc");

@@ -22,25 +22,33 @@ try {
   internals.updatePlaybackBoundary();
 
   const layers = [...document.querySelectorAll(".bili-buffer-preheat-layer")];
-  const firstSegments = [...layers[0].querySelectorAll(".bili-buffer-preheat-segment")];
+  const mainSchedules = [...document.querySelectorAll(".bpx-player-progress.segmented .bpx-player-progress-schedule")];
+  const mainLayers = mainSchedules.map((schedule) => schedule.querySelector(".bili-buffer-preheat-layer"));
+  const firstSegments = [...mainLayers[0].querySelectorAll(".bili-buffer-preheat-segment")];
+  const secondSegments = [...mainLayers[1].querySelectorAll(".bili-buffer-preheat-segment")];
   const boundaries = [...document.querySelectorAll(".bili-buffer-playback-boundary")];
-  assert(layers.length === 2, "主进度条和影子进度条都应有预热层");
-  assert(firstSegments.length === 2, "音视频共同预热的两段交集应保留");
-  assert(firstSegments[0].style.left === "20%", "第一个双轨预热段起点不正确");
-  assert(firstSegments[0].style.width === "10%", "第一个双轨预热段宽度不正确");
+  assert(layers.length === 3, "分段主进度条只应在两个相交子段绘制，影子进度条保留一层");
+  assert(firstSegments.length === 1, "第一子段不应重复全片的两段预热范围");
+  assert(secondSegments.length === 1, "第二子段不应重复全片的两段预热范围");
+  assert(mainLayers[2] === null, "没有预热交集的第三子段不应出现色块或播放标记");
+  assert(Math.abs(parseFloat(firstSegments[0].style.left) - (200 / 3)) < 0.001, "第一全片范围没有换算到第一子段坐标");
+  assert(Math.abs(parseFloat(firstSegments[0].style.width) - (100 / 3)) < 0.001, "第一子段色块宽度不正确");
+  assert(secondSegments[0].style.left === "50%", "第二全片范围没有换算到第二子段坐标");
+  assert(secondSegments[0].style.width === "50%", "第二子段色块宽度不正确");
   assert(getComputedStyle(layers[0]).pointerEvents === "none", "覆盖层不得拦截进度条拖动");
   assert(getComputedStyle(firstSegments[0]).backgroundColor === "rgb(255, 138, 31)", "默认预热段应使用纯橙色");
   assert(getComputedStyle(firstSegments[0]).boxShadow === "none", "预热色块顶部不应再有浅色内阴影");
-  assert(boundaries.length === 2, "主进度条和影子进度条都应有播放分界线");
-  assert(boundaries[0].classList.contains("is-visible"), "播放边缘接入预热片段时应显示白色分界");
-  assert(boundaries[0].style.transform.includes("25%"), "白色分界没有跟随当前播放位置");
+  assert(boundaries.length === 3, "只在有预热交集的主子段和影子进度条创建播放分界");
+  assert(mainLayers[0].querySelector(".bili-buffer-playback-boundary").classList.contains("is-visible"), "当前子段应显示播放分界");
+  assert(!mainLayers[1].querySelector(".bili-buffer-playback-boundary").classList.contains("is-visible"), "非当前子段不应重复显示播放分界");
+  assert(Math.abs(parseFloat(mainLayers[0].querySelector(".bili-buffer-playback-boundary").style.transform.match(/\(([-\d.]+)%/)[1]) - (250 / 3)) < 0.001, "播放分界没有换算到第一子段坐标");
   assert(getComputedStyle(boundaries[0]).borderLeftColor !== "rgba(0, 0, 0, 0)", "播放分界线必须可见");
   assert(document.querySelector("#bili-buffer-preheat-progress-style").textContent.includes(":hover"), "进度条交互时应隐藏白色分界");
 
   show({
     ok: true,
     layers: layers.length,
-    segmentsPerLayer: firstSegments.length,
+    mainSegmentsPerLayer: mainLayers.map((layer) => layer?.querySelectorAll(".bili-buffer-preheat-segment").length || 0),
     firstRange: { left: firstSegments[0].style.left, width: firstSegments[0].style.width },
     color: getComputedStyle(firstSegments[0]).backgroundColor,
     boxShadow: getComputedStyle(firstSegments[0]).boxShadow,

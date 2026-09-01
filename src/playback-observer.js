@@ -6,7 +6,7 @@
   window[NS] = true;
 
   const markObserverReady = () => {
-    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.3.0";
+    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.3.1";
   };
   markObserverReady();
   if (!document.documentElement) document.addEventListener("DOMContentLoaded", markObserverReady, { once: true });
@@ -706,12 +706,99 @@
     return ranges.some(([start, end]) => ratio + tolerance >= start && ratio - tolerance <= end);
   }
 
+  function buildTimelineSegments(weights) {
+    if (!Array.isArray(weights) || !weights.length) return [];
+    const normalizedWeights = weights.map((weight) => {
+      const value = Number(weight);
+      return Number.isFinite(value) && value > 0 ? value : 1;
+    });
+    const total = normalizedWeights.reduce((sum, weight) => sum + weight, 0);
+    let cursor = 0;
+    return normalizedWeights.map((weight, index) => {
+      const start = cursor / total;
+      cursor += weight;
+      return {
+        start,
+        end: index === normalizedWeights.length - 1 ? 1 : cursor / total,
+        index,
+        count: normalizedWeights.length
+      };
+    });
+  }
+
+  function projectRangesToTimelineSegment(ranges, segmentStart, segmentEnd) {
+    const span = Number(segmentEnd) - Number(segmentStart);
+    if (!(span > 0)) return [];
+    const projected = [];
+    for (const [start, end] of ranges || []) {
+      const intersectionStart = Math.max(Number(segmentStart), Number(start));
+      const intersectionEnd = Math.min(Number(segmentEnd), Number(end));
+      if (intersectionEnd <= intersectionStart) continue;
+      addRange(projected,
+        (intersectionStart - segmentStart) / span,
+        (intersectionEnd - segmentStart) / span);
+    }
+    return projected;
+  }
+
+  function projectPlaybackRatioToTimelineSegment(ratio, segmentStart, segmentEnd, isLast = false) {
+    if (!Number.isFinite(ratio)) return null;
+    const span = Number(segmentEnd) - Number(segmentStart);
+    if (!(span > 0) || ratio < segmentStart || ratio > segmentEnd || (!isLast && ratio === segmentEnd)) return null;
+    return Math.max(0, Math.min(1, (ratio - segmentStart) / span));
+  }
+
+  function scheduleWidth(schedule) {
+    const wrap = schedule?.parentElement;
+    for (const element of [wrap, schedule]) {
+      const rectWidth = Number(element?.getBoundingClientRect?.().width);
+      if (rectWidth > 0) return rectWidth;
+      const offsetWidth = Number(element?.offsetWidth);
+      if (offsetWidth > 0) return offsetWidth;
+      const inlineWidth = Number.parseFloat(element?.style?.width || "");
+      if (inlineWidth > 0) return inlineWidth;
+    }
+    return 1;
+  }
+
+  function collectScheduleGroups() {
+    const schedules = [...document.querySelectorAll([
+      ".bpx-player-progress > .bpx-player-progress-schedule-wrap > .bpx-player-progress-schedule",
+      ".bpx-player-shadow-progress-schedule-wrap > .bpx-player-progress-schedule"
+    ].join(","))];
+    const groups = new Map();
+    for (const schedule of schedules) {
+      const root = schedule.closest?.(".bpx-player-progress, .bpx-player-shadow-progress-area")
+        || schedule.parentElement?.parentElement
+        || schedule.parentElement
+        || schedule;
+      if (!groups.has(root)) groups.set(root, []);
+      groups.get(root).push(schedule);
+    }
+    return [...groups.values()].map((groupSchedules) => {
+      const segments = buildTimelineSegments(groupSchedules.map(scheduleWidth));
+      return groupSchedules.map((schedule, index) => ({ schedule, ...segments[index] }));
+    });
+  }
+
   function updatePlaybackBoundary() {
     const ratio = currentPlaybackRatio();
-    const visible = isPlaybackBoundaryConnected(renderedPreheatRanges, ratio);
+    const connected = isPlaybackBoundaryConnected(renderedPreheatRanges, ratio);
     for (const boundary of document.querySelectorAll(`.${PLAYBACK_BOUNDARY_CLASS}`)) {
+      const layer = boundary.parentElement;
+      const segmentStart = Number(layer?.dataset?.timelineStart);
+      const segmentEnd = Number(layer?.dataset?.timelineEnd);
+      const segmentIndex = Number(layer?.dataset?.timelineIndex);
+      const segmentCount = Number(layer?.dataset?.timelineCount);
+      const localRatio = projectPlaybackRatioToTimelineSegment(
+        ratio,
+        segmentStart,
+        segmentEnd,
+        segmentIndex === segmentCount - 1
+      );
+      const visible = connected && localRatio !== null;
       boundary.classList.toggle("is-visible", visible);
-      if (visible) boundary.style.transform = `translate3d(${ratio * 100}%, 0, 0)`;
+      if (visible) boundary.style.transform = `translate3d(${localRatio * 100}%, 0, 0)`;
     }
   }
 
@@ -765,37 +852,45 @@
     ensurePreheatProgressStyle();
     const ranges = normalizedPrefetchedRanges();
     renderedPreheatRanges = ranges;
-    const rangeKey = ranges.map(([start, end]) => `${start.toFixed(6)}-${end.toFixed(6)}`).join(",");
     const preheatColor = normalizePreheatColor(cfg.preheatColor);
-    const schedules = document.querySelectorAll([
-      ".bpx-player-progress > .bpx-player-progress-schedule-wrap > .bpx-player-progress-schedule",
-      ".bpx-player-shadow-progress-schedule-wrap > .bpx-player-progress-schedule"
-    ].join(","));
-    for (const schedule of schedules) {
-      let layer = [...schedule.children].find((child) => child.classList?.contains(PREHEAT_LAYER_CLASS));
-      if (!ranges.length) {
-        layer?.remove();
-        continue;
+    const activeSchedules = new Set();
+    for (const group of collectScheduleGroups()) {
+      for (const { schedule, start: timelineStart, end: timelineEnd, index, count } of group) {
+        activeSchedules.add(schedule);
+        const localRanges = projectRangesToTimelineSegment(ranges, timelineStart, timelineEnd);
+        let layer = [...schedule.children].find((child) => child.classList?.contains(PREHEAT_LAYER_CLASS));
+        if (!localRanges.length) {
+          layer?.remove();
+          continue;
+        }
+        if (!layer) {
+          layer = document.createElement("div");
+          layer.className = PREHEAT_LAYER_CLASS;
+          layer.setAttribute("aria-hidden", "true");
+          schedule.append(layer);
+        }
+        layer.style.setProperty("--bili-buffer-preheat-color", preheatColor);
+        layer.dataset.timelineStart = String(timelineStart);
+        layer.dataset.timelineEnd = String(timelineEnd);
+        layer.dataset.timelineIndex = String(index);
+        layer.dataset.timelineCount = String(count);
+        const rangeKey = localRanges.map(([start, end]) => `${start.toFixed(6)}-${end.toFixed(6)}`).join(",");
+        if (layer.dataset.rangeKey === rangeKey) continue;
+        const segments = localRanges.map(([start, end]) => {
+          const segment = document.createElement("span");
+          segment.className = PREHEAT_SEGMENT_CLASS;
+          segment.style.left = `${start * 100}%`;
+          segment.style.width = `${(end - start) * 100}%`;
+          return segment;
+        });
+        const boundary = document.createElement("span");
+        boundary.className = PLAYBACK_BOUNDARY_CLASS;
+        layer.replaceChildren(...segments, boundary);
+        layer.dataset.rangeKey = rangeKey;
       }
-      if (!layer) {
-        layer = document.createElement("div");
-        layer.className = PREHEAT_LAYER_CLASS;
-        layer.setAttribute("aria-hidden", "true");
-        schedule.append(layer);
-      }
-      layer.style.setProperty("--bili-buffer-preheat-color", preheatColor);
-      if (layer.dataset.rangeKey === rangeKey) continue;
-      const segments = ranges.map(([start, end]) => {
-        const segment = document.createElement("span");
-        segment.className = PREHEAT_SEGMENT_CLASS;
-        segment.style.left = `${start * 100}%`;
-        segment.style.width = `${(end - start) * 100}%`;
-        return segment;
-      });
-      const boundary = document.createElement("span");
-      boundary.className = PLAYBACK_BOUNDARY_CLASS;
-      layer.replaceChildren(...segments, boundary);
-      layer.dataset.rangeKey = rangeKey;
+    }
+    for (const layer of document.querySelectorAll(`.${PREHEAT_LAYER_CLASS}`)) {
+      if (!activeSchedules.has(layer.parentElement)) layer.remove();
     }
     updatePlaybackBoundary();
   }
@@ -857,6 +952,10 @@
     normalizePreheatColor,
     currentPlaybackRatio,
     isPlaybackBoundaryConnected,
+    buildTimelineSegments,
+    projectRangesToTimelineSegment,
+    projectPlaybackRatioToTimelineSegment,
+    collectScheduleGroups,
     updatePlaybackBoundary,
     renderPreheatProgress,
     resetTracksAfterNavigation,
