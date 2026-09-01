@@ -46,7 +46,8 @@ a {
 }
 
 button:focus-visible,
-a:focus-visible {
+a:focus-visible,
+input:focus-visible {
   outline: 3px solid oklch(0.7 0.13 220 / 0.42);
   outline-offset: 2px;
 }
@@ -488,6 +489,100 @@ h2 {
   min-width: 0;
   padding-inline: 4px;
   white-space: nowrap;
+}
+
+.assist-color-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 30px;
+}
+
+.assist-color-label {
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.assist-color-palette {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.assist-color-palette button {
+  position: relative;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: 1px solid color-mix(in oklch, var(--swatch-color), oklch(0.35 0.02 235) 26%);
+  border-radius: 7px;
+  padding: 0;
+  background: var(--swatch-color);
+  cursor: pointer;
+  transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1), outline-color 140ms ease;
+}
+
+.assist-color-palette button:hover {
+  transform: translateY(-1px);
+}
+
+.assist-color-palette button[aria-checked="true"] {
+  outline: 2px solid var(--ink-strong);
+  outline-offset: 2px;
+}
+
+.assist-color-palette button[aria-checked="true"]::after {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  content: "✓";
+  color: oklch(0.99 0.005 55);
+  font-size: 0.7rem;
+  font-weight: 850;
+  text-shadow: 0 1px 2px oklch(0.22 0.03 235 / 0.58);
+}
+
+.assist-custom-color {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 2px 6px 2px 3px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.66rem;
+  font-weight: 650;
+}
+
+.assist-custom-color[data-selected="true"] {
+  border-color: var(--ink-strong);
+  outline: 1px solid var(--ink-strong);
+}
+
+.assist-custom-color input {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.assist-custom-color input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.assist-custom-color input::-webkit-color-swatch {
+  border: 0;
+  border-radius: 5px;
 }
 
 .assist-metrics {

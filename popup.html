@@ -86,6 +86,14 @@
           >始终</button>
           <button type="button" data-assist-mode="off" role="radio">关闭</button>
         </div>
+        <div class="assist-color-row">
+          <span class="assist-color-label">高亮颜色</span>
+          <div id="assist-colors" class="assist-color-palette" role="radiogroup" aria-label="预热高亮颜色"></div>
+          <label id="assist-custom-color-shell" class="assist-custom-color" title="选择自定义高亮颜色">
+            <input id="assist-custom-color" type="color" value="#ff8a1f" aria-label="自定义预热高亮颜色">
+            <span>自定</span>
+          </label>
+        </div>
         <div class="assist-metrics" aria-live="polite">
           <span><small>TTFB P95</small><strong id="assist-ttfb">–</strong></span>
           <span><small>慢请求</small><strong id="assist-slow">0</strong></span>

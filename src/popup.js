@@ -11,6 +11,11 @@ import {
   shouldShowInLibrary
 } from "./utils.js";
 import { choosePopupCodec, choosePopupQuality } from "./popup-snapshot.js";
+import {
+  DEFAULT_PREHEAT_COLOR,
+  normalizePreheatColor,
+  PREHEAT_COLOR_PRESETS
+} from "./assist-config.js";
 
 const elements = {
   currentHeading: document.querySelector("#current-heading"),
@@ -34,6 +39,9 @@ const elements = {
   assistPanel: document.querySelector("#assist-panel"),
   assistStatus: document.querySelector("#assist-status"),
   assistModes: document.querySelector("#assist-modes"),
+  assistColors: document.querySelector("#assist-colors"),
+  assistCustomColor: document.querySelector("#assist-custom-color"),
+  assistCustomColorShell: document.querySelector("#assist-custom-color-shell"),
   assistTtfb: document.querySelector("#assist-ttfb"),
   assistSlow: document.querySelector("#assist-slow"),
   assistBuffer: document.querySelector("#assist-buffer"),
@@ -76,6 +84,8 @@ elements.qualityMenu.addEventListener("toggle", handleQualityMenuToggle);
 elements.qualityTrigger.addEventListener("keydown", openQualityMenuFromKeyboard);
 elements.codecOptions.addEventListener("click", selectCodec);
 elements.assistModes.addEventListener("click", selectAssistMode);
+elements.assistColors.addEventListener("click", selectAssistColor);
+elements.assistCustomColor.addEventListener("change", selectCustomAssistColor);
 elements.estimatorClear.addEventListener("click", () => runAssistCommand("clearEstimator"));
 elements.estimatorRestore.addEventListener("click", () => runAssistCommand("restoreEstimator"));
 window.addEventListener("resize", () => {
@@ -96,6 +106,7 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
+renderAssistColorPresets();
 void initialize();
 
 async function initialize() {
@@ -440,12 +451,13 @@ function renderAssist() {
     return;
   }
   elements.assistPanel.hidden = false;
-  const config = state.assistConfig || { mode: "auto" };
+  const config = state.assistConfig || { mode: "auto", preheatColor: DEFAULT_PREHEAT_COLOR };
   const stats = state.assistStats;
   for (const button of elements.assistModes.querySelectorAll("[data-assist-mode]")) {
     const selected = button.dataset.assistMode === config.mode;
     button.setAttribute("aria-checked", String(selected));
   }
+  renderAssistColorSelection(config.preheatColor);
 
   const ttfbs = Object.values(stats?.hosts || {})
     .map((host) => Number(host.ttfbP95))
@@ -506,6 +518,58 @@ async function selectAssistMode(event) {
     state.assistConfig = result.config;
     renderAssist();
   } catch (error) {
+    showToast(error.message);
+  }
+}
+
+function renderAssistColorPresets() {
+  const fragment = document.createDocumentFragment();
+  for (const preset of PREHEAT_COLOR_PRESETS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.role = "radio";
+    button.dataset.assistColor = preset.value;
+    button.title = preset.label;
+    button.setAttribute("aria-label", `${preset.label}高亮`);
+    button.setAttribute("aria-checked", "false");
+    button.style.setProperty("--swatch-color", preset.value);
+    fragment.append(button);
+  }
+  elements.assistColors.replaceChildren(fragment);
+}
+
+function renderAssistColorSelection(input) {
+  const color = normalizePreheatColor(input);
+  const presetValues = new Set(PREHEAT_COLOR_PRESETS.map((preset) => preset.value));
+  for (const button of elements.assistColors.querySelectorAll("[data-assist-color]")) {
+    button.setAttribute("aria-checked", String(button.dataset.assistColor === color));
+  }
+  elements.assistCustomColor.value = color;
+  elements.assistCustomColorShell.dataset.selected = String(!presetValues.has(color));
+}
+
+async function selectAssistColor(event) {
+  const button = event.target.closest("[data-assist-color]");
+  if (!button) return;
+  await persistAssistColor(button.dataset.assistColor);
+}
+
+async function selectCustomAssistColor() {
+  await persistAssistColor(elements.assistCustomColor.value);
+}
+
+async function persistAssistColor(input) {
+  const preheatColor = normalizePreheatColor(input);
+  const previous = state.assistConfig || { mode: "auto", preheatColor: DEFAULT_PREHEAT_COLOR };
+  state.assistConfig = { ...previous, preheatColor };
+  renderAssistColorSelection(preheatColor);
+  try {
+    const result = await send("SET_ASSIST_CONFIG", { patch: { preheatColor } });
+    state.assistConfig = result.config;
+    renderAssist();
+  } catch (error) {
+    state.assistConfig = previous;
+    renderAssist();
     showToast(error.message);
   }
 }

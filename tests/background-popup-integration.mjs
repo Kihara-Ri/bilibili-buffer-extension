@@ -111,6 +111,14 @@ try {
   const assist = await send({ type: "GET_ASSIST_STATE", tabId: 7 });
   assert(assist.ok && assist.config.mode === "auto" && assist.stats.slowRequests === 1, "播放辅助状态桥接失败");
 
+  const assistColor = await send({
+    type: "SET_ASSIST_CONFIG",
+    patch: { preheatColor: "#20C997" }
+  });
+  assert(assistColor.ok && assistColor.config.preheatColor === "#20c997", "高亮颜色没有规范化保存");
+  const restoredAssistColor = await send({ type: "GET_ASSIST_STATE", tabId: 7 });
+  assert(restoredAssistColor.config.preheatColor === "#20c997", "重新读取时没有恢复高亮颜色");
+
   const library = await send({ type: "LIST_VIDEOS" });
   assert(library.ok && Array.isArray(library.videos), "片库直接读取失败");
   assert(offscreenCreates === 0, "仅读片库不应创建 Offscreen Document");
@@ -156,6 +164,7 @@ try {
     repeatedOpen: { additionalViewRequests: 0, additionalPlayurlRequests: 0 },
     selectedQuality: selected.snapshot.selectedQuality,
     selectionDuringRefresh: selectionAfterRefresh.snapshot.selectedQuality,
+    preheatColor: restoredAssistColor.config.preheatColor,
     offscreenCreatesForLibrary: offscreenCreates,
     cookieChangeKeepsStaleSnapshot: invalidated.stale,
     closedPageRefreshRequests: extensionPlayurlRequests

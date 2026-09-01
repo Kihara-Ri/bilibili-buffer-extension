@@ -3,6 +3,7 @@ const calls = [];
 let readyAt = 0;
 let listener;
 let snapshotRequestedAt = 0;
+let assistConfig = { mode: "auto", estimatorGuard: true, preheatColor: "#ff8a1f" };
 
 const observer = new MutationObserver(() => {
   if (!readyAt && document.querySelector("#button-label").textContent === "缓存") {
@@ -66,10 +67,11 @@ globalThis.chrome = {
         return { ok: true, videos: [] };
       }
       if (message.type === "GET_ASSIST_STATE") {
-        return { ok: true, config: { mode: "auto", estimatorGuard: true }, stats: null };
+        return { ok: true, config: assistConfig, stats: null };
       }
       if (message.type === "SET_ASSIST_CONFIG") {
-        return { ok: true, config: { mode: message.patch.mode, estimatorGuard: true } };
+        assistConfig = { ...assistConfig, ...message.patch };
+        return { ok: true, config: assistConfig };
       }
       if (message.type === "SET_POPUP_SELECTION") return { ok: true, saved: true };
       throw new Error(`未预期的请求：${message.type}`);
@@ -82,15 +84,19 @@ await delay(180);
 observer.disconnect();
 document.querySelector("[data-assist-mode='always']").click();
 await delay(20);
+document.querySelector("[data-assist-color='#20c997']").click();
+await delay(20);
 
 const selectedAssistMode = document.querySelector("[data-assist-mode][aria-checked='true']")?.dataset.assistMode;
+const selectedAssistColor = document.querySelector("[data-assist-color][aria-checked='true']")?.dataset.assistColor;
 
 const result = {
   ok: document.querySelector("#current-heading").textContent === "已恢复的视频标题" &&
     document.querySelector("#button-label").textContent === "缓存" &&
     !calls.includes("REFRESH_POPUP_DATA") &&
     calls.includes("SET_ASSIST_CONFIG") &&
-    selectedAssistMode === "always",
+    selectedAssistMode === "always" &&
+    selectedAssistColor === "#20c997",
   moduleLoadMs: Math.round(snapshotRequestedAt - openedAt),
   snapshotToReadyMs: Math.round((readyAt || performance.now()) - snapshotRequestedAt),
   libraryDelayMs: 120,
@@ -98,6 +104,7 @@ const result = {
   title: document.querySelector("#current-heading").textContent,
   button: document.querySelector("#button-label").textContent,
   selectedAssistMode,
+  selectedAssistColor,
   listenerInstalled: typeof listener === "function"
 };
 document.querySelector("#result").textContent = JSON.stringify(result, null, 2);

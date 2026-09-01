@@ -3,6 +3,7 @@
 
   const CHANNEL = "bili-buffer-playback-assist-v1";
   const CONFIG_KEY = "playbackAssistConfigV1";
+  const DEFAULT_PREHEAT_COLOR = "#ff8a1f";
   const DEFAULTS = {
     mode: "auto",
     slowTtfbMs: 800,
@@ -11,14 +12,15 @@
     minBufferAheadSec: 10,
     maxPrefetchMBPerTrack: 200,
     maxConcurrency: 4,
-    estimatorGuard: true
+    estimatorGuard: true,
+    preheatColor: DEFAULT_PREHEAT_COLOR
   };
   let config = { ...DEFAULTS };
   let lastStats = null;
   let lastCommandResult = null;
 
   const markBridgeReady = () => {
-    if (document.documentElement) document.documentElement.dataset.biliBufferAssistBridge = "2.2.0";
+    if (document.documentElement) document.documentElement.dataset.biliBufferAssistBridge = "2.3.0";
   };
   markBridgeReady();
   if (!document.documentElement) document.addEventListener("DOMContentLoaded", markBridgeReady, { once: true });
@@ -27,10 +29,17 @@
     window.postMessage({ channel: CHANNEL, dir: "ext->page", type, payload }, "*");
   }
 
+  function normalizedConfig(input) {
+    const next = { ...DEFAULTS, ...(input || {}) };
+    const color = String(next.preheatColor || "").trim().toLowerCase();
+    next.preheatColor = /^#[0-9a-f]{6}$/.test(color) ? color : DEFAULT_PREHEAT_COLOR;
+    return next;
+  }
+
   async function loadConfig() {
     try {
       const stored = await chrome.storage.local.get(CONFIG_KEY);
-      config = { ...DEFAULTS, ...(stored?.[CONFIG_KEY] || {}) };
+      config = normalizedConfig(stored?.[CONFIG_KEY]);
       toPage("config", config);
     } catch { /* 扩展重载期间忽略。 */ }
   }
@@ -53,7 +62,7 @@
     }
     if (message?.type === "BILI_BUFFER_SET_ASSIST_CONFIG") {
       const patch = message.patch && typeof message.patch === "object" ? message.patch : {};
-      config = { ...config, ...patch };
+      config = normalizedConfig({ ...config, ...patch });
       chrome.storage.local.set({ [CONFIG_KEY]: config })
         .then(() => {
           toPage("config", config);
@@ -72,7 +81,7 @@
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local" || !changes[CONFIG_KEY]) return;
-    config = { ...DEFAULTS, ...(changes[CONFIG_KEY].newValue || {}) };
+    config = normalizedConfig(changes[CONFIG_KEY].newValue);
     toPage("config", config);
   });
 

@@ -1,8 +1,13 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head><meta charset="utf-8"><title>Popup 首屏恢复测试</title></head>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Popup 首屏恢复测试</title>
+    <link rel="stylesheet" href="../popup.css">
+  </head>
   <body>
-    <main>
+    <main class="app-shell">
       <h2 id="current-heading">正在识别视频</h2>
       <a id="current-owner" href="#" hidden></a>
       <span id="current-detail-separator" hidden></span>
@@ -22,13 +27,21 @@
         <span id="button-speed"></span>
       </button>
       <p id="action-hint"></p>
-      <section id="assist-panel" hidden>
+      <section id="assist-panel" class="assist-panel" hidden>
         <span id="assist-status"></span>
-        <div id="assist-modes">
+        <div id="assist-modes" class="choice-strip assist-modes">
           <button data-assist-mode="observe"></button>
           <button data-assist-mode="auto"></button>
           <button data-assist-mode="always"></button>
           <button data-assist-mode="off"></button>
+        </div>
+        <div class="assist-color-row">
+          <span class="assist-color-label">高亮颜色</span>
+          <div id="assist-colors" class="assist-color-palette"></div>
+          <label id="assist-custom-color-shell" class="assist-custom-color">
+            <input id="assist-custom-color" type="color" value="#ff8a1f">
+            <span>自定</span>
+          </label>
         </div>
         <span id="assist-ttfb"></span>
         <span id="assist-slow"></span>

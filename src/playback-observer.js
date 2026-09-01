@@ -6,7 +6,7 @@
   window[NS] = true;
 
   const markObserverReady = () => {
-    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.2.0";
+    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.3.0";
   };
   markObserverReady();
   if (!document.documentElement) document.addEventListener("DOMContentLoaded", markObserverReady, { once: true });
@@ -17,7 +17,10 @@
   const MEDIA_RE = /^https?:\/\/[^/]*(?:bilivideo\.com|bilivideo\.cn|akamaized\.net)\//i;
   const MB = 1024 * 1024;
   const PREHEAT_LAYER_CLASS = "bili-buffer-preheat-layer";
+  const PREHEAT_SEGMENT_CLASS = "bili-buffer-preheat-segment";
+  const PLAYBACK_BOUNDARY_CLASS = "bili-buffer-playback-boundary";
   const PREHEAT_STYLE_ID = "bili-buffer-preheat-progress-style";
+  const DEFAULT_PREHEAT_COLOR = "#ff8a1f";
   const DEFAULTS = {
     mode: "auto",
     slowTtfbMs: 800,
@@ -26,12 +29,14 @@
     minBufferAheadSec: 10,
     maxPrefetchMBPerTrack: 200,
     maxConcurrency: 4,
-    estimatorGuard: true
+    estimatorGuard: true,
+    preheatColor: DEFAULT_PREHEAT_COLOR
   };
   const cfg = { ...DEFAULTS };
   const tracks = new Map();
   const observedVideos = new WeakSet();
   let lastPageKey = currentPageKey();
+  let renderedPreheatRanges = [];
   const stats = {
     requests: 0,
     slowRequests: 0,
@@ -682,6 +687,34 @@
     return result;
   }
 
+  function normalizePreheatColor(value) {
+    const color = String(value || "").trim().toLowerCase();
+    return /^#[0-9a-f]{6}$/.test(color) ? color : DEFAULT_PREHEAT_COLOR;
+  }
+
+  function currentPlaybackRatio() {
+    const videos = [...document.querySelectorAll("video")].filter((video) => (
+      Number.isFinite(Number(video.duration)) && Number(video.duration) > 0
+    ));
+    const video = videos.find((candidate) => !candidate.paused && !candidate.ended) || videos[0];
+    if (!video) return null;
+    return Math.max(0, Math.min(1, (Number(video.currentTime) || 0) / Number(video.duration)));
+  }
+
+  function isPlaybackBoundaryConnected(ranges, ratio, tolerance = 0.002) {
+    if (!Number.isFinite(ratio)) return false;
+    return ranges.some(([start, end]) => ratio + tolerance >= start && ratio - tolerance <= end);
+  }
+
+  function updatePlaybackBoundary() {
+    const ratio = currentPlaybackRatio();
+    const visible = isPlaybackBoundaryConnected(renderedPreheatRanges, ratio);
+    for (const boundary of document.querySelectorAll(`.${PLAYBACK_BOUNDARY_CLASS}`)) {
+      boundary.classList.toggle("is-visible", visible);
+      if (visible) boundary.style.transform = `translate3d(${ratio * 100}%, 0, 0)`;
+    }
+  }
+
   function ensurePreheatProgressStyle() {
     if (document.getElementById?.(PREHEAT_STYLE_ID)) return;
     const style = document.createElement?.("style");
@@ -692,15 +725,37 @@
         position: absolute;
         inset: 0;
         z-index: 2;
+        overflow: hidden;
         pointer-events: none;
       }
-      .${PREHEAT_LAYER_CLASS} > span {
+      .${PREHEAT_LAYER_CLASS} > .${PREHEAT_SEGMENT_CLASS} {
         position: absolute;
         top: 0;
         bottom: 0;
         min-width: 2px;
-        background: oklch(0.72 0.16 238 / 0.96);
-        box-shadow: inset 0 1px 0 oklch(0.91 0.05 238 / 0.72);
+        background: var(--bili-buffer-preheat-color, ${DEFAULT_PREHEAT_COLOR});
+      }
+      .${PREHEAT_LAYER_CLASS} > .${PLAYBACK_BOUNDARY_CLASS} {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 2;
+        width: 100%;
+        border-left: 2px solid rgb(255 255 255 / 0.98);
+        background: transparent;
+        opacity: 0;
+        transform: translate3d(-100%, 0, 0);
+        will-change: transform;
+      }
+      .${PREHEAT_LAYER_CLASS} > .${PLAYBACK_BOUNDARY_CLASS}.is-visible {
+        opacity: 1;
+      }
+      .bpx-player-progress:hover .${PLAYBACK_BOUNDARY_CLASS},
+      .bpx-player-progress:focus-within .${PLAYBACK_BOUNDARY_CLASS},
+      .bpx-player-shadow-progress-area:hover .${PLAYBACK_BOUNDARY_CLASS},
+      .bpx-player-shadow-progress-area:focus-within .${PLAYBACK_BOUNDARY_CLASS} {
+        opacity: 0;
       }
     `;
     (document.head || document.documentElement)?.append(style);
@@ -709,7 +764,9 @@
   function renderPreheatProgress() {
     ensurePreheatProgressStyle();
     const ranges = normalizedPrefetchedRanges();
+    renderedPreheatRanges = ranges;
     const rangeKey = ranges.map(([start, end]) => `${start.toFixed(6)}-${end.toFixed(6)}`).join(",");
+    const preheatColor = normalizePreheatColor(cfg.preheatColor);
     const schedules = document.querySelectorAll([
       ".bpx-player-progress > .bpx-player-progress-schedule-wrap > .bpx-player-progress-schedule",
       ".bpx-player-shadow-progress-schedule-wrap > .bpx-player-progress-schedule"
@@ -726,17 +783,21 @@
         layer.setAttribute("aria-hidden", "true");
         schedule.append(layer);
       }
+      layer.style.setProperty("--bili-buffer-preheat-color", preheatColor);
       if (layer.dataset.rangeKey === rangeKey) continue;
       const segments = ranges.map(([start, end]) => {
         const segment = document.createElement("span");
-        segment.className = "bili-buffer-preheat-segment";
+        segment.className = PREHEAT_SEGMENT_CLASS;
         segment.style.left = `${start * 100}%`;
         segment.style.width = `${(end - start) * 100}%`;
         return segment;
       });
-      layer.replaceChildren(...segments);
+      const boundary = document.createElement("span");
+      boundary.className = PLAYBACK_BOUNDARY_CLASS;
+      layer.replaceChildren(...segments, boundary);
       layer.dataset.rangeKey = rangeKey;
     }
+    updatePlaybackBoundary();
   }
 
   function resetTracksAfterNavigation() {
@@ -759,6 +820,8 @@
       cfg.minWatchedSec = Math.max(0, Math.min(120, Number(cfg.minWatchedSec) || 0));
       cfg.minBufferAheadSec = Math.max(3, Math.min(60, Number(cfg.minBufferAheadSec) || DEFAULTS.minBufferAheadSec));
       cfg.maxPrefetchMBPerTrack = Math.max(16, Math.min(1024, Number(cfg.maxPrefetchMBPerTrack) || DEFAULTS.maxPrefetchMBPerTrack));
+      cfg.preheatColor = normalizePreheatColor(cfg.preheatColor);
+      renderPreheatProgress();
       if (cfg.estimatorGuard) queueEstimatorCleanup();
     } else if (message.type === "command") {
       const success = message.payload?.name === "clearEstimator"
@@ -791,6 +854,10 @@
     normalizedTrackRanges,
     chooseCurrentDashPair,
     intersectRanges,
+    normalizePreheatColor,
+    currentPlaybackRatio,
+    isPlaybackBoundaryConnected,
+    updatePlaybackBoundary,
     renderPreheatProgress,
     resetTracksAfterNavigation,
     setPlayedSec(value) { stats.playedSec = Number(value) || 0; },
@@ -808,6 +875,17 @@
     scanVideos();
   }, 1000);
   setInterval(renderPreheatProgress, 750);
+  if (typeof window.requestAnimationFrame === "function") {
+    let lastBoundaryFrameAt = 0;
+    const animatePlaybackBoundary = (now) => {
+      if (now - lastBoundaryFrameAt >= 33) {
+        lastBoundaryFrameAt = now;
+        updatePlaybackBoundary();
+      }
+      window.requestAnimationFrame(animatePlaybackBoundary);
+    };
+    window.requestAnimationFrame(animatePlaybackBoundary);
+  }
   setInterval(() => {
     if (!["auto", "always"].includes(cfg.mode) || document.hidden || currentBufferAhead() < cfg.minBufferAheadSec) return;
     while (stats.prefetching < cfg.maxConcurrency) {

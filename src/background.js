@@ -30,20 +30,11 @@ import {
   isDownloadRetryDue,
   makeDownloadWatchdogSchedule
 } from "./download-retry.js";
+import { ASSIST_DEFAULTS, sanitizeAssistConfig } from "./assist-config.js";
 
 const OFFSCREEN_PATH = "offscreen.html";
 const POPUP_SNAPSHOTS_KEY = "popupPageSnapshotsV1";
 const ASSIST_CONFIG_KEY = "playbackAssistConfigV1";
-const ASSIST_DEFAULTS = Object.freeze({
-  mode: "auto",
-  slowTtfbMs: 800,
-  leadSeconds: 45,
-  minWatchedSec: 20,
-  minBufferAheadSec: 10,
-  maxPrefetchMBPerTrack: 200,
-  maxConcurrency: 4,
-  estimatorGuard: true
-});
 let creatingOffscreen;
 let restoringDownloads;
 let popupSnapshotQueue = Promise.resolve();
@@ -275,29 +266,10 @@ function buildCodecOptionsByQuality(playurlData, qualities) {
 async function getAssistConfig() {
   try {
     const stored = await chrome.storage.local.get(ASSIST_CONFIG_KEY);
-    return { ...ASSIST_DEFAULTS, ...(stored?.[ASSIST_CONFIG_KEY] || {}) };
+    return sanitizeAssistConfig(stored?.[ASSIST_CONFIG_KEY], ASSIST_DEFAULTS);
   } catch {
     return { ...ASSIST_DEFAULTS };
   }
-}
-
-function sanitizeAssistConfig(patch, current) {
-  const next = { ...current };
-  if (patch && ["off", "observe", "auto", "always"].includes(patch.mode)) next.mode = patch.mode;
-  if (patch && typeof patch.estimatorGuard === "boolean") next.estimatorGuard = patch.estimatorGuard;
-  for (const [key, min, max] of [
-    ["slowTtfbMs", 200, 10000],
-    ["leadSeconds", 10, 120],
-    ["minWatchedSec", 0, 120],
-    ["minBufferAheadSec", 3, 60],
-    ["maxPrefetchMBPerTrack", 16, 1024],
-    ["maxConcurrency", 1, 6]
-  ]) {
-    if (!Object.hasOwn(patch || {}, key)) continue;
-    const value = Number(patch[key]);
-    if (Number.isFinite(value)) next[key] = Math.max(min, Math.min(max, value));
-  }
-  return next;
 }
 
 async function getAssistState(tabId) {
