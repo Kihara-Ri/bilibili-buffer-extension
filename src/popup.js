@@ -18,12 +18,18 @@ import {
 } from "./assist-config.js";
 
 const elements = {
+  panelTabs: document.querySelector("#panel-tabs"),
+  panelViews: [...document.querySelectorAll("[data-panel-view]")],
+  assistTab: document.querySelector("#assist-tab"),
+  assistTabIndicator: document.querySelector("#assist-tab-indicator"),
+  libraryCount: document.querySelector("#library-count"),
   currentHeading: document.querySelector("#current-heading"),
   currentDetail: document.querySelector("#current-detail"),
   currentOwner: document.querySelector("#current-owner"),
   currentDetailSeparator: document.querySelector("#current-detail-separator"),
   currentDetailText: document.querySelector("#current-detail-text"),
   pageMark: document.querySelector("#page-mark"),
+  formatControls: document.querySelector("#format-controls"),
   qualityRow: document.querySelector("#quality-row"),
   qualityTrigger: document.querySelector("#quality-trigger"),
   qualityTriggerLabel: document.querySelector("#quality-trigger-label"),
@@ -40,6 +46,7 @@ const elements = {
   assistStatus: document.querySelector("#assist-status"),
   assistModes: document.querySelector("#assist-modes"),
   assistColors: document.querySelector("#assist-colors"),
+  assistColorPreview: document.querySelector("#assist-color-preview"),
   assistCustomColor: document.querySelector("#assist-custom-color"),
   assistCustomColorShell: document.querySelector("#assist-custom-color-shell"),
   assistTtfb: document.querySelector("#assist-ttfb"),
@@ -56,6 +63,7 @@ const elements = {
 };
 
 const state = {
+  activeView: "cache",
   tab: null,
   pageInfo: null,
   qualityOptions: [],
@@ -76,6 +84,8 @@ const state = {
   toastTimer: null
 };
 
+elements.panelTabs.addEventListener("click", selectPanelViewFromEvent);
+elements.panelTabs.addEventListener("keydown", navigatePanelViews);
 elements.cacheButton.addEventListener("click", startCache);
 elements.currentOwner.addEventListener("click", openCurrentOwner);
 elements.qualityMenu.addEventListener("click", selectQualityFromMenu);
@@ -107,7 +117,52 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 renderAssistColorPresets();
+setPanelView("cache");
 void initialize();
+
+function selectPanelViewFromEvent(event) {
+  const tab = event.target.closest("[data-panel-view]");
+  if (!tab || tab.disabled) return;
+  setPanelView(tab.dataset.panelView);
+}
+
+function navigatePanelViews(event) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  const tabs = elements.panelViews.filter((tab) => !tab.disabled);
+  if (!tabs.length) return;
+  event.preventDefault();
+  const current = Math.max(0, tabs.indexOf(document.activeElement.closest?.("[data-panel-view]")));
+  const next = event.key === "Home"
+    ? 0
+    : event.key === "End"
+      ? tabs.length - 1
+      : event.key === "ArrowRight"
+        ? (current + 1) % tabs.length
+        : (current - 1 + tabs.length) % tabs.length;
+  setPanelView(tabs[next].dataset.panelView, { focus: true });
+}
+
+function setPanelView(view, { focus = false } = {}) {
+  const tab = elements.panelViews.find((candidate) => candidate.dataset.panelView === view);
+  if (!tab || tab.disabled) return;
+  if (view !== "cache") closeQualityMenu();
+  state.activeView = view;
+  for (const candidate of elements.panelViews) {
+    const selected = candidate === tab;
+    candidate.setAttribute("aria-selected", String(selected));
+    candidate.tabIndex = selected ? 0 : -1;
+    const panel = document.querySelector(`#${candidate.getAttribute("aria-controls")}`);
+    if (panel) panel.hidden = !selected;
+  }
+  if (focus) tab.focus();
+}
+
+function setAssistAvailability(available) {
+  elements.assistTab.disabled = !available;
+  elements.assistTab.setAttribute("aria-disabled", String(!available));
+  elements.assistTabIndicator.hidden = !available;
+  if (!available && state.activeView === "assist") setPanelView("cache");
+}
 
 async function initialize() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -240,7 +295,7 @@ function renderCurrent() {
   if (!cached) {
     if (state.qualitiesLoading) {
       setButtonState("disabled", "正在读取可用画质", "", 0, true);
-      setHint("会优先使用当前 Chrome 的 B 站登录状态。", false);
+      setHint("正在读取账号可用画质…", false);
       return;
     }
     if (!state.selectedQuality) {
@@ -249,7 +304,7 @@ function renderCurrent() {
       return;
     }
     setButtonState("idle", "缓存", "", 0, false);
-    setHint(`默认选择 ${getSelectedQualityLabel()}，可在上方切换。`, false);
+    setHint("", false);
     return;
   }
 
@@ -277,7 +332,7 @@ function renderCurrent() {
 
   if (cached.status === "complete") {
     setButtonState("complete", "已缓存完成", formatBytes(cached.downloadedBytes), 1, true);
-    setHint("重新打开这个视频时，会优先使用本地缓存。", false);
+    setHint("", false);
     return;
   }
 
@@ -293,13 +348,15 @@ function renderUnsupported(title, detail) {
   elements.currentDetailSeparator.hidden = true;
   elements.currentDetailText.textContent = detail;
   elements.pageMark.hidden = true;
+  elements.formatControls.hidden = true;
   elements.qualityRow.hidden = true;
   elements.codecRow.hidden = true;
   elements.assistPanel.hidden = true;
+  setAssistAvailability(false);
   elements.authNote.hidden = true;
   closeQualityMenu();
   setButtonState("disabled", "当前页面无法缓存", "", 0, true);
-  setHint("打开一个 bilibili.com/video/… 页面后再试。", false);
+  setHint("请打开 B 站视频页", false);
 }
 
 function renderCurrentDetail(info) {
@@ -346,6 +403,7 @@ function getCurrentPageVideos() {
 }
 
 function renderQualityControl(cached) {
+  elements.formatControls.hidden = false;
   elements.qualityRow.hidden = false;
   elements.authNote.hidden = false;
 
@@ -371,18 +429,23 @@ function renderQualityControl(cached) {
   if (state.qualityError) {
     elements.authNote.textContent = state.qualityError;
     elements.authNote.dataset.tone = "warning";
+    elements.authNote.title = state.qualityError;
   } else if (state.auth?.viaPageSession && state.auth?.vipActive) {
-    elements.authNote.textContent = "已通过当前 B 站页面使用登录态，并检测到有效大会员。";
+    elements.authNote.textContent = "大会员登录态";
     elements.authNote.dataset.tone = "member";
+    elements.authNote.title = "已通过当前 B 站页面使用登录态，并检测到有效大会员";
   } else if (state.auth?.viaPageSession) {
-    elements.authNote.textContent = "已通过当前 B 站页面使用登录态；画质列表以账号实际权限为准。";
+    elements.authNote.textContent = "已使用登录态";
     elements.authNote.dataset.tone = "normal";
+    elements.authNote.title = "画质列表以当前账号实际权限为准";
   } else if (state.auth?.hasSessionCookie) {
-    elements.authNote.textContent = "检测到登录 Cookie，但页面登录态请求未成功；会员画质可能不完整。";
+    elements.authNote.textContent = "登录态受限";
     elements.authNote.dataset.tone = "warning";
+    elements.authNote.title = "检测到登录 Cookie，但页面登录态请求未成功；会员画质可能不完整";
   } else {
-    elements.authNote.textContent = "未检测到 B 站登录 Cookie；登录或大会员画质可能不可用。";
+    elements.authNote.textContent = "未登录";
     elements.authNote.dataset.tone = "warning";
+    elements.authNote.title = "登录或大会员画质可能不可用";
   }
 }
 
@@ -448,8 +511,10 @@ async function refreshAssistState() {
 function renderAssist() {
   if (!state.pageInfo?.supported) {
     elements.assistPanel.hidden = true;
+    setAssistAvailability(false);
     return;
   }
+  setAssistAvailability(true);
   elements.assistPanel.hidden = false;
   const config = state.assistConfig || { mode: "auto", preheatColor: DEFAULT_PREHEAT_COLOR };
   const stats = state.assistStats;
@@ -470,41 +535,47 @@ function renderAssist() {
     : "–";
   elements.assistPrefetch.textContent = `${Number(stats?.prefetchMB || 0).toFixed(1)} MB`;
 
-  let status = "等待页面媒体请求";
+  let status = "等待视频请求";
   let warning = false;
   if (config.mode === "off") status = "已关闭";
-  else if (!stats) status = "刷新视频页后开始观测";
+  else if (!stats) status = "等待视频请求";
   else if (config.mode === "observe") {
-    status = stats.slowRequests > 0 ? "发现冷区间 · 仅观察" : "仅观察 · 不会预热";
+    status = stats.slowRequests > 0 ? "高延迟 · 观察中" : "观察中";
     warning = stats.slowRequests > 0;
   } else if (stats.pageHidden) {
-    status = "页面不可见 · 预热暂停";
+    status = "页面隐藏 · 暂停";
   } else if (stats.warmingUp) {
-    status = `${config.mode === "always" ? "准备预热" : "观察"} ${stats.playedSec || 0}/${stats.minWatchedSec || 20}s`;
+    status = `准备 ${stats.playedSec || 0}/${stats.minWatchedSec || 20}s`;
   } else if (Number(stats.bufferAheadSec) < Number(stats.minBufferAheadSec || config.minBufferAheadSec || 10)) {
-    status = `缓冲不足 ${Number(stats.bufferAheadSec || 0).toFixed(1)}s · 预热暂停`;
+    status = `余量 ${Number(stats.bufferAheadSec || 0).toFixed(1)}s · 暂停`;
   } else if (config.mode === "always") {
-    if (stats.prefetching > 0) status = `始终预热 · ${stats.prefetching} 路进行中`;
-    else if (stats.prefetchMB > 0) status = `始终预热 · 已完成 ${Number(stats.prefetchMB).toFixed(1)} MB`;
-    else status = "始终预热 · 等待媒体区间";
+    if (stats.prefetching > 0) status = `持续 · ${stats.prefetching} 路预取`;
+    else if (stats.prefetchMB > 0) status = `持续 · ${Number(stats.prefetchMB).toFixed(1)} MB`;
+    else status = "持续 · 等待区间";
   } else if (stats.slowRequests > 0) {
-    if (stats.prefetching > 0) status = `发现冷区间 · ${stats.prefetching} 路预热中`;
-    else if (stats.prefetchMB > 0) status = `冷区间 · 已预热 ${Number(stats.prefetchMB).toFixed(1)} MB`;
-    else status = "发现冷区间 · 等待预热";
+    if (stats.prefetching > 0) status = `高延迟 · ${stats.prefetching} 路预取`;
+    else if (stats.prefetchMB > 0) status = `已预取 ${Number(stats.prefetchMB).toFixed(1)} MB`;
+    else status = "高延迟 · 等待预取";
     warning = true;
   } else {
-    status = `链路正常 · 未触发预热${stats.stalls ? ` · ${stats.stalls} 次停顿` : ""}`;
+    status = `链路正常${stats.stalls ? ` · ${stats.stalls} 次停顿` : ""}`;
   }
   elements.assistStatus.textContent = status;
   elements.assistStatus.dataset.tone = warning ? "warning" : "normal";
+  elements.assistTab.title = status;
+  elements.assistTabIndicator.dataset.tone = config.mode === "off"
+    ? "off"
+    : warning
+      ? "warning"
+      : "active";
 
   const estimator = stats?.estimator;
   const cleared = state.assistCommandResult?.name === "clearEstimator" && state.assistCommandResult?.success;
   const restored = state.assistCommandResult?.name === "restoreEstimator" && state.assistCommandResult?.success;
   elements.estimatorRow.hidden = !(estimator?.suspect || cleared || restored);
-  if (cleared) elements.estimatorNote.textContent = "异常估计已备份并清理，可恢复";
-  else if (restored) elements.estimatorNote.textContent = "已恢复上一次估计器备份";
-  else elements.estimatorNote.textContent = "播放器带宽估计可能受慢请求影响";
+  if (cleared) elements.estimatorNote.textContent = "网络估计已重置";
+  else if (restored) elements.estimatorNote.textContent = "网络估计已恢复";
+  else elements.estimatorNote.textContent = "网络估计可能异常";
   elements.estimatorClear.hidden = cleared;
   elements.estimatorRestore.hidden = !cleared;
 }
@@ -546,6 +617,7 @@ function renderAssistColorSelection(input) {
   }
   elements.assistCustomColor.value = color;
   elements.assistCustomColorShell.dataset.selected = String(!presetValues.has(color));
+  elements.assistColorPreview.style.setProperty("--preview-color", color);
 }
 
 async function selectAssistColor(event) {
@@ -746,10 +818,6 @@ function isQualityMenuOpen() {
   return elements.qualityMenu.matches(":popover-open");
 }
 
-function getSelectedQualityLabel() {
-  return state.qualityOptions.find((option) => option.quality === state.selectedQuality)?.label || "所选画质";
-}
-
 function setButtonState(mode, label, speed, progress, disabled) {
   elements.cacheButton.dataset.state = mode;
   elements.cacheButton.disabled = disabled;
@@ -762,6 +830,7 @@ function setButtonState(mode, label, speed, progress, disabled) {
 function setHint(message, isError) {
   elements.actionHint.textContent = message;
   elements.actionHint.dataset.tone = isError ? "error" : "normal";
+  elements.actionHint.hidden = !message;
 }
 
 async function startCache() {
@@ -785,11 +854,13 @@ async function startCache() {
 function renderLibrary() {
   const videos = state.videos.filter(shouldShowInLibrary);
   const total = videos.reduce((sum, video) => sum + (Number(video.downloadedBytes) || 0), 0);
-  elements.librarySummary.textContent = `${videos.length} 个 · ${formatBytes(total)}`;
+  elements.libraryCount.textContent = videos.length > 99 ? "99+" : String(videos.length);
+  elements.libraryCount.title = `${videos.length} 个本地视频`;
+  elements.librarySummary.textContent = formatBytes(total);
   elements.videoList.replaceChildren();
 
   if (!videos.length) {
-    renderEmptyLibrary("这里还很空", "打开一个 B 站视频，点击上方按钮，它就会出现在这里。");
+    renderEmptyLibrary("还没有缓存", "在“缓存”页保存当前视频");
     return;
   }
 

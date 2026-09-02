@@ -6,7 +6,7 @@
   window[NS] = true;
 
   const markObserverReady = () => {
-    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.3.1";
+    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.4.0";
   };
   markObserverReady();
   if (!document.documentElement) document.addEventListener("DOMContentLoaded", markObserverReady, { once: true });

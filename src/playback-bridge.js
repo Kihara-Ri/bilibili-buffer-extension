@@ -20,7 +20,7 @@
   let lastCommandResult = null;
 
   const markBridgeReady = () => {
-    if (document.documentElement) document.documentElement.dataset.biliBufferAssistBridge = "2.3.1";
+    if (document.documentElement) document.documentElement.dataset.biliBufferAssistBridge = "2.4.0";
   };
   markBridgeReady();
   if (!document.documentElement) document.addEventListener("DOMContentLoaded", markBridgeReady, { once: true });

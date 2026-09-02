@@ -11,115 +11,141 @@
       <header class="masthead">
         <div class="brand-lockup">
           <img class="brand-icon" src="assets/icon-48.png" alt="">
-          <div>
-            <p class="eyebrow">BILI BUFFER</p>
-            <h1>Bili 缓冲站</h1>
-          </div>
+          <h1>Bili 缓冲站</h1>
         </div>
       </header>
 
-      <section class="current-video" aria-labelledby="current-heading">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">当前页面</p>
-            <h2 id="current-heading">正在识别视频</h2>
-          </div>
-          <span id="page-mark" class="page-mark" hidden></span>
-        </div>
-        <p id="current-detail" class="current-detail">
-          <a id="current-owner" class="current-owner" href="#" hidden></a>
-          <span id="current-detail-separator" hidden> · </span>
-          <span id="current-detail-text">请稍候…</span>
-        </p>
-
-        <div id="quality-row" class="quality-row" hidden>
-          <span class="quality-label">缓存画质</span>
-          <div id="quality-picker" class="quality-picker">
-            <button
-              id="quality-trigger"
-              class="quality-trigger"
-              type="button"
-              aria-haspopup="listbox"
-              aria-expanded="false"
-              aria-describedby="auth-note"
-              popovertarget="quality-menu"
-              disabled
-            >
-              <span id="quality-trigger-label" class="quality-trigger-label">正在读取可用画质…</span>
-              <svg class="quality-caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </button>
-            <div id="quality-menu" class="quality-menu" popover role="listbox" aria-label="缓存画质"></div>
-          </div>
-        </div>
-        <div id="codec-row" class="codec-row" hidden>
-          <span class="quality-label">视频编码</span>
-          <div id="codec-options" class="choice-strip" role="radiogroup" aria-label="视频编码"></div>
-        </div>
-        <p id="auth-note" class="auth-note" hidden></p>
-
-        <button id="cache-button" class="cache-button" type="button" disabled aria-describedby="action-hint">
-          <span id="button-progress" class="button-progress" aria-hidden="true"></span>
-          <span class="button-content">
-            <span id="button-label" class="button-label">正在读取页面</span>
-            <span id="button-speed" class="button-speed"></span>
-          </span>
+      <nav id="panel-tabs" class="panel-tabs" role="tablist" aria-label="插件面板">
+        <button id="cache-tab" type="button" role="tab" data-panel-view="cache" aria-controls="cache-view" aria-selected="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>缓存</span>
         </button>
-        <p id="action-hint" class="action-hint" role="status" aria-live="polite">插件只会缓存当前分 P。</p>
-      </section>
+        <button id="assist-tab" type="button" role="tab" data-panel-view="assist" aria-controls="assist-view" aria-selected="false" tabindex="-1">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16v3m4-7v7m4-11v11m4-14v14m4-9v9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>播放</span>
+          <span id="assist-tab-indicator" class="tab-indicator" aria-hidden="true"></span>
+        </button>
+        <button id="library-tab" type="button" role="tab" data-panel-view="library" aria-controls="library-view" aria-selected="false" tabindex="-1">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v13H5zM8.5 5.5v13M12 9h4m-4 3h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>片库</span>
+          <span id="library-count" class="tab-count">0</span>
+        </button>
+      </nav>
 
-      <section id="assist-panel" class="assist-panel" aria-labelledby="assist-heading" hidden>
-        <div class="assist-heading-row">
-          <div>
-            <p class="eyebrow">播放辅助</p>
-            <h2 id="assist-heading">CDN 状态</h2>
-          </div>
-          <span id="assist-status" class="assist-status">等待页面数据</span>
-        </div>
-        <div id="assist-modes" class="choice-strip assist-modes" role="radiogroup" aria-label="播放辅助模式">
-          <button type="button" data-assist-mode="observe" role="radio">观察</button>
-          <button type="button" data-assist-mode="auto" role="radio">自动预热</button>
-          <button
-            type="button"
-            data-assist-mode="always"
-            role="radio"
-            title="满足播放时长和缓冲条件后始终预热，会产生额外流量"
-          >始终</button>
-          <button type="button" data-assist-mode="off" role="radio">关闭</button>
-        </div>
-        <div class="assist-color-row">
-          <span class="assist-color-label">高亮颜色</span>
-          <div id="assist-colors" class="assist-color-palette" role="radiogroup" aria-label="预热高亮颜色"></div>
-          <label id="assist-custom-color-shell" class="assist-custom-color" title="选择自定义高亮颜色">
-            <input id="assist-custom-color" type="color" value="#ff8a1f" aria-label="自定义预热高亮颜色">
-            <span>自定</span>
-          </label>
-        </div>
-        <div class="assist-metrics" aria-live="polite">
-          <span><small>TTFB P95</small><strong id="assist-ttfb">–</strong></span>
-          <span><small>慢请求</small><strong id="assist-slow">0</strong></span>
-          <span><small>缓冲</small><strong id="assist-buffer">–</strong></span>
-          <span><small>预热</small><strong id="assist-prefetch">0 MB</strong></span>
-        </div>
-        <div id="estimator-row" class="estimator-row" hidden>
-          <span id="estimator-note">播放器带宽估计可能异常</span>
-          <div>
-            <button id="estimator-clear" type="button">清理</button>
-            <button id="estimator-restore" type="button">恢复</button>
-          </div>
-        </div>
-      </section>
+      <div class="panel-stack">
+        <section id="cache-view" class="panel-view" role="tabpanel" aria-labelledby="cache-tab">
+          <section class="current-video" aria-labelledby="current-heading">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">当前视频</p>
+                <h2 id="current-heading">正在识别视频</h2>
+              </div>
+              <span id="page-mark" class="page-mark" hidden></span>
+            </div>
+            <p id="current-detail" class="current-detail">
+              <a id="current-owner" class="current-owner" href="#" hidden></a>
+              <span id="current-detail-separator" hidden> · </span>
+              <span id="current-detail-text">请稍候…</span>
+            </p>
 
-      <section class="library" aria-labelledby="library-heading">
-        <div class="section-heading library-heading">
-          <div>
-            <p class="eyebrow">本地片库</p>
-            <h2 id="library-heading">已经缓存</h2>
-          </div>
-          <span id="library-summary" class="library-summary">0 个</span>
-        </div>
-        <div id="video-list" class="video-list" aria-live="polite"></div>
-      </section>
+            <div id="format-controls" class="format-controls" hidden>
+              <div id="quality-row" class="quality-row" hidden>
+                <span class="quality-label">画质</span>
+                <div id="quality-picker" class="quality-picker">
+                  <button
+                    id="quality-trigger"
+                    class="quality-trigger"
+                    type="button"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                    aria-describedby="auth-note"
+                    popovertarget="quality-menu"
+                    disabled
+                  >
+                    <span id="quality-trigger-label" class="quality-trigger-label">读取中…</span>
+                    <svg class="quality-caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <div id="quality-menu" class="quality-menu" popover role="listbox" aria-label="缓存画质"></div>
+                </div>
+              </div>
+              <div id="codec-row" class="codec-row" hidden>
+                <span class="quality-label">编码</span>
+                <div id="codec-options" class="choice-strip" role="radiogroup" aria-label="视频编码"></div>
+              </div>
+              <p id="auth-note" class="auth-note" hidden></p>
+            </div>
 
+            <button id="cache-button" class="cache-button" type="button" disabled aria-describedby="action-hint">
+              <span id="button-progress" class="button-progress" aria-hidden="true"></span>
+              <span class="button-content">
+                <span id="button-label" class="button-label">读取页面</span>
+                <span id="button-speed" class="button-speed"></span>
+              </span>
+            </button>
+            <p id="action-hint" class="action-hint" role="status" aria-live="polite" hidden></p>
+          </section>
+        </section>
+
+        <section id="assist-view" class="panel-view" role="tabpanel" aria-labelledby="assist-tab" hidden>
+          <section id="assist-panel" class="assist-panel" aria-labelledby="assist-heading" hidden>
+            <div class="assist-heading-row">
+              <div>
+                <p class="section-kicker">播放网络</p>
+                <h2 id="assist-heading">播放优化</h2>
+              </div>
+              <span id="assist-status" class="assist-status">等待页面数据</span>
+            </div>
+            <div id="assist-modes" class="choice-strip assist-modes" role="radiogroup" aria-label="播放辅助模式">
+              <button type="button" data-assist-mode="observe" role="radio" title="只观察网络状态，不发送前置请求">观察</button>
+              <button type="button" data-assist-mode="auto" role="radio" title="发现高响应延迟后自动进行 CDN 前置请求">自动</button>
+              <button type="button" data-assist-mode="always" role="radio" title="满足播放和余量条件后持续进行 CDN 前置请求">持续</button>
+              <button type="button" data-assist-mode="off" role="radio" title="停止播放辅助">关闭</button>
+            </div>
+            <div class="assist-metrics" aria-live="polite">
+              <span><small>延迟 P95</small><strong id="assist-ttfb">–</strong></span>
+              <span><small>高延迟</small><strong id="assist-slow">0</strong></span>
+              <span><small>播放余量</small><strong id="assist-buffer">–</strong></span>
+              <span><small>CDN 预取</small><strong id="assist-prefetch">0 MB</strong></span>
+            </div>
+            <details class="assist-settings">
+              <summary>
+                <span>进度条高亮</span>
+                <span class="settings-summary-trailing">
+                  <span id="assist-color-preview" class="assist-color-preview" aria-hidden="true"></span>
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+              </summary>
+              <div class="assist-color-row">
+                <div id="assist-colors" class="assist-color-palette" role="radiogroup" aria-label="预取高亮颜色"></div>
+                <label id="assist-custom-color-shell" class="assist-custom-color" title="选择自定义高亮颜色">
+                  <input id="assist-custom-color" type="color" value="#ff8a1f" aria-label="自定义预取高亮颜色">
+                  <span>自定义</span>
+                </label>
+              </div>
+            </details>
+            <div id="estimator-row" class="estimator-row" hidden>
+              <span id="estimator-note">播放器网络估计可能异常</span>
+              <div>
+                <button id="estimator-clear" type="button">重置</button>
+                <button id="estimator-restore" type="button">撤销</button>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section id="library-view" class="panel-view" role="tabpanel" aria-labelledby="library-tab" hidden>
+          <section class="library" aria-labelledby="library-heading">
+            <div class="section-heading library-heading">
+              <div>
+                <p class="section-kicker">设备本地</p>
+                <h2 id="library-heading">片库</h2>
+              </div>
+              <span id="library-summary" class="library-summary">0 B</span>
+            </div>
+            <div id="video-list" class="video-list" aria-live="polite"></div>
+          </section>
+        </section>
+      </div>
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
