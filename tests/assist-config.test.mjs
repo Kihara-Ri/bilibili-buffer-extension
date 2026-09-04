@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   ASSIST_DEFAULTS,
   DEFAULT_PREHEAT_COLOR,
+  normalizeAssistMode,
   normalizePreheatColor,
   PREHEAT_COLOR_PRESETS,
   sanitizeAssistConfig
@@ -18,7 +19,16 @@ test("预热高亮默认使用高对比橙色并提供多组预设", () => {
 test("自定义颜色会规范化并随播放辅助配置持久保存", () => {
   const config = sanitizeAssistConfig({ preheatColor: " #AABBCC " }, ASSIST_DEFAULTS);
   assert.equal(config.preheatColor, "#aabbcc");
-  assert.equal(config.mode, "auto");
+  assert.equal(config.mode, "always");
+  assert.equal(config.minWatchedSec, 0);
+  assert.equal(config.minBufferAheadSec, 0);
+});
+
+test("旧播放模式迁移为开启或关闭，不保留准备流程", () => {
+  assert.equal(normalizeAssistMode("auto"), "always");
+  assert.equal(normalizeAssistMode("always"), "always");
+  assert.equal(normalizeAssistMode("observe"), "off");
+  assert.equal(normalizeAssistMode("off"), "off");
 });
 
 test("无效颜色不会覆盖用户已有颜色或其他合法配置", () => {

@@ -78,32 +78,17 @@
         <section id="assist-view" class="panel-view" role="tabpanel" aria-labelledby="assist-tab" hidden>
           <section id="assist-panel" class="assist-panel" hidden>
             <div class="assist-heading-row">
-              <div><p class="section-kicker">播放网络</p><h2>播放优化</h2></div>
-              <span id="assist-status" class="assist-status"></span>
+              <div><p class="section-kicker">播放页面</p><h2>提前加载</h2></div>
+              <button id="assist-toggle" class="assist-toggle" type="button" role="switch" aria-checked="false" aria-describedby="assist-status"><span class="assist-toggle-track"><span></span></span><span id="assist-toggle-label">关闭</span></button>
             </div>
-            <div id="assist-modes" class="choice-strip assist-modes">
-              <button data-assist-mode="observe">观察</button>
-              <button data-assist-mode="auto">自动</button>
-              <button data-assist-mode="always">持续</button>
-              <button data-assist-mode="off">关闭</button>
-            </div>
-            <div class="assist-metrics">
-              <span><small>延迟 P95</small><strong id="assist-ttfb"></strong></span>
-              <span><small>高延迟</small><strong id="assist-slow"></strong></span>
-              <span><small>播放余量</small><strong id="assist-buffer"></strong></span>
-              <span><small>CDN 预取</small><strong id="assist-prefetch"></strong></span>
-            </div>
+            <p id="assist-status" class="assist-status" role="status">等待视频加载</p>
             <details class="assist-settings">
-              <summary><span>进度条高亮</span><span class="settings-summary-trailing"><span id="assist-color-preview" class="assist-color-preview"></span><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></span></summary>
+              <summary><span>高亮颜色</span><span class="settings-summary-trailing"><span id="assist-color-preview" class="assist-color-preview"></span><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></span></summary>
               <div class="assist-color-row">
                 <div id="assist-colors" class="assist-color-palette"></div>
                 <label id="assist-custom-color-shell" class="assist-custom-color"><input id="assist-custom-color" type="color" value="#ff8a1f"><span>自定义</span></label>
               </div>
             </details>
-            <div id="estimator-row" class="estimator-row" hidden>
-              <span id="estimator-note"></span>
-              <div><button id="estimator-clear"></button><button id="estimator-restore"></button></div>
-            </div>
           </section>
         </section>
 

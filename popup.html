@@ -90,46 +90,31 @@
           <section id="assist-panel" class="assist-panel" aria-labelledby="assist-heading" hidden>
             <div class="assist-heading-row">
               <div>
-                <p class="section-kicker">播放网络</p>
-                <h2 id="assist-heading">播放优化</h2>
+                <p class="section-kicker">播放页面</p>
+                <h2 id="assist-heading">提前加载</h2>
               </div>
-              <span id="assist-status" class="assist-status">等待页面数据</span>
+              <button id="assist-toggle" class="assist-toggle" type="button" role="switch" aria-checked="false" aria-describedby="assist-status">
+                <span class="assist-toggle-track" aria-hidden="true"><span></span></span>
+                <span id="assist-toggle-label">关闭</span>
+              </button>
             </div>
-            <div id="assist-modes" class="choice-strip assist-modes" role="radiogroup" aria-label="播放辅助模式">
-              <button type="button" data-assist-mode="observe" role="radio" title="只观察网络状态，不发送前置请求">观察</button>
-              <button type="button" data-assist-mode="auto" role="radio" title="发现高响应延迟后自动进行 CDN 前置请求">自动</button>
-              <button type="button" data-assist-mode="always" role="radio" title="满足播放和余量条件后持续进行 CDN 前置请求">持续</button>
-              <button type="button" data-assist-mode="off" role="radio" title="停止播放辅助">关闭</button>
-            </div>
-            <div class="assist-metrics" aria-live="polite">
-              <span><small>延迟 P95</small><strong id="assist-ttfb">–</strong></span>
-              <span><small>高延迟</small><strong id="assist-slow">0</strong></span>
-              <span><small>播放余量</small><strong id="assist-buffer">–</strong></span>
-              <span><small>CDN 预取</small><strong id="assist-prefetch">0 MB</strong></span>
-            </div>
+            <p id="assist-status" class="assist-status" role="status" aria-live="polite">等待视频加载</p>
             <details class="assist-settings">
               <summary>
-                <span>进度条高亮</span>
+                <span>高亮颜色</span>
                 <span class="settings-summary-trailing">
                   <span id="assist-color-preview" class="assist-color-preview" aria-hidden="true"></span>
                   <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </span>
               </summary>
               <div class="assist-color-row">
-                <div id="assist-colors" class="assist-color-palette" role="radiogroup" aria-label="预取高亮颜色"></div>
+                <div id="assist-colors" class="assist-color-palette" role="radiogroup" aria-label="提前加载高亮颜色"></div>
                 <label id="assist-custom-color-shell" class="assist-custom-color" title="选择自定义高亮颜色">
-                  <input id="assist-custom-color" type="color" value="#ff8a1f" aria-label="自定义预取高亮颜色">
+                  <input id="assist-custom-color" type="color" value="#ff8a1f" aria-label="自定义提前加载高亮颜色">
                   <span>自定义</span>
                 </label>
               </div>
             </details>
-            <div id="estimator-row" class="estimator-row" hidden>
-              <span id="estimator-note">播放器网络估计可能异常</span>
-              <div>
-                <button id="estimator-clear" type="button">重置</button>
-                <button id="estimator-restore" type="button">撤销</button>
-              </div>
-            </div>
           </section>
         </section>
 

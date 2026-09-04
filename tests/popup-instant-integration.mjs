@@ -3,7 +3,7 @@ const calls = [];
 let readyAt = 0;
 let listener;
 let snapshotRequestedAt = 0;
-let assistConfig = { mode: "auto", estimatorGuard: true, preheatColor: "#ff8a1f" };
+let assistConfig = { mode: "always", estimatorGuard: true, preheatColor: "#ff8a1f" };
 const libraryVideos = [
   {
     id: "BV1library001:100:q80:cavc",
@@ -114,15 +114,12 @@ globalThis.chrome = {
           ok: true,
           config: assistConfig,
           stats: {
+            activeTracks: 2,
             hosts: { "upos-test.bilivideo.com": { ttfbP95: 940 } },
             slowRequests: 3,
             bufferAheadSec: 18.4,
             prefetchMB: 42.7,
             prefetching: 2,
-            pageHidden: false,
-            warmingUp: false,
-            minWatchedSec: 20,
-            minBufferAheadSec: 10,
             stalls: 1,
             estimator: { suspect: false }
           }
@@ -155,13 +152,17 @@ document.querySelector("#library-tab").focus();
 document.querySelector("#library-tab").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
 const keyboardOpenedAssist = document.querySelector("#assist-tab").getAttribute("aria-selected") === "true" &&
   !document.querySelector("#assist-view").hidden;
-document.querySelector("[data-assist-mode='always']").click();
+document.querySelector("#assist-toggle").click();
+await delay(20);
+const disabledAssist = document.querySelector("#assist-toggle").getAttribute("aria-checked") === "false";
+document.querySelector("#assist-toggle").click();
 await delay(20);
 document.querySelector("[data-assist-color='#20c997']").click();
 await delay(20);
 document.querySelector("#cache-tab").click();
 
-const selectedAssistMode = document.querySelector("[data-assist-mode][aria-checked='true']")?.dataset.assistMode;
+const selectedAssistMode = assistConfig.mode;
+const assistEnabled = document.querySelector("#assist-toggle").getAttribute("aria-checked") === "true";
 const selectedAssistColor = document.querySelector("[data-assist-color][aria-checked='true']")?.dataset.assistColor;
 
 const result = {
@@ -169,6 +170,8 @@ const result = {
     document.querySelector("#button-label").textContent === "缓存" &&
     !calls.includes("REFRESH_POPUP_DATA") &&
     calls.includes("SET_ASSIST_CONFIG") &&
+    disabledAssist &&
+    assistEnabled &&
     selectedAssistMode === "always" &&
     selectedAssistColor === "#20c997" &&
     defaultCacheVisible &&
@@ -184,6 +187,7 @@ const result = {
   title: document.querySelector("#current-heading").textContent,
   button: document.querySelector("#button-label").textContent,
   selectedAssistMode,
+  assistEnabled,
   selectedAssistColor,
   hierarchy: {
     defaultCacheVisible,

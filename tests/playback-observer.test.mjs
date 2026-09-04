@@ -119,16 +119,19 @@ test("追踪参数变化保留预热色段，切换分 P 才清空", () => {
   assert.equal(internals.tracks.size, 0);
 });
 
-test("自动预热需同时满足播放时长与冷区间条件", () => {
+test("配置确认开启后不等待播放时长或慢请求，关闭仍立即阻止预取", () => {
   const { internals } = loadObserver();
   const url = "https://upos-sz-mirrorcosov.bilivideo.com/path/video.m4s";
   const track = internals.trackFor(url);
   track.anchor = 1024;
   assert.equal(internals.shouldPrefetch(track), false);
-  internals.setPlayedSec(20);
-  assert.equal(internals.shouldPrefetch(track), false);
-  internals.recordMedia({ url, range: { start: 0 }, bytes: 1024, ttfbMs: 1200, totalMs: 1300, status: 206, completed: true });
+  internals.cfg.mode = "always";
   assert.equal(internals.shouldPrefetch(track), true);
+  assert.equal(track.cold, false);
+  assert.equal(internals.stats.playedSec, 0);
+  internals.cfg.mode = "off";
+  assert.equal(internals.shouldPrefetch(track), false);
+  internals.cfg.mode = "always";
   track.cooldownUntil = Date.now() + 1000;
   assert.equal(internals.shouldPrefetch(track), false);
   track.cooldownUntil = 0;
@@ -136,16 +139,39 @@ test("自动预热需同时满足播放时长与冷区间条件", () => {
   assert.equal(internals.shouldPrefetch(track), false);
 });
 
-test("始终预热在播放门槛后不需要冷请求也会启动", () => {
+test("播放器收到首个 Content-Range 响应头后即可预取下一段", () => {
   const { internals } = loadObserver();
-  const track = internals.trackFor("https://upos-sz-mirrorcosov.bilivideo.com/path/video.m4s");
-  track.anchor = 1024;
+  const url = "https://upos-sz-mirrorcosov.bilivideo.com/path/video.m4s";
+  const track = internals.trackFor(url);
   internals.cfg.mode = "always";
 
-  assert.equal(internals.shouldPrefetch(track), false);
-  internals.setPlayedSec(20);
-  assert.equal(track.cold, false);
+  internals.recordMedia({
+    url,
+    range: { start: 0 },
+    contentRange: "bytes 0-1048575/10485760",
+    status: 206,
+    completed: false
+  });
+
+  assert.equal(track.anchor, 1048576);
+  assert.equal(track.size, 10485760);
   assert.equal(internals.shouldPrefetch(track), true);
+});
+
+test("开启调度不再因标签页隐藏或初始播放余量为零而暂停", async () => {
+  const { internals, intervals, document } = loadObserver();
+  document.hidden = true;
+  internals.cfg.mode = "always";
+  const track = internals.trackFor("https://upos-sz-mirrorcosov.bilivideo.com/path/video.m4s");
+  track.anchor = 1024;
+  track.size = 16 * 1024 * 1024;
+
+  const scheduler = intervals.find((interval) => interval.milliseconds === 400);
+  assert.ok(scheduler);
+  scheduler.callback();
+  assert.equal(internals.stats.prefetching, 2);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(internals.stats.prefetching, 0);
 });
 
 test("估计器护栏只在同 host 热样本充足且刚发生慢请求时清洗", async () => {
@@ -170,6 +196,7 @@ test("估计器护栏只在同 host 热样本充足且刚发生慢请求时清�
   const { internals, localStorage } = loadObserver({
     storage: { bilibili_dash_throughput_lru_v1: JSON.stringify(estimator) }
   });
+  internals.cfg.mode = "always";
   const url = `https://${host}/path/video.m4s`;
   for (let index = 0; index < 3; index += 1) {
     internals.recordMedia({
@@ -206,6 +233,7 @@ test("估计器护栏只在同 host 热样本充足且刚发生慢请求时清�
 function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) {
   const eventListeners = new Map();
   const observedTargets = [];
+  const intervals = [];
   class FakeStorage {
     constructor(initial) {
       this.values = new Map(Object.entries(initial));
@@ -253,7 +281,10 @@ function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) 
     queueMicrotask,
     setTimeout,
     clearTimeout,
-    setInterval: () => 1,
+    setInterval: (callback, milliseconds) => {
+      intervals.push({ callback, milliseconds });
+      return intervals.length;
+    },
     clearInterval: () => {},
     MutationObserver: class {
       constructor(callback) { this.callback = callback; }
@@ -266,7 +297,9 @@ function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) 
     localStorage,
     location,
     observedTargets,
-    eventListeners
+    eventListeners,
+    intervals,
+    document
   };
 }
 

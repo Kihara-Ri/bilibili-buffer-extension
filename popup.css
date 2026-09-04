@@ -595,94 +595,92 @@ h2 {
 }
 
 .assist-panel {
-  gap: var(--space-md);
+  gap: var(--space-sm);
+}
+
+.assist-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 32px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.74rem;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.assist-toggle-track {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: oklch(0.89 0.018 225);
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.assist-toggle-track > span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  box-shadow: 0 1px 3px oklch(0.35 0.03 235 / 0.2);
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.assist-toggle[aria-checked="true"] .assist-toggle-track {
+  border-color: var(--blue-deep);
+  background: var(--blue);
+}
+
+.assist-toggle[aria-checked="true"] .assist-toggle-track > span {
+  transform: translateX(16px);
+}
+
+.assist-toggle:hover .assist-toggle-track {
+  border-color: var(--blue-deep);
 }
 
 .assist-status {
-  max-width: 165px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: var(--surface-soft);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin: 0;
   color: var(--ink-soft);
-  font-size: 0.68rem;
-  line-height: 1.35;
-  text-align: right;
+  font-size: 0.72rem;
+  line-height: 1.4;
 }
 
-.assist-status[data-tone="warning"] {
-  background: oklch(0.94 0.035 40);
+.assist-status::before {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--line);
+  content: "";
+}
+
+.assist-status[data-state="active"]::before {
+  background: var(--success);
+}
+
+.assist-status[data-state="waiting"]::before {
+  background: var(--blue);
+}
+
+.assist-status[data-state="warning"] {
   color: var(--danger);
 }
 
-.assist-modes {
-  flex-wrap: nowrap;
-  gap: 3px;
-  justify-content: stretch;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface-soft);
-}
-
-.assist-modes button {
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 34px;
-  border: 0;
-  padding-inline: var(--space-2xs);
-  background: transparent;
-  white-space: nowrap;
-}
-
-.assist-modes button:hover:not(:disabled) {
-  background: oklch(0.94 0.025 225);
-}
-
-.assist-modes button[aria-checked="true"] {
-  background: var(--surface-raised);
-  box-shadow: 0 1px 3px oklch(0.35 0.03 235 / 0.1);
-}
-
-.assist-metrics {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-}
-
-.assist-metrics > span {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: var(--space-xs);
-  min-width: 0;
-  padding: 10px var(--space-xs);
-}
-
-.assist-metrics > span:nth-child(odd) {
-  border-right: 1px solid var(--line);
-}
-
-.assist-metrics > span:nth-child(-n + 2) {
-  border-bottom: 1px solid var(--line);
-}
-
-.assist-metrics small {
-  overflow: hidden;
-  color: var(--ink-soft);
-  font-size: 0.68rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.assist-metrics strong {
-  overflow: hidden;
-  color: var(--ink-strong);
-  font-family: "DIN Alternate", "Avenir Next Condensed", sans-serif;
-  font-size: 0.84rem;
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.assist-status[data-state="warning"]::before {
+  background: var(--danger);
 }
 
 .assist-settings {
@@ -815,36 +813,6 @@ h2 {
 .assist-custom-color input::-webkit-color-swatch {
   border: 0;
   border-radius: 5px;
-}
-
-.estimator-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-xs);
-  padding: 9px 10px;
-  border: 1px solid oklch(0.87 0.045 35);
-  border-radius: 9px;
-  background: oklch(0.96 0.025 40);
-  color: var(--danger);
-  font-size: 0.68rem;
-}
-
-.estimator-row > div {
-  display: flex;
-  gap: var(--space-2xs);
-}
-
-.estimator-row button {
-  min-height: 28px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 0 var(--space-xs);
-  background: var(--surface-raised);
-  color: var(--ink);
-  cursor: pointer;
-  font-size: 0.68rem;
-  font-weight: 680;
 }
 
 .library {

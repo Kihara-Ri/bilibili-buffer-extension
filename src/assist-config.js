@@ -10,16 +10,22 @@ export const PREHEAT_COLOR_PRESETS = Object.freeze([
 ]);
 
 export const ASSIST_DEFAULTS = Object.freeze({
-  mode: "auto",
+  mode: "always",
   slowTtfbMs: 800,
   leadSeconds: 45,
-  minWatchedSec: 20,
-  minBufferAheadSec: 10,
+  minWatchedSec: 0,
+  minBufferAheadSec: 0,
   maxPrefetchMBPerTrack: 200,
   maxConcurrency: 4,
   estimatorGuard: true,
   preheatColor: DEFAULT_PREHEAT_COLOR
 });
+
+export function normalizeAssistMode(value, fallback = ASSIST_DEFAULTS.mode) {
+  if (["always", "auto", "on"].includes(value)) return "always";
+  if (["off", "observe"].includes(value)) return "off";
+  return fallback;
+}
 
 export function normalizePreheatColor(value, fallback = DEFAULT_PREHEAT_COLOR) {
   const color = String(value || "").trim().toLowerCase();
@@ -30,9 +36,14 @@ export function sanitizeAssistConfig(patch, current = ASSIST_DEFAULTS) {
   const next = {
     ...ASSIST_DEFAULTS,
     ...(current || {}),
+    mode: normalizeAssistMode(current?.mode),
+    minWatchedSec: 0,
+    minBufferAheadSec: 0,
     preheatColor: normalizePreheatColor(current?.preheatColor)
   };
-  if (patch && ["off", "observe", "auto", "always"].includes(patch.mode)) next.mode = patch.mode;
+  if (patch && Object.hasOwn(patch, "mode")) {
+    next.mode = normalizeAssistMode(patch.mode, next.mode);
+  }
   if (patch && typeof patch.estimatorGuard === "boolean") next.estimatorGuard = patch.estimatorGuard;
   if (patch && Object.hasOwn(patch, "preheatColor")) {
     next.preheatColor = normalizePreheatColor(patch.preheatColor, next.preheatColor);
@@ -40,8 +51,6 @@ export function sanitizeAssistConfig(patch, current = ASSIST_DEFAULTS) {
   for (const [key, min, max] of [
     ["slowTtfbMs", 200, 10000],
     ["leadSeconds", 10, 120],
-    ["minWatchedSec", 0, 120],
-    ["minBufferAheadSec", 3, 60],
     ["maxPrefetchMBPerTrack", 16, 1024],
     ["maxConcurrency", 1, 6]
   ]) {

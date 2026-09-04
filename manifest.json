@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bili 缓冲站",
-  "description": "预热 B 站 CDN 冷区间，并将最高可用画质完整缓存到本地播放。",
-  "version": "2.4.0",
+  "description": "提前加载 B 站 CDN 后续内容，并将最高可用画质完整缓存到本地播放。",
+  "version": "2.5.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvKANgY0M5agZGFV1Jyh6XY16qlbKPpUMf50fWW8qmD+a6O8m8P8QuJ2RtM1HNY4YCzQgx+XXU8rLRZgvsx4uvRh/OfW2uC/rtmMpHoO98izaNjAmzpHMQl1WZB7sqNwBSDdISCWIoCvbwRMk6s9YnCYzJQ686rvviTwHOmIgvXO/fGqR+8431KwQP7RAkNfc02YKcvFx3YxSYimuS2IJIQLNBR60+OLHv1k5PglQPzcQp4TsuenwoXzGc32is9xPOMrbaVj4czCXZBHxUDt3my6LgP6k0sUfMT0KTDEmlgHoWSiwDChvuj/4S9EZ2DMwwYxoz0g9rdjsH9jblH40iQIDAQAB",
   "minimum_chrome_version": "116",
   "permissions": [

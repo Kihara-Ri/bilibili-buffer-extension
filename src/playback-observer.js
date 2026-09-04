@@ -6,7 +6,7 @@
   window[NS] = true;
 
   const markObserverReady = () => {
-    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.4.0";
+    if (document.documentElement) document.documentElement.dataset.biliBufferAssistMain = "2.5.0";
   };
   markObserverReady();
   if (!document.documentElement) document.addEventListener("DOMContentLoaded", markObserverReady, { once: true });
@@ -22,11 +22,11 @@
   const PREHEAT_STYLE_ID = "bili-buffer-preheat-progress-style";
   const DEFAULT_PREHEAT_COLOR = "#ff8a1f";
   const DEFAULTS = {
-    mode: "auto",
+    mode: "pending",
     slowTtfbMs: 800,
     leadSeconds: 45,
-    minWatchedSec: 20,
-    minBufferAheadSec: 10,
+    minWatchedSec: 0,
+    minBufferAheadSec: 0,
     maxPrefetchMBPerTrack: 200,
     maxConcurrency: 4,
     estimatorGuard: true,
@@ -234,14 +234,24 @@
       }
       if (track.cold && cfg.estimatorGuard) queueEstimatorCleanup();
     }
-    const parsed = parseContentRange(contentRange);
-    if (parsed?.total) track.size = parsed.total;
+    const parsed = primeTrackFromHeaders(track, range, contentRange, status);
     if (completed && status >= 200 && status < 300 && bytes > 0) {
       const start = range?.start ?? parsed?.start ?? 0;
       const end = start + bytes;
       addRange(track.covered, start, end);
       track.anchor = Math.max(track.anchor, end);
     }
+  }
+
+  function primeTrackFromHeaders(track, range, contentRange, status) {
+    const parsed = parseContentRange(contentRange);
+    if (!parsed) return null;
+    if (parsed.total) track.size = parsed.total;
+    const expectedStart = range?.start;
+    if (status >= 200 && status < 300 && (!Number.isSafeInteger(expectedStart) || parsed.start === expectedStart)) {
+      track.anchor = Math.max(track.anchor, parsed.end + 1);
+    }
+    return parsed;
   }
 
   function installXhrObserver() {
@@ -266,7 +276,17 @@
         state.range = parseRangeHeader(state.rangeHeader);
         state.ttfbMs = null;
         this.addEventListener("readystatechange", () => {
-          if (this.readyState === 2 && state.ttfbMs === null) state.ttfbMs = performance.now() - state.startedAt;
+          if (this.readyState !== 2 || state.ttfbMs !== null) return;
+          state.ttfbMs = performance.now() - state.startedAt;
+          const track = trackFor(state.url);
+          if (track) {
+            primeTrackFromHeaders(
+              track,
+              state.range,
+              safeXhrHeader(this, "content-range"),
+              Number(this.status) || 0
+            );
+          }
         });
         this.addEventListener("loadend", () => {
           let bytes = 0;
@@ -382,11 +402,10 @@
   }
 
   function shouldPrefetch(track) {
-    if (cfg.mode === "off" || cfg.mode === "observe") return false;
+    if (cfg.mode !== "always") return false;
     if (track.prefetchDisabled || Date.now() < track.cooldownUntil) return false;
-    if (stats.playedSec < Math.max(0, Number(cfg.minWatchedSec) || 0)) return false;
     if (track.prefetchedBytes >= Math.max(1, Number(cfg.maxPrefetchMBPerTrack) || 1) * MB) return false;
-    return cfg.mode === "always" || (cfg.mode === "auto" && track.cold);
+    return true;
   }
 
   function pickJob() {
@@ -481,7 +500,7 @@
   }
 
   function sanitizeEstimator(raw) {
-    if (!cfg.estimatorGuard || cfg.mode === "off") return raw;
+    if (!cfg.estimatorGuard || cfg.mode !== "always") return raw;
     let parsed;
     try { parsed = JSON.parse(raw); } catch { return raw; }
     if (!parsed?.entries || typeof parsed.entries !== "object") return raw;
@@ -523,7 +542,7 @@
 
   let estimatorCleanupQueued = false;
   function queueEstimatorCleanup() {
-    if (estimatorCleanupQueued || !cfg.estimatorGuard || cfg.mode === "off" || !nativeStorageSet) return;
+    if (estimatorCleanupQueued || !cfg.estimatorGuard || cfg.mode !== "always" || !nativeStorageSet) return;
     estimatorCleanupQueued = true;
     queueMicrotask(() => {
       estimatorCleanupQueued = false;
@@ -910,10 +929,10 @@
     if (!message || message.channel !== CHANNEL || message.dir !== "ext->page") return;
     if (message.type === "config" && message.payload && typeof message.payload === "object") {
       Object.assign(cfg, message.payload);
-      cfg.mode = ["off", "observe", "auto", "always"].includes(cfg.mode) ? cfg.mode : DEFAULTS.mode;
+      cfg.mode = ["off", "observe"].includes(cfg.mode) ? "off" : "always";
       cfg.maxConcurrency = Math.max(1, Math.min(6, Number(cfg.maxConcurrency) || DEFAULTS.maxConcurrency));
-      cfg.minWatchedSec = Math.max(0, Math.min(120, Number(cfg.minWatchedSec) || 0));
-      cfg.minBufferAheadSec = Math.max(3, Math.min(60, Number(cfg.minBufferAheadSec) || DEFAULTS.minBufferAheadSec));
+      cfg.minWatchedSec = 0;
+      cfg.minBufferAheadSec = 0;
       cfg.maxPrefetchMBPerTrack = Math.max(16, Math.min(1024, Number(cfg.maxPrefetchMBPerTrack) || DEFAULTS.maxPrefetchMBPerTrack));
       cfg.preheatColor = normalizePreheatColor(cfg.preheatColor);
       renderPreheatProgress();
@@ -986,7 +1005,7 @@
     window.requestAnimationFrame(animatePlaybackBoundary);
   }
   setInterval(() => {
-    if (!["auto", "always"].includes(cfg.mode) || document.hidden || currentBufferAhead() < cfg.minBufferAheadSec) return;
+    if (cfg.mode !== "always") return;
     while (stats.prefetching < cfg.maxConcurrency) {
       const job = pickJob();
       if (!job) break;

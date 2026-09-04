@@ -43,20 +43,13 @@ const elements = {
   buttonSpeed: document.querySelector("#button-speed"),
   actionHint: document.querySelector("#action-hint"),
   assistPanel: document.querySelector("#assist-panel"),
+  assistToggle: document.querySelector("#assist-toggle"),
+  assistToggleLabel: document.querySelector("#assist-toggle-label"),
   assistStatus: document.querySelector("#assist-status"),
-  assistModes: document.querySelector("#assist-modes"),
   assistColors: document.querySelector("#assist-colors"),
   assistColorPreview: document.querySelector("#assist-color-preview"),
   assistCustomColor: document.querySelector("#assist-custom-color"),
   assistCustomColorShell: document.querySelector("#assist-custom-color-shell"),
-  assistTtfb: document.querySelector("#assist-ttfb"),
-  assistSlow: document.querySelector("#assist-slow"),
-  assistBuffer: document.querySelector("#assist-buffer"),
-  assistPrefetch: document.querySelector("#assist-prefetch"),
-  estimatorRow: document.querySelector("#estimator-row"),
-  estimatorNote: document.querySelector("#estimator-note"),
-  estimatorClear: document.querySelector("#estimator-clear"),
-  estimatorRestore: document.querySelector("#estimator-restore"),
   videoList: document.querySelector("#video-list"),
   librarySummary: document.querySelector("#library-summary"),
   toast: document.querySelector("#toast")
@@ -78,7 +71,6 @@ const state = {
   focusQualityOptionOnOpen: false,
   assistConfig: null,
   assistStats: null,
-  assistCommandResult: null,
   assistTimer: null,
   refreshTimer: null,
   toastTimer: null
@@ -93,11 +85,9 @@ elements.qualityMenu.addEventListener("keydown", navigateQualityMenu);
 elements.qualityMenu.addEventListener("toggle", handleQualityMenuToggle);
 elements.qualityTrigger.addEventListener("keydown", openQualityMenuFromKeyboard);
 elements.codecOptions.addEventListener("click", selectCodec);
-elements.assistModes.addEventListener("click", selectAssistMode);
+elements.assistToggle.addEventListener("click", toggleAssist);
 elements.assistColors.addEventListener("click", selectAssistColor);
 elements.assistCustomColor.addEventListener("change", selectCustomAssistColor);
-elements.estimatorClear.addEventListener("click", () => runAssistCommand("clearEstimator"));
-elements.estimatorRestore.addEventListener("click", () => runAssistCommand("restoreEstimator"));
 window.addEventListener("resize", () => {
   if (isQualityMenuOpen()) positionQualityMenu();
 });
@@ -501,7 +491,6 @@ async function refreshAssistState() {
     const result = await send("GET_ASSIST_STATE", { tabId: state.tab.id });
     state.assistConfig = result.config || state.assistConfig;
     state.assistStats = result.stats || null;
-    state.assistCommandResult = result.commandResult || state.assistCommandResult;
   } catch {
     state.assistStats = null;
   }
@@ -516,79 +505,50 @@ function renderAssist() {
   }
   setAssistAvailability(true);
   elements.assistPanel.hidden = false;
-  const config = state.assistConfig || { mode: "auto", preheatColor: DEFAULT_PREHEAT_COLOR };
+  const config = state.assistConfig || { mode: "always", preheatColor: DEFAULT_PREHEAT_COLOR };
   const stats = state.assistStats;
-  for (const button of elements.assistModes.querySelectorAll("[data-assist-mode]")) {
-    const selected = button.dataset.assistMode === config.mode;
-    button.setAttribute("aria-checked", String(selected));
-  }
+  const enabled = config.mode !== "off";
+  elements.assistToggle.setAttribute("aria-checked", String(enabled));
+  elements.assistToggleLabel.textContent = enabled ? "开启" : "关闭";
   renderAssistColorSelection(config.preheatColor);
 
-  const ttfbs = Object.values(stats?.hosts || {})
-    .map((host) => Number(host.ttfbP95))
-    .filter(Number.isFinite);
-  const p95 = ttfbs.length ? Math.max(...ttfbs) : 0;
-  elements.assistTtfb.textContent = p95 ? `${Math.round(p95)}ms` : "–";
-  elements.assistSlow.textContent = String(stats?.slowRequests || 0);
-  elements.assistBuffer.textContent = Number.isFinite(Number(stats?.bufferAheadSec))
-    ? `${Number(stats.bufferAheadSec).toFixed(1)}s`
-    : "–";
-  elements.assistPrefetch.textContent = `${Number(stats?.prefetchMB || 0).toFixed(1)} MB`;
-
-  let status = "等待视频请求";
-  let warning = false;
-  if (config.mode === "off") status = "已关闭";
-  else if (!stats) status = "等待视频请求";
-  else if (config.mode === "observe") {
-    status = stats.slowRequests > 0 ? "高延迟 · 观察中" : "观察中";
-    warning = stats.slowRequests > 0;
-  } else if (stats.pageHidden) {
-    status = "页面隐藏 · 暂停";
-  } else if (stats.warmingUp) {
-    status = `准备 ${stats.playedSec || 0}/${stats.minWatchedSec || 20}s`;
-  } else if (Number(stats.bufferAheadSec) < Number(stats.minBufferAheadSec || config.minBufferAheadSec || 10)) {
-    status = `余量 ${Number(stats.bufferAheadSec || 0).toFixed(1)}s · 暂停`;
-  } else if (config.mode === "always") {
-    if (stats.prefetching > 0) status = `持续 · ${stats.prefetching} 路预取`;
-    else if (stats.prefetchMB > 0) status = `持续 · ${Number(stats.prefetchMB).toFixed(1)} MB`;
-    else status = "持续 · 等待区间";
-  } else if (stats.slowRequests > 0) {
-    if (stats.prefetching > 0) status = `高延迟 · ${stats.prefetching} 路预取`;
-    else if (stats.prefetchMB > 0) status = `已预取 ${Number(stats.prefetchMB).toFixed(1)} MB`;
-    else status = "高延迟 · 等待预取";
-    warning = true;
-  } else {
-    status = `链路正常${stats.stalls ? ` · ${stats.stalls} 次停顿` : ""}`;
+  let status = "已关闭";
+  let statusState = "off";
+  if (enabled && !stats?.activeTracks) {
+    status = "等待视频加载";
+    statusState = "waiting";
+  } else if (enabled && stats.prefetching > 0) {
+    status = "正在提前加载后续内容";
+    statusState = "active";
+  } else if (enabled && stats.prefetchMB > 0) {
+    status = `已提前加载 ${Number(stats.prefetchMB).toFixed(1)} MB`;
+    statusState = "active";
+  } else if (enabled && stats.prefetchErrors > 0) {
+    status = "连接不稳定，自动重试";
+    statusState = "warning";
+  } else if (enabled) {
+    status = "已开启";
+    statusState = "active";
   }
   elements.assistStatus.textContent = status;
-  elements.assistStatus.dataset.tone = warning ? "warning" : "normal";
+  elements.assistStatus.dataset.state = statusState;
   elements.assistTab.title = status;
-  elements.assistTabIndicator.dataset.tone = config.mode === "off"
-    ? "off"
-    : warning
-      ? "warning"
-      : "active";
-
-  const estimator = stats?.estimator;
-  const cleared = state.assistCommandResult?.name === "clearEstimator" && state.assistCommandResult?.success;
-  const restored = state.assistCommandResult?.name === "restoreEstimator" && state.assistCommandResult?.success;
-  elements.estimatorRow.hidden = !(estimator?.suspect || cleared || restored);
-  if (cleared) elements.estimatorNote.textContent = "网络估计已重置";
-  else if (restored) elements.estimatorNote.textContent = "网络估计已恢复";
-  else elements.estimatorNote.textContent = "网络估计可能异常";
-  elements.estimatorClear.hidden = cleared;
-  elements.estimatorRestore.hidden = !cleared;
+  elements.assistTabIndicator.dataset.tone = enabled ? "active" : "off";
 }
 
-async function selectAssistMode(event) {
-  const button = event.target.closest("[data-assist-mode]");
-  if (!button || !state.tab?.id) return;
-  const mode = button.dataset.assistMode;
+async function toggleAssist() {
+  if (!state.tab?.id) return;
+  const previous = state.assistConfig || { mode: "always", preheatColor: DEFAULT_PREHEAT_COLOR };
+  const mode = previous.mode === "off" ? "always" : "off";
+  state.assistConfig = { ...previous, mode };
+  renderAssist();
   try {
     const result = await send("SET_ASSIST_CONFIG", { patch: { mode } });
     state.assistConfig = result.config;
     renderAssist();
   } catch (error) {
+    state.assistConfig = previous;
+    renderAssist();
     showToast(error.message);
   }
 }
@@ -632,7 +592,7 @@ async function selectCustomAssistColor() {
 
 async function persistAssistColor(input) {
   const preheatColor = normalizePreheatColor(input);
-  const previous = state.assistConfig || { mode: "auto", preheatColor: DEFAULT_PREHEAT_COLOR };
+  const previous = state.assistConfig || { mode: "always", preheatColor: DEFAULT_PREHEAT_COLOR };
   state.assistConfig = { ...previous, preheatColor };
   renderAssistColorSelection(preheatColor);
   try {
@@ -643,23 +603,6 @@ async function persistAssistColor(input) {
     state.assistConfig = previous;
     renderAssist();
     showToast(error.message);
-  }
-}
-
-async function runAssistCommand(name) {
-  if (!state.tab?.id) return;
-  elements.estimatorClear.disabled = true;
-  elements.estimatorRestore.disabled = true;
-  try {
-    await send("ASSIST_COMMAND", { tabId: state.tab.id, name });
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    await refreshAssistState();
-    showToast(name === "clearEstimator" ? "带宽估计已备份并清理" : "带宽估计已恢复");
-  } catch (error) {
-    showToast(error.message);
-  } finally {
-    elements.estimatorClear.disabled = false;
-    elements.estimatorRestore.disabled = false;
   }
 }
 

@@ -5,11 +5,11 @@
   const CONFIG_KEY = "playbackAssistConfigV1";
   const DEFAULT_PREHEAT_COLOR = "#ff8a1f";
   const DEFAULTS = {
-    mode: "auto",
+    mode: "always",
     slowTtfbMs: 800,
     leadSeconds: 45,
-    minWatchedSec: 20,
-    minBufferAheadSec: 10,
+    minWatchedSec: 0,
+    minBufferAheadSec: 0,
     maxPrefetchMBPerTrack: 200,
     maxConcurrency: 4,
     estimatorGuard: true,
@@ -20,7 +20,7 @@
   let lastCommandResult = null;
 
   const markBridgeReady = () => {
-    if (document.documentElement) document.documentElement.dataset.biliBufferAssistBridge = "2.4.0";
+    if (document.documentElement) document.documentElement.dataset.biliBufferAssistBridge = "2.5.0";
   };
   markBridgeReady();
   if (!document.documentElement) document.addEventListener("DOMContentLoaded", markBridgeReady, { once: true });
@@ -31,6 +31,9 @@
 
   function normalizedConfig(input) {
     const next = { ...DEFAULTS, ...(input || {}) };
+    next.mode = ["off", "observe"].includes(next.mode) ? "off" : "always";
+    next.minWatchedSec = 0;
+    next.minBufferAheadSec = 0;
     const color = String(next.preheatColor || "").trim().toLowerCase();
     next.preheatColor = /^#[0-9a-f]{6}$/.test(color) ? color : DEFAULT_PREHEAT_COLOR;
     return next;

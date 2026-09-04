@@ -109,7 +109,7 @@ try {
   assert(selected.snapshot?.selectedCodec === "av1", "重新打开没有恢复用户编码");
 
   const assist = await send({ type: "GET_ASSIST_STATE", tabId: 7 });
-  assert(assist.ok && assist.config.mode === "auto" && assist.stats.slowRequests === 1, "播放辅助状态桥接失败");
+  assert(assist.ok && assist.config.mode === "always" && assist.stats.slowRequests === 1, "播放辅助状态桥接失败");
 
   const assistColor = await send({
     type: "SET_ASSIST_CONFIG",
