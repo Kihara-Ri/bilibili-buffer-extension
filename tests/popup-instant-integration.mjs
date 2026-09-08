@@ -96,10 +96,11 @@ globalThis.chrome = {
                 { codec: "avc", label: "AVC", minBandwidth: 1_600_000 }
               ]
             },
+            cacheSizeInfo: { duration: 60, video: [], audio: [], progressiveQuality: 80, progressiveBytes: 10485760 },
             defaultQuality: 80,
             selectedQuality: 80,
             defaultCodec: "auto",
-            selectedCodec: "auto",
+            selectedCodec: "avc",
             auth: { viaPageSession: true, vipActive: false },
             savedAt: Date.now()
           }
@@ -166,7 +167,8 @@ const assistEnabled = document.querySelector("#assist-toggle").getAttribute("ari
 const selectedAssistColor = document.querySelector("[data-assist-color][aria-checked='true']")?.dataset.assistColor;
 
 const result = {
-  ok: document.querySelector("#current-heading").textContent === "已恢复的视频标题" &&
+  ok: document.querySelector("#cache-size").textContent === "10.0 MB" &&
+    document.querySelector("#current-heading").textContent === "已恢复的视频标题" &&
     document.querySelector("#button-label").textContent === "缓存" &&
     !calls.includes("REFRESH_POPUP_DATA") &&
     calls.includes("SET_ASSIST_CONFIG") &&

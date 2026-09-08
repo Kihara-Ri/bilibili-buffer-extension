@@ -1,3 +1,4 @@
+import { buildCacheSizeInfo } from "./cache-size.js";
 import {
   AUTO_QUALITY,
   buildCachedDownloadPlan,
@@ -227,6 +228,7 @@ async function refreshPopupSnapshot(inputUrl, tabId) {
     pageKey: makePopupPageKey(inputUrl),
     pageInfo,
     qualities,
+    cacheSizeInfo: buildCacheSizeInfo(playurl.data, pageInfo.duration),
     codecOptionsByQuality,
     defaultQuality,
     selectedQuality,

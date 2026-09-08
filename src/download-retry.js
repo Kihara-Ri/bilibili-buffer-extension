@@ -1,6 +1,5 @@
 export const DOWNLOAD_WATCHDOG_ALARM = "bili-buffer-download-watchdog-v1";
 export const DOWNLOAD_WATCHDOG_MINUTES = 1;
-export const MAX_AUTO_RETRY_ATTEMPTS = 8;
 
 const RETRY_DELAYS_MS = Object.freeze([
   60_000,
@@ -25,7 +24,6 @@ export function isRecoverableDownloadError(error) {
 export function makeDownloadRetryState(video, error, now = Date.now()) {
   if (!isRecoverableDownloadError(error)) return null;
   const attempt = Math.max(0, Number(video?.autoRetryCount) || 0) + 1;
-  if (attempt > MAX_AUTO_RETRY_ATTEMPTS) return null;
   const delayMs = RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)];
   return {
     autoRetryCount: attempt,

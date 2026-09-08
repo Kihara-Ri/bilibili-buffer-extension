@@ -271,3 +271,26 @@ function rangeResponse(data, start, end) {
     }
   });
 }
+
+
+test("默认四路下载保持并发上限并按序完整落盘", async () => {
+  const data = Uint8Array.from({ length: 32 }, (_, index) => index);
+  let active = 0;
+  let peak = 0;
+  const chunks = [];
+  const result = await downloadByteRanges({
+    urls: ["https://cdn.example/video"], start: 0, totalBytes: data.length, rangeSize: 4,
+    fetchImpl: async (_url, init) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      const [, start, end] = init.headers.Range.match(/bytes=(\d+)-(\d+)/).map(Number);
+      await new Promise((resolve) => setTimeout(resolve, start === 0 ? 20 : 2));
+      active -= 1;
+      return rangeResponse(data, start, end);
+    },
+    onCommit: async (batch) => { for (const entry of batch) chunks.push(entry.data); }
+  });
+  assert.equal(peak, 4);
+  assert.equal(result.metrics.concurrency, 4);
+  assert.deepEqual(new Uint8Array(await new Blob(chunks).arrayBuffer()), data);
+});

@@ -307,8 +307,7 @@ h2 {
   border-bottom: 1px solid var(--line);
 }
 
-.quality-row,
-.codec-row {
+.quality-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
@@ -319,42 +318,6 @@ h2 {
   color: var(--ink-soft);
   font-size: 0.74rem;
   font-weight: 680;
-}
-
-.choice-strip {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--space-2xs);
-}
-
-.choice-strip button {
-  min-height: 30px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0 var(--space-xs);
-  background: var(--surface-raised);
-  color: var(--ink);
-  cursor: pointer;
-  font-size: 0.7rem;
-  font-weight: 680;
-  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
-}
-
-.choice-strip button:hover:not(:disabled) {
-  border-color: oklch(0.72 0.08 222);
-  color: var(--ink-strong);
-}
-
-.choice-strip button[aria-checked="true"] {
-  border-color: oklch(0.72 0.08 222);
-  background: oklch(0.925 0.04 222);
-  color: var(--blue-deep);
-}
-
-.choice-strip button:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
 }
 
 .quality-picker {
@@ -1050,4 +1013,11 @@ h2 {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.cache-size {
+  justify-self: end;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
 }

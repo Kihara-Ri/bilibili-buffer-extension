@@ -5,8 +5,7 @@ import {
   isDownloadRetryDue,
   isRecoverableDownloadError,
   makeDownloadRetryState,
-  makeDownloadWatchdogSchedule,
-  MAX_AUTO_RETRY_ATTEMPTS
+  makeDownloadWatchdogSchedule
 } from "../src/download-retry.js";
 
 test("签名过期、限流和网络中断属于可自动续传错误", () => {
@@ -28,7 +27,7 @@ test("数据库、编码和媒体身份冲突不会无限重试", () => {
   ]) assert.equal(isRecoverableDownloadError(new Error(message)), false, message);
 });
 
-test("自动续传使用持久化退避并在上限后停止", () => {
+test("长时间断网仍持续续传，退避间隔最多五分钟", () => {
   const now = 1_000_000;
   const first = makeDownloadRetryState({}, new Error("Failed to fetch"), now);
   assert.equal(first.autoRetryCount, 1);
@@ -37,11 +36,13 @@ test("自动续传使用持久化退避并在上限后停止", () => {
   assert.equal(isDownloadRetryDue(first, now + 60_000), true);
 
   const capped = makeDownloadRetryState(
-    { autoRetryCount: MAX_AUTO_RETRY_ATTEMPTS },
+    { autoRetryCount: 100 },
     new Error("Failed to fetch"),
     now
   );
-  assert.equal(capped, null);
+  assert.equal(capped.autoRetryCount, 101);
+  assert.equal(capped.nextRetryAt, now + 300_000);
+  assert.equal(makeDownloadRetryState({}, new Error("IndexedDB transaction failed"), now), null);
 });
 
 test("下载看门狗对齐最早续传时间并保留分钟级巡视", () => {

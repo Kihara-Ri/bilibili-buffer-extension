@@ -1,6 +1,6 @@
 import { parseContentRange } from "./utils.js";
 
-export const DEFAULT_RANGE_CONCURRENCY = 3;
+export const DEFAULT_RANGE_CONCURRENCY = 4;
 export const DEFAULT_RANGE_SIZE = 2 * 1024 * 1024;
 export const DEFAULT_PROBE_SIZE = 64 * 1024;
 export const DEFAULT_PROBE_TIMEOUT = 8_000;

@@ -1,3 +1,4 @@
+import { getCacheSize } from "./cache-size.js";
 import {
   CODEC_LABELS,
   formatBytes,
@@ -6,11 +7,10 @@ import {
   getVideoPageId,
   isVideoCodecSelectionMatch,
   makeBiliSpaceUrl,
-  normalizeCodecPreference,
   normalizeHttpUrl,
   shouldShowInLibrary
 } from "./utils.js";
-import { choosePopupCodec, choosePopupQuality } from "./popup-snapshot.js";
+import { choosePopupQuality } from "./popup-snapshot.js";
 import {
   DEFAULT_PREHEAT_COLOR,
   normalizePreheatColor,
@@ -34,8 +34,7 @@ const elements = {
   qualityTrigger: document.querySelector("#quality-trigger"),
   qualityTriggerLabel: document.querySelector("#quality-trigger-label"),
   qualityMenu: document.querySelector("#quality-menu"),
-  codecRow: document.querySelector("#codec-row"),
-  codecOptions: document.querySelector("#codec-options"),
+  cacheSize: document.querySelector("#cache-size"),
   authNote: document.querySelector("#auth-note"),
   cacheButton: document.querySelector("#cache-button"),
   buttonProgress: document.querySelector("#button-progress"),
@@ -61,7 +60,7 @@ const state = {
   pageInfo: null,
   qualityOptions: [],
   selectedQuality: 0,
-  codecOptionsByQuality: {},
+  cacheSizeInfo: null,
   selectedCodec: "auto",
   qualitiesLoading: false,
   qualityError: "",
@@ -84,7 +83,6 @@ elements.qualityMenu.addEventListener("click", selectQualityFromMenu);
 elements.qualityMenu.addEventListener("keydown", navigateQualityMenu);
 elements.qualityMenu.addEventListener("toggle", handleQualityMenuToggle);
 elements.qualityTrigger.addEventListener("keydown", openQualityMenuFromKeyboard);
-elements.codecOptions.addEventListener("click", selectCodec);
 elements.assistToggle.addEventListener("click", toggleAssist);
 elements.assistColors.addEventListener("click", selectAssistColor);
 elements.assistCustomColor.addEventListener("change", selectCustomAssistColor);
@@ -183,7 +181,7 @@ async function restorePopupSnapshot() {
     const result = await send("GET_POPUP_SNAPSHOT", { url: state.tab.url, tabId: state.tab.id });
     if (!result.snapshot) return null;
     applyPopupSnapshot(result.snapshot);
-    return { stale: Boolean(result.stale) };
+    return { stale: Boolean(result.stale) || !result.snapshot.cacheSizeInfo };
   } catch {
     return null;
   }
@@ -217,8 +215,8 @@ async function refreshPopupData({ silent = false } = {}) {
 
 function applyPopupSnapshot(snapshot) {
   state.pageInfo = snapshot.pageInfo || null;
+  state.cacheSizeInfo = snapshot.cacheSizeInfo || null;
   state.qualityOptions = Array.isArray(snapshot.qualities) ? snapshot.qualities : [];
-  state.codecOptionsByQuality = snapshot.codecOptionsByQuality || {};
   state.auth = snapshot.auth || null;
   state.qualityError = "";
   state.qualitiesLoading = false;
@@ -230,14 +228,7 @@ function applyPopupSnapshot(snapshot) {
     snapshot.selectedQuality,
     snapshot.defaultQuality
   );
-  const activeCodec = normalizeCodecPreference(active?.requestedCodec, active?.codec || "");
-  state.selectedCodec = choosePopupCodec(
-    getCodecOptions(state.selectedQuality),
-    activeCodec,
-    snapshot.selectedCodec,
-    snapshot.defaultCodec,
-    "auto"
-  ) || "auto";
+  state.selectedCodec = "auto";
   renderCurrent();
 }
 
@@ -258,12 +249,7 @@ function syncSelectedQualityWithActiveDownload() {
   const activeQuality = Number(active?.requestedQuality || active?.quality) || 0;
   if (activeQuality) {
     state.selectedQuality = activeQuality;
-    state.selectedCodec = choosePopupCodec(
-      getCodecOptions(activeQuality),
-      normalizeCodecPreference(active?.requestedCodec, active?.codec || ""),
-      state.selectedCodec,
-      "auto"
-    ) || "auto";
+    state.selectedCodec = "auto";
   }
 }
 
@@ -340,7 +326,6 @@ function renderUnsupported(title, detail) {
   elements.pageMark.hidden = true;
   elements.formatControls.hidden = true;
   elements.qualityRow.hidden = true;
-  elements.codecRow.hidden = true;
   elements.assistPanel.hidden = true;
   setAssistAvailability(false);
   elements.authNote.hidden = true;
@@ -414,7 +399,13 @@ function renderQualityControl(cached) {
     );
     updateQualitySelection();
   }
-  renderCodecControl(cached);
+
+  const size = getCacheSize(state.cacheSizeInfo, state.selectedQuality, cached);
+  elements.cacheSize.textContent = state.qualitiesLoading ? "正在估算…"
+    : size ? `${size.estimated ? "约 " : ""}${formatBytes(size.bytes)}` : "暂时无法估算";
+  elements.cacheSize.title = size?.estimated
+    ? "按当前画质的音视频码率和时长估算，实际大小以下载后为准"
+    : "当前画质的音视频总大小";
 
   if (state.qualityError) {
     elements.authNote.textContent = state.qualityError;
@@ -437,52 +428,6 @@ function renderQualityControl(cached) {
     elements.authNote.dataset.tone = "warning";
     elements.authNote.title = "登录或大会员画质可能不可用";
   }
-}
-
-function getCodecOptions(quality = state.selectedQuality) {
-  return Array.isArray(state.codecOptionsByQuality?.[String(quality)])
-    ? state.codecOptionsByQuality[String(quality)]
-    : [];
-}
-
-function renderCodecControl(cached) {
-  const options = getCodecOptions();
-  elements.codecRow.hidden = !options.length;
-  if (!options.length) {
-    state.selectedCodec = "auto";
-    elements.codecOptions.replaceChildren();
-    return;
-  }
-  state.selectedCodec = choosePopupCodec(options, state.selectedCodec, "auto") || "auto";
-  const disabled = cached?.status === "downloading";
-  const fragment = document.createDocumentFragment();
-  for (const option of options) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.role = "radio";
-    button.dataset.codec = option.codec;
-    button.setAttribute("aria-checked", String(option.codec === state.selectedCodec));
-    button.disabled = disabled;
-    const bitrate = Number(option.minBandwidth) > 0
-      ? ` ${formatBitrate(option.minBandwidth)}`
-      : "";
-    button.textContent = `${option.label || CODEC_LABELS[option.codec] || option.codec}${bitrate}`;
-    fragment.append(button);
-  }
-  elements.codecOptions.replaceChildren(fragment);
-}
-
-function formatBitrate(bitsPerSecond) {
-  const mbps = Number(bitsPerSecond) / 1_000_000;
-  return Number.isFinite(mbps) && mbps > 0 ? `${mbps.toFixed(mbps >= 10 ? 0 : 1)}M` : "";
-}
-
-function selectCodec(event) {
-  const button = event.target.closest("[data-codec]");
-  if (!button || button.disabled) return;
-  state.selectedCodec = choosePopupCodec(getCodecOptions(), button.dataset.codec, "auto") || "auto";
-  persistPopupSelection();
-  renderCurrent();
 }
 
 async function refreshAssistState() {
@@ -665,7 +610,7 @@ function selectQualityFromMenu(event) {
   const option = event.target.closest(".quality-option");
   if (!option) return;
   state.selectedQuality = Number(option.dataset.quality) || 0;
-  state.selectedCodec = choosePopupCodec(getCodecOptions(state.selectedQuality), state.selectedCodec, "auto") || "auto";
+  state.selectedCodec = "auto";
   persistPopupSelection();
   closeQualityMenu();
   renderCurrent();
