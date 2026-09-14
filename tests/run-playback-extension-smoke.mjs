@@ -45,6 +45,17 @@ try {
   };
   const first = await check();
   const extensionId = new URL(worker.url()).host;
+  // MV3 SW 禁止动态 import；从扩展页面写同源 IndexedDB，随后验证全新 SW 的恢复。
+  const seed = await context.newPage();
+  await seed.goto(`chrome-extension://${extensionId}/popup.html`);
+  const badgeTabId = await seed.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({ url: "https://www.bilibili.com/video/*" });
+    const { putVideo } = await import(chrome.runtime.getURL("src/db.js"));
+    await putVideo({ id: "smoke-complete", tabId: tab.id, status: "complete", createdAt: Date.now(), updatedAt: Date.now(), downloadedBytes: 2, totalBytes: 2, progress: 1 });
+    await chrome.action.setBadgeText({ tabId: tab.id, text: "" });
+    return tab.id;
+  });
+  await seed.close();
   await writeFile(bundlePath, originalBundle + probeLine);
   await worker.evaluate(() => chrome.runtime.reload()).catch(error => {
     if (!/closed|destroyed|Target/.test(error.message)) throw error;
@@ -61,6 +72,7 @@ try {
     } await new Promise(resolve => setTimeout(resolve, 300)); }
   }
   const second = await check();
+  await popup.waitForFunction(async tabId => await chrome.action.getBadgeText({ tabId }) === "✓", badgeTabId);
   const loadedSource = await popup.evaluate(async () => (await fetch(chrome.runtime.getURL('src/playback-cache.js'))).text());
   const diskSource = await readFile(new URL('../src/playback-cache.js', import.meta.url), 'utf8');
   const hash = source => createHash('sha256').update(source).digest('hex');
@@ -70,7 +82,7 @@ try {
     assert.deepEqual(result.data, [7, 9]); assert.deepEqual(result.xhrData, [7, 9]); assert.equal(result.hits, 2); assert(result.main && result.bridge);
   }
   assert.equal(mediaRequests, 0);
-  console.log(JSON.stringify({ ok: true, extensionInjection: first, afterRuntimeReload: second, bundleSha256: hash(loadedSource), mediaRequests }));
+  console.log(JSON.stringify({ ok: true, extensionInjection: first, afterRuntimeReload: second, bundleSha256: hash(loadedSource), badgeRestoredAfterRestart: true, mediaRequests }));
 } finally {
   await writeFile(bundlePath, originalBundle);
   await context.close();

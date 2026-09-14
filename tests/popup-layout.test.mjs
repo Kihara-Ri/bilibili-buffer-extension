@@ -25,11 +25,14 @@ test("缓存页提供视频 + 音频与仅音频两种缓存内容", () => {
   assert.match(html, /缓存内容/);
 });
 
-test("播放页只公开开启关闭开关，低频配色按需展开", () => {
+test("播放页使用直接预览和明确的外观控制，不再嵌套折叠设置", () => {
   assert.match(html, /id="assist-toggle"[^>]*role="switch"/);
   assert.doesNotMatch(html, /data-assist-mode=/);
   assert.doesNotMatch(html, /class="assist-metrics"/);
-  assert.match(html, /<details class="assist-settings">[\s\S]*进度条显示[\s\S]*id="assist-colors"[\s\S]*<\/details>/);
+  assert.match(html, /id="assist-appearance"/);
+  assert.match(html, /id="assist-timeline-preview"/);
+  assert.match(html, /id="assist-appearance-reset"/);
+  assert.doesNotMatch(html, /<details class="assist-settings">/);
   assert.match(html, /id="assist-tab-indicator"/);
   assert.match(html, /id="library-count"/);
 });

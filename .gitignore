@@ -6,3 +6,6 @@ _metadata/
 *.log
 coverage/
 dist/
+.tmp/
+.pi/
+.playwright-mcp/

@@ -1,3 +1,4 @@
+import { committedBytes, taskProgress, compareLibraryTasks, newerTask, sampleSpeed } from "./task-presentation.js";
 import { getAudioCacheSize, getCacheSize } from "./cache-size.js";
 import {
   CODEC_LABELS,
@@ -50,6 +51,9 @@ const elements = {
   assistToggle: document.querySelector("#assist-toggle"),
   assistToggleLabel: document.querySelector("#assist-toggle-label"),
   assistStatus: document.querySelector("#assist-status"),
+  appearance: document.querySelector("#assist-appearance"),
+  appearanceReset: document.querySelector("#assist-appearance-reset"),
+  preheatControls: document.querySelector("#assist-preheat-controls"),
   progressColor: document.querySelector("#assist-progress-color"),
   showPreheatHighlight: document.querySelector("#assist-show-highlight"),
   assistColors: document.querySelector("#assist-colors"),
@@ -63,6 +67,14 @@ const elements = {
 
 const state = {
   activeView: "cache",
+  libraryRevision: 0,
+  libraryLoading: false,
+  deletedAt: new Map(),
+  speedSamples: new Map(),
+  confirmedAssistConfig: null,
+  appearancePending: 0,
+  appearanceRevision: 0,
+  appearanceQueue: Promise.resolve(),
   cacheMode: "video",
   tab: null,
   pageInfo: null,
@@ -88,16 +100,23 @@ elements.showPreheatHighlight.addEventListener("change", () => persistProgressAp
 
 async function persistProgressAppearance(patch) {
   const previous = state.assistConfig;
+  const revision = ++state.appearanceRevision;
+  state.appearancePending++;
   state.assistConfig = { ...previous, ...patch };
   renderAssist();
+  // 连续改色/切换时按操作顺序落盘；轮询与较早响应不得覆盖尚未完成的选择。
+  const request = state.appearanceQueue.then(() => send('SET_ASSIST_CONFIG', { patch }));
+  state.appearanceQueue = request.catch(() => {});
   try {
-    const result = await send("SET_ASSIST_CONFIG", { patch });
-    state.assistConfig = result.config;
+    const result = await request;
+    state.confirmedAssistConfig = result.config;
+    if (revision === state.appearanceRevision) state.assistConfig = result.config;
   } catch (error) {
-    state.assistConfig = previous;
+    // 连续失败时 previous 可能也是尚未保存的乐观值，必须回到最后一次确认配置。
+    if (revision === state.appearanceRevision) state.assistConfig = state.confirmedAssistConfig || previous;
     showToast(error.message);
   }
-  renderAssist();
+  finally { state.appearancePending--; renderAssist(); }
 }
 
 elements.panelTabs.addEventListener("click", selectPanelViewFromEvent);
@@ -105,13 +124,20 @@ elements.panelTabs.addEventListener("keydown", navigatePanelViews);
 elements.cacheButton.addEventListener("click", startCache);
 elements.currentOwner.addEventListener("click", openCurrentOwner);
 elements.cacheMode.addEventListener("click", selectCacheMode);
-  elements.cacheMode.addEventListener("keydown", navigateCacheModes);
+elements.cacheMode.addEventListener("keydown", navigateCacheModes);
 elements.qualityMenu.addEventListener("click", selectQualityFromMenu);
 elements.qualityMenu.addEventListener("keydown", navigateQualityMenu);
 elements.qualityMenu.addEventListener("toggle", handleQualityMenuToggle);
 elements.qualityTrigger.addEventListener("keydown", openQualityMenuFromKeyboard);
 elements.assistToggle.addEventListener("click", toggleAssist);
 elements.assistColors.addEventListener("click", selectAssistColor);
+elements.appearanceReset.addEventListener('click', () => persistProgressAppearance({ progressColor: '#00a1d6', preheatColor: DEFAULT_PREHEAT_COLOR, showPreheatHighlight: true }));
+elements.assistColors.addEventListener('keydown', event => {
+  if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key) || elements.preheatControls.disabled) return;
+  const buttons = [...elements.assistColors.querySelectorAll('button')], index = buttons.indexOf(document.activeElement);
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+  event.preventDefault(); buttons[next].focus(); void persistAssistColor(buttons[next].dataset.assistColor);
+});
 elements.assistCustomColor.addEventListener("change", selectCustomAssistColor);
 window.addEventListener("resize", () => {
   if (isQualityMenuOpen()) positionQualityMenu();
@@ -120,12 +146,23 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message?.target !== "popup") return;
   if (["CACHE_PROGRESS", "CACHE_RETRY", "CACHE_COMPLETE", "CACHE_ERROR", "CACHE_DELETED"].includes(message.type)) {
     if (message.video) {
+      state.libraryRevision++;
+      const deletedAt = state.deletedAt.get(message.video.id) || 0;
+      if (deletedAt && (message.video.updatedAt || 0) <= deletedAt) return;
+      state.deletedAt.delete(message.video.id);
       const index = state.videos.findIndex((video) => video.id === message.video.id);
-      if (index >= 0) state.videos.splice(index, 1, message.video);
-      else state.videos.unshift(message.video);
+      if (index >= 0) state.videos.splice(index, 1, newerTask(state.videos[index], message.video));
+      else state.videos.push(message.video);
       renderLibrary();
       if (state.pageInfo) renderCurrent();
     } else {
+      if (message.type === "CACHE_DELETED") {
+        state.libraryRevision++;
+        state.deletedAt.set(message.videoId, Date.now());
+        state.videos = state.videos.filter(video => video.id !== message.videoId);
+        renderLibrary();
+        if (state.pageInfo) renderCurrent();
+      }
       void refreshLibrary();
     }
   }
@@ -261,15 +298,22 @@ function applyPopupSnapshot(snapshot) {
 }
 
 async function refreshLibrary() {
+  if (state.libraryLoading) return;
+  state.libraryLoading = true;
+  const revision = state.libraryRevision;
   try {
     const result = await send("LIST_VIDEOS");
-    state.videos = result.videos || [];
+    const previous = new Map(state.videos.map(video => [video.id, video]));
+    const incoming = new Map((result.videos || []).filter(video => !state.deletedAt.has(video.id) || video.updatedAt > state.deletedAt.get(video.id)).map(video => [video.id, newerTask(previous.get(video.id), video)]));
+    // 查询期间收到推送时，旧查询不能删除刚加入的任务，也不能压回进度。
+    if (revision !== state.libraryRevision) for (const video of state.videos) if (!incoming.has(video.id) && !state.deletedAt.has(video.id)) incoming.set(video.id, video);
+    state.videos = [...incoming.values()].sort(compareLibraryTasks);
     syncSelectedQualityWithActiveDownload();
     renderLibrary();
     if (state.pageInfo) renderCurrent();
   } catch (error) {
     if (!state.videos.length) renderEmptyLibrary("本地片库读取失败", error.message);
-  }
+  } finally { state.libraryLoading = false; }
 }
 
 function syncSelectedQualityWithActiveDownload() {
@@ -330,7 +374,9 @@ function renderCurrent() {
   }
 
   if (cached.status === "downloading") {
-    const progress = Math.max(0, Math.min(1, Number(cached.progress) || 0));
+    const progress = taskProgress(cached);
+    const speedSample = sampleSpeed(state.speedSamples.get(cached.id), cached);
+    state.speedSamples.set(cached.id, speedSample);
     const retrySeconds = Math.max(0, Math.ceil(((Number(cached.nextRetryAt) || 0) - Date.now()) / 1000));
     const recovering = Boolean(cached.error);
     const merging = cached.stage === "merging" || cached.mergeStage === "merging";
@@ -347,7 +393,7 @@ function renderCurrent() {
             : recovering
               ? `正在恢复 ${percent}%`
               : `正在缓存 ${percent}%`,
-      retrySeconds > 0 ? `${retrySeconds}s` : cached.speed ? formatSpeed(cached.speed) : "连接中",
+      retrySeconds > 0 ? `${retrySeconds}s` : merging || extracting ? "处理中" : speedSample.value > 0 ? formatSpeed(speedSample.value) : "连接中",
       progress,
       true
     );
@@ -356,7 +402,7 @@ function renderCurrent() {
         ? "单文件 MP4 已下载完成，正在无损提取音轨（不转码）"
         : merging
           ? "音视频轨已下载完成，正在合并为单个 MP4"
-          : cached.error || `${formatBytes(cached.downloadedBytes)} / ${formatBytes(cached.totalBytes)}`,
+          : cached.error || `已缓存 ${formatBytes(committedBytes(cached))} / ${formatBytes(cached.totalBytes)}`,
       false
     );
     return;
@@ -576,9 +622,13 @@ function renderQualityControl(cached) {
 
 async function refreshAssistState() {
   if (!state.tab?.id) return;
+  const revision = state.appearanceRevision;
   try {
     const result = await send("GET_ASSIST_STATE", { tabId: state.tab.id });
-    state.assistConfig = result.config || state.assistConfig;
+    if (!state.appearancePending && revision === state.appearanceRevision) {
+      state.assistConfig = result.config || state.assistConfig;
+      state.confirmedAssistConfig = state.assistConfig;
+    }
     state.assistStats = result.stats || null;
   } catch {
     state.assistStats = null;
@@ -599,8 +649,12 @@ function renderAssist() {
   const enabled = config.mode !== "off";
   elements.assistToggle.setAttribute("aria-checked", String(enabled));
   elements.assistToggleLabel.textContent = enabled ? "开启" : "关闭";
-  elements.progressColor.value = config.progressColor || "#00a1d6";
+  if (document.activeElement !== elements.progressColor) elements.progressColor.value = config.progressColor || "#00a1d6";
   elements.showPreheatHighlight.checked = config.showPreheatHighlight !== false;
+  elements.preheatControls.disabled = !elements.showPreheatHighlight.checked;
+  elements.appearance.dataset.highlight = String(elements.showPreheatHighlight.checked);
+  elements.appearance.style.setProperty("--played-color", config.progressColor || "#00a1d6");
+  elements.appearance.style.setProperty("--preheat-color", normalizePreheatColor(config.preheatColor));
   renderAssistColorSelection(config.preheatColor);
 
   let status = "已关闭";
@@ -621,7 +675,7 @@ function renderAssist() {
     status = "已开启";
     statusState = "active";
   }
-  elements.assistStatus.textContent = status;
+  setText(elements.assistStatus, status);
   elements.assistStatus.dataset.state = statusState;
   elements.assistTab.title = status;
   elements.assistTabIndicator.dataset.tone = enabled ? "active" : "off";
@@ -629,19 +683,7 @@ function renderAssist() {
 
 async function toggleAssist() {
   if (!state.tab?.id) return;
-  const previous = state.assistConfig || { mode: "always", preheatColor: DEFAULT_PREHEAT_COLOR };
-  const mode = previous.mode === "off" ? "always" : "off";
-  state.assistConfig = { ...previous, mode };
-  renderAssist();
-  try {
-    const result = await send("SET_ASSIST_CONFIG", { patch: { mode } });
-    state.assistConfig = result.config;
-    renderAssist();
-  } catch (error) {
-    state.assistConfig = previous;
-    renderAssist();
-    showToast(error.message);
-  }
+  await persistProgressAppearance({ mode: state.assistConfig?.mode === "off" ? "always" : "off" });
 }
 
 function renderAssistColorPresets() {
@@ -665,8 +707,9 @@ function renderAssistColorSelection(input) {
   const presetValues = new Set(PREHEAT_COLOR_PRESETS.map((preset) => preset.value));
   for (const button of elements.assistColors.querySelectorAll("[data-assist-color]")) {
     button.setAttribute("aria-checked", String(button.dataset.assistColor === color));
+    button.tabIndex = button.dataset.assistColor === color || !presetValues.has(color) && button === elements.assistColors.firstElementChild ? 0 : -1;
   }
-  elements.assistCustomColor.value = color;
+  if (document.activeElement !== elements.assistCustomColor) elements.assistCustomColor.value = color;
   elements.assistCustomColorShell.dataset.selected = String(!presetValues.has(color));
   elements.assistColorPreview.style.setProperty("--preview-color", color);
 }
@@ -682,19 +725,7 @@ async function selectCustomAssistColor() {
 }
 
 async function persistAssistColor(input) {
-  const preheatColor = normalizePreheatColor(input);
-  const previous = state.assistConfig || { mode: "always", preheatColor: DEFAULT_PREHEAT_COLOR };
-  state.assistConfig = { ...previous, preheatColor };
-  renderAssistColorSelection(preheatColor);
-  try {
-    const result = await send("SET_ASSIST_CONFIG", { patch: { preheatColor } });
-    state.assistConfig = result.config;
-    renderAssist();
-  } catch (error) {
-    state.assistConfig = previous;
-    renderAssist();
-    showToast(error.message);
-  }
+  await persistProgressAppearance({ preheatColor: normalizePreheatColor(input) });
 }
 
 function getQualityDisplayOptions(cached) {
@@ -878,14 +909,14 @@ function isQualityMenuOpen() {
 function setButtonState(mode, label, speed, progress, disabled) {
   elements.cacheButton.dataset.state = mode;
   elements.cacheButton.disabled = disabled;
-  elements.cacheButton.style.setProperty("--progress", `${Math.round(progress * 100)}%`);
-  elements.buttonLabel.textContent = label;
-  elements.buttonSpeed.textContent = speed;
-  elements.cacheButton.setAttribute("aria-label", speed ? `${label}，${speed}` : label);
+  elements.cacheButton.style.setProperty("--progress-ratio", String(Math.max(0, Math.min(1, progress))));
+  setText(elements.buttonLabel, label);
+  setText(elements.buttonSpeed, speed);
+  setAttr(elements.cacheButton, "aria-label", speed ? `${label}，${speed}` : label);
 }
 
 function setHint(message, isError) {
-  elements.actionHint.textContent = message;
+  setText(elements.actionHint, message);
   elements.actionHint.dataset.tone = isError ? "error" : "normal";
   elements.actionHint.hidden = !message;
 }
@@ -911,153 +942,95 @@ async function startCache() {
 }
 
 function renderLibrary() {
-  const videos = state.videos.filter(shouldShowInLibrary);
-  const total = videos.reduce((sum, video) => sum + (Number(video.downloadedBytes) || 0), 0);
-  elements.libraryCount.textContent = videos.length > 99 ? "99+" : String(videos.length);
+  const videos = state.videos.filter(shouldShowInLibrary).sort(compareLibraryTasks);
+  setText(elements.libraryCount, videos.length > 99 ? "99+" : String(videos.length));
   elements.libraryCount.title = `${videos.length} 个本地视频`;
-  elements.librarySummary.textContent = formatBytes(total);
-  elements.videoList.replaceChildren();
-
-  if (!videos.length) {
-    renderEmptyLibrary("还没有缓存", "在“缓存”页保存当前视频");
-    return;
+  setText(elements.librarySummary, formatBytes(videos.reduce((sum, video) => sum + committedBytes(video), 0)));
+  const ids = new Set(videos.map(video => video.id));
+  for (const row of elements.videoList.querySelectorAll('.video-item')) if (!ids.has(row.dataset.videoId)) { state.speedSamples.delete(row.dataset.videoId); row.remove(); }
+  if (!videos.length) { renderEmptyLibrary("还没有缓存", "在“缓存”页保存当前视频"); return; }
+  elements.videoList.querySelector('.empty-state')?.remove();
+  const rows = new Map([...elements.videoList.querySelectorAll('.video-item')].map(row => [row.dataset.videoId, row]));
+  let cursor = elements.videoList.firstElementChild;
+  for (const video of videos) {
+    const row = rows.get(video.id) || createVideoItem(video);
+    updateVideoItem(row, video);
+    // 只有成员/创建顺序变化才移动节点；普通进度更新不触发 hover/focus/动画重启。
+    if (row === cursor) cursor = cursor.nextElementSibling;
+    else elements.videoList.insertBefore(row, cursor);
   }
+}
 
-  const fragment = document.createDocumentFragment();
-  for (const video of videos) fragment.append(createVideoItem(video));
-  elements.videoList.append(fragment);
+function setAttr(element, name, value) {
+  if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+}
+
+function setText(element, text) {
+  if (element.textContent !== text) element.textContent = text;
 }
 
 function renderEmptyLibrary(title, detail) {
-  elements.videoList.replaceChildren();
-  const empty = document.createElement("div");
-  empty.className = "empty-state";
-  const track = document.createElement("div");
-  track.className = "empty-track";
-  track.setAttribute("aria-hidden", "true");
-  track.append(document.createElement("span"), document.createElement("span"), document.createElement("span"));
-  const strong = document.createElement("strong");
-  strong.textContent = title;
-  const paragraph = document.createElement("p");
-  paragraph.textContent = detail;
-  empty.append(track, strong, paragraph);
-  elements.videoList.append(empty);
+  let empty = elements.videoList.querySelector('.empty-state');
+  if (!empty) {
+    empty = document.createElement('div'); empty.className = 'empty-state';
+    const track = document.createElement('div'); track.className = 'empty-track'; track.setAttribute('aria-hidden', 'true');
+    track.append(document.createElement('span'), document.createElement('span'), document.createElement('span'));
+    empty.append(track, document.createElement('strong'), document.createElement('p'));
+    elements.videoList.append(empty);
+  }
+  setText(empty.querySelector('strong'), title); setText(empty.querySelector('p'), detail);
 }
 
 function createVideoItem(video) {
-  const item = document.createElement("article");
-  item.className = "video-item";
-
-  const coverWrap = document.createElement("div");
-  coverWrap.className = "cover-wrap";
-  const coverUrl = normalizeHttpUrl(video.cover);
-  if (coverUrl) {
-    const image = document.createElement("img");
-    image.src = coverUrl;
-    image.alt = "";
-    image.loading = "lazy";
-    image.referrerPolicy = "no-referrer";
-    image.addEventListener("error", () => image.remove(), { once: true });
-    coverWrap.append(image);
-  }
-  const status = document.createElement("span");
-  status.className = "cover-status";
-  status.textContent = video.status === "complete"
-    ? formatDuration(video.duration)
-    : `${Math.round((video.progress || 0) * 100)}%`;
-  coverWrap.append(status);
-
-  const copy = document.createElement("div");
-  copy.className = "video-copy";
-  const link = document.createElement("a");
-  link.className = "video-link";
-  link.href = video.url;
-  link.textContent = video.partTitle || video.title;
-  link.title = video.partTitle || video.title;
-  link.addEventListener("click", (event) => {
-    event.preventDefault();
-    chrome.tabs.create({ url: video.url });
+  const item = document.createElement('article'); item.className = 'video-item'; item.dataset.videoId = video.id;
+  item.video = video;
+  // 静态骨架只创建一次；外部标题、URL 和状态始终通过安全的属性/textContent 写入。
+  item.innerHTML = `<div class="cover-wrap"><img alt="" loading="lazy" referrerpolicy="no-referrer"><span class="cover-status"></span></div>
+    <div class="video-copy"><a class="video-link"></a><p class="video-meta"><a class="video-owner"></a><span class="owner-separator"> · </span><span class="video-state"></span></p></div>
+    <div class="video-actions"><button class="item-action save-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="download-arrow" d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></svg></button>
+    <button class="item-action delete-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="trash-lid" d="M5 7h14M9 7V4h6v3"/><path d="m7 7 1 13h8l1-13M10 10v7m4-7v7"/></svg></button></div>`;
+  const image = item.querySelector('img'); image.addEventListener('error', () => { image.hidden = true; });
+  item.querySelector('.video-link').addEventListener('click', event => { event.preventDefault(); const url = normalizeHttpUrl(item.video.url); if (url) chrome.tabs.create({ url }); });
+  item.querySelector('.video-owner').addEventListener('click', event => { event.preventDefault(); const url = normalizeHttpUrl(item.video.ownerUrl) || makeBiliSpaceUrl(item.video.ownerId); if (url) chrome.tabs.create({ url }); });
+  const save = item.querySelector('.save-button'), remove = item.querySelector('.delete-button');
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try { const result = await send('SAVE_VIDEO', { videoId: item.video.id }); showToast(result.splitTracks ? '高画质为双轨，已分别保存视频轨和音频轨' : '已交给 Chrome 保存'); }
+    catch (error) { showToast(error.message); }
+    finally { save.disabled = false; }
   });
-  const meta = document.createElement("p");
-  meta.className = "video-meta";
-  const statusText = video.status === "complete"
-    ? isAudioOnlyCache(video)
-      ? ["仅音频", video.audioLabel || describeAudioTrack(video)].filter(Boolean).join(" · ")
-      : [video.qualityLabel || "MP4", video.codecLabel || CODEC_LABELS[video.codec]].filter(Boolean).join(" · ")
-    : video.status === "downloading"
-      ? Number(video.nextRetryAt) > Date.now() ? "等待自动续传" : video.error ? "正在恢复" : "缓存中"
-      : "可继续";
-  if (video.owner) {
-    const ownerUrl = normalizeHttpUrl(video.ownerUrl) || makeBiliSpaceUrl(video.ownerId);
-    const owner = ownerUrl ? document.createElement("a") : document.createElement("span");
-    owner.className = "video-owner";
-    owner.textContent = video.owner;
-    if (ownerUrl) {
-      owner.href = ownerUrl;
-      owner.title = `打开 ${video.owner} 的主页`;
-      owner.addEventListener("click", (event) => {
-        event.preventDefault();
-        chrome.tabs.create({ url: ownerUrl });
-      });
-    }
-    meta.append(owner, document.createTextNode(" · "));
-  }
-  meta.append(document.createTextNode(`${statusText} · ${formatBytes(video.downloadedBytes || video.totalBytes)}`));
-  copy.append(link, meta);
-
-  const actions = document.createElement("div");
-  actions.className = "video-actions";
-
-  if (video.status === "complete") {
-    const saveButton = document.createElement("button");
-    saveButton.className = "item-action save-button";
-    saveButton.type = "button";
-    saveButton.setAttribute("aria-label", `保存《${video.partTitle || video.title}》到电脑`);
-    saveButton.title = isAudioOnlyCache(video)
-      ? `保存音频文件（${describeAudioContainer(video)}，未转码）`
-      : video.merged
-        ? "保存已合并音视频的单个 MP4"
-        : video.mediaKind === "dash" && video.tracks?.audio
-          ? "保存视频轨和音频轨"
-          : "保存视频";
-    saveButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>保存</span>`;
-    saveButton.addEventListener("click", async () => {
-      saveButton.disabled = true;
-      try {
-        const result = await send("SAVE_VIDEO", { videoId: video.id });
-        showToast(result.splitTracks
-          ? "高画质为双轨，已分别保存视频轨和音频轨"
-          : "已交给 Chrome 保存");
-      } catch (error) {
-        showToast(error.message);
-      } finally {
-        saveButton.disabled = false;
-      }
-    });
-    actions.append(saveButton);
-  }
-
-  const deleteButton = document.createElement("button");
-  deleteButton.className = "item-action delete-button";
-  deleteButton.type = "button";
-  deleteButton.setAttribute("aria-label", `删除《${video.partTitle || video.title}》的缓存`);
-  deleteButton.title = "删除缓存";
-  deleteButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13M10 10v7m4-7v7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  deleteButton.addEventListener("click", async () => {
-    deleteButton.disabled = true;
+  remove.addEventListener('click', async () => {
+    remove.disabled = true;
     try {
-      await send("DELETE_VIDEO", { videoId: video.id });
-      showToast("缓存已删除");
-      await refreshLibrary();
-    } catch (error) {
-      deleteButton.disabled = false;
-      showToast(error.message);
-    }
+      await send('DELETE_VIDEO', { videoId: item.video.id });
+      state.libraryRevision++; state.deletedAt.set(item.video.id, Date.now());
+      state.videos = state.videos.filter(video => video.id !== item.video.id);
+      renderLibrary(); if (state.pageInfo) renderCurrent(); showToast('缓存已删除');
+    } catch (error) { remove.disabled = false; showToast(error.message); }
   });
-  actions.append(deleteButton);
-
-  item.append(coverWrap, copy, actions);
   return item;
+}
+
+function updateVideoItem(item, video) {
+  item.video = video;
+  const title = video.partTitle || video.title || '视频';
+  const image = item.querySelector('img'), cover = normalizeHttpUrl(video.cover);
+  if (image.getAttribute('src') !== cover) { if (cover) image.src = cover; else image.removeAttribute('src'); image.hidden = !cover; }
+  setText(item.querySelector('.cover-status'), video.status === 'complete' ? formatDuration(video.duration) : `${Math.floor(taskProgress(video) * 100)}%`);
+  const link = item.querySelector('.video-link'); setText(link, title); setAttr(link, 'title', title); setAttr(link, 'href', normalizeHttpUrl(video.url) || '#');
+  const owner = item.querySelector('.video-owner'); setText(owner, video.owner || ''); owner.hidden = !video.owner;
+  const ownerUrl = normalizeHttpUrl(video.ownerUrl) || makeBiliSpaceUrl(video.ownerId);
+  if (ownerUrl) owner.href = ownerUrl; else owner.removeAttribute('href');
+  owner.title = ownerUrl ? `打开 ${video.owner} 的主页` : '';
+  item.querySelector('.owner-separator').hidden = !video.owner;
+  const statusText = video.status === 'complete'
+    ? isAudioOnlyCache(video) ? ['仅音频', video.audioLabel || describeAudioTrack(video)].filter(Boolean).join(' · ') : [video.qualityLabel || 'MP4', video.codecLabel || CODEC_LABELS[video.codec]].filter(Boolean).join(' · ')
+    : video.status === 'downloading' ? video.stage === 'merging' ? '合并中' : video.stage === 'extracting' ? '提取音频中' : Number(video.nextRetryAt) > Date.now() ? '等待自动续传' : video.error ? '正在恢复' : '缓存中' : '可继续';
+  setText(item.querySelector('.video-state'), `${statusText} · ${formatBytes(committedBytes(video))}`);
+  const save = item.querySelector('.save-button'); save.hidden = video.status !== 'complete';
+  setAttr(save, 'aria-label', `保存《${title}》到电脑`);
+  setAttr(save, 'title', isAudioOnlyCache(video) ? `保存音频文件（${describeAudioContainer(video)}，未转码）` : video.merged ? '保存已合并音视频的单个 MP4' : video.mediaKind === 'dash' && video.tracks?.audio ? '保存视频轨和音频轨' : '保存视频');
+  const remove = item.querySelector('.delete-button'); setAttr(remove, 'aria-label', `删除《${title}》的缓存`); setAttr(remove, 'title', '删除缓存');
 }
 
 function showToast(message) {

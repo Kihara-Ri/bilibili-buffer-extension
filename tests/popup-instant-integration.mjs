@@ -1,4 +1,5 @@
 const openedAt = performance.now();
+window.__popupTest = { emit(message) { listener({ target: "popup", ...structuredClone(message) }); }, get videos() { return libraryVideos; }, get config() { return assistConfig; } };
 const calls = [];
 let readyAt = 0;
 let listener;
@@ -163,10 +164,14 @@ globalThis.chrome = {
         };
       }
       if (message.type === "LIST_VIDEOS") {
+        const snapshot = structuredClone(libraryVideos);
         await delay(120);
-        return { ok: true, videos: libraryVideos };
+        return { ok: true, videos: snapshot };
       }
+      if (message.type === "SAVE_VIDEO") { await delay(350); return window.__popupTest.failSave ? { ok: false, error: "模拟保存失败" } : { ok: true }; }
+      if (message.type === "DELETE_VIDEO") { await delay(120); const index = libraryVideos.findIndex(video => video.id === message.videoId); if (index >= 0) libraryVideos.splice(index, 1); return { ok: true }; }
       if (message.type === "GET_ASSIST_STATE") {
+        if (window.__popupTest?.holdConfigRead) return { ok: false, error: "暂不重新读取配置" };
         return {
           ok: true,
           config: assistConfig,
@@ -183,6 +188,8 @@ globalThis.chrome = {
         };
       }
       if (message.type === "SET_ASSIST_CONFIG") {
+        if (window.__popupTest?.configDelay) await delay(window.__popupTest.configDelay);
+        if (window.__popupTest?.failConfig) return { ok: false, error: "模拟配色保存失败" };
         assistConfig = { ...assistConfig, ...message.patch };
         return { ok: true, config: assistConfig };
       }

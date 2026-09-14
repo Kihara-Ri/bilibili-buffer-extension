@@ -11,6 +11,8 @@ let pageAvailable = true;
 let alarmListener;
 const alarms = new Map();
 const sessionStorage = {};
+const badgeText = new Map();
+const badgeHistory = [];
 const localStorage = {};
 
 globalThis.chrome = {
@@ -58,7 +60,8 @@ globalThis.chrome = {
   },
   action: {
     async setBadgeBackgroundColor() {},
-    async setBadgeText() {}
+    async setBadgeText({ text, tabId }) { badgeText.set(tabId, text); badgeHistory.push({ text, tabId }); },
+    async setTitle() {}
   },
   downloads: { async download() { return 1; } }
 };
@@ -202,8 +205,22 @@ try {
   assert(extensionPlayurlRequests === 1, "关页续传应使用扩展源播放接口");
   assert(typeof alarmListener === "function", "下载看门狗没有注册");
 
+  const taskA = { id: 'badge-a', tabId: 70, status: 'downloading', createdAt: 1, updatedAt: 100, downloadedBytes: 20, resumeBytes: 20, totalBytes: 100, progress: .2 };
+  const taskB = { ...taskA, id: 'badge-b', createdAt: 2, downloadedBytes: 80, resumeBytes: 80, progress: .8 };
+  await putVideo(taskA); await putVideo(taskB);
+  const startBadge = badgeHistory.length;
+  await Promise.all([send({ type: 'CACHE_PROGRESS', video: taskA }), send({ type: 'CACHE_PROGRESS', video: taskB })]);
+  assert(badgeHistory.slice(startBadge).filter(item => item.tabId === 70).every(item => item.text === '2↓'), '两个任务不能交替写入各自百分比');
+  await putVideo({ ...taskB, status: 'complete', updatedAt: 101 });
+  await send({ type: 'CACHE_COMPLETE', video: { ...taskB, status: 'complete', updatedAt: 101 } });
+  assert(badgeText.get(70) === '20', '另一个任务仍下载时不能显示全体完成');
+  await deleteVideoData(taskA.id); await send({ type: 'CACHE_DELETED', videoId: taskA.id, tabId: 70 });
+  assert(badgeText.get(70) === '✓', '删除最后活动任务后应重算完成状态');
+  await deleteVideoData(taskB.id); await send({ type: 'CACHE_DELETED', videoId: taskB.id, tabId: 70 });
+  assert(badgeText.get(70) === '', '删除所有任务后应清空徽标');
   show({
     ok: true,
+    multiTaskBadge: true,
     firstOpen: { viewRequests: 1, playurlRequests: 1 },
     repeatedOpen: { additionalViewRequests: 0, additionalPlayurlRequests: 0 },
     selectedQuality: selected.snapshot.selectedQuality,

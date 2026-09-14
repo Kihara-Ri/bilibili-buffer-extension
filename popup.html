@@ -105,31 +105,25 @@
               </button>
             </div>
             <p id="assist-status" class="assist-status" role="status" aria-live="polite">等待视频加载</p>
-            <details class="assist-settings">
-              <summary>
-                <span>进度条显示</span>
-                <span class="settings-summary-trailing">
-                  <span id="assist-color-preview" class="assist-color-preview" aria-hidden="true"></span>
-                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </span>
-              </summary>
-              <div class="assist-appearance-row">
-                <label for="assist-progress-color">已播放颜色</label>
-                <input id="assist-progress-color" type="color" value="#00a1d6">
+            <section id="assist-appearance" class="assist-appearance" aria-labelledby="appearance-heading">
+              <div class="appearance-heading"><h3 id="appearance-heading">进度条外观</h3><button id="assist-appearance-reset" type="button" class="appearance-reset">恢复默认</button></div>
+              <div class="timeline-example">
+                <div id="assist-timeline-preview" class="timeline-preview" role="img" aria-label="配色示意：已播放、播放器缓冲、提前加载和未加载区域">
+                  <span class="preview-played"></span><span class="preview-native"></span><span class="preview-preheat"></span><span class="preview-empty"></span>
+                </div>
+                <div class="timeline-legend" aria-hidden="true"><span><i class="legend-played"></i>已播放</span><span><i class="legend-native"></i>播放器缓冲</span><span><i id="assist-color-preview" class="assist-color-preview"></i>提前加载</span></div>
+                <p class="appearance-caption">配色示意，不代表当前视频进度</p>
               </div>
-              <label class="assist-appearance-row">
-                <span>区分插件缓冲</span>
-                <input id="assist-show-highlight" type="checkbox" checked>
-              </label>
-              <p class="assist-appearance-note">关闭后，原生缓冲和插件缓冲统一显示为亮灰色。</p>
-              <div class="assist-color-row">
-                <div id="assist-colors" class="assist-color-palette" role="radiogroup" aria-label="提前加载高亮颜色"></div>
-                <label id="assist-custom-color-shell" class="assist-custom-color" title="选择自定义高亮颜色">
-                  <input id="assist-custom-color" type="color" value="#ff8a1f" aria-label="自定义提前加载高亮颜色">
-                  <span>自定义</span>
-                </label>
-              </div>
-            </details>
+              <label class="appearance-control" for="assist-progress-color"><span>已播放颜色</span><input id="assist-progress-color" class="appearance-color-input" type="color" value="#00a1d6" aria-label="已播放颜色"></label>
+              <label class="appearance-control" for="assist-show-highlight"><span>单独标出提前加载</span><input id="assist-show-highlight" class="appearance-switch" type="checkbox" role="switch" checked aria-describedby="appearance-note"></label>
+              <fieldset id="assist-preheat-controls" class="preheat-controls">
+                <legend>提前加载颜色</legend>
+                <div class="assist-color-row"><div id="assist-colors" class="assist-color-palette" role="radiogroup" aria-label="提前加载颜色"></div>
+                  <label id="assist-custom-color-shell" class="assist-custom-color" title="自定义提前加载颜色"><input id="assist-custom-color" type="color" value="#ff8a1f" aria-label="自定义提前加载颜色"><span>自定义</span></label>
+                </div>
+              </fieldset>
+              <p id="appearance-note" class="assist-appearance-note">只改变颜色，不影响提前加载。关闭区分后，缓冲区域统一显示为灰色。</p>
+            </section>
           </section>
         </section>
 

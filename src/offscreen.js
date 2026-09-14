@@ -198,6 +198,8 @@ async function startDownload(video) {
     return { started: false, alreadyComplete: true, video: existing };
   }
 
+  // 创建順序只在首次加入任务时确定；续传/速度更新不能让片库重新排队。
+  video = { ...video, createdAt: existing?.createdAt || video.createdAt || Date.now(), runStartedAt: Date.now() };
   const job = { controller: new AbortController(), deleted: false };
   activeDownloads.set(video.id, job);
   void downloadVideo(video, existing, job).finally(() => activeDownloads.delete(video.id));
@@ -526,6 +528,7 @@ async function downloadProgressiveSource(video, existing, source, job) {
     progress: source.expectedBytes ? resumeBytes / source.expectedBytes : 0,
     speed: 0,
     downloadedBytes: resumeBytes,
+    committedBytes: resumeBytes,
     resumeBytes,
     totalBytes: source.expectedBytes,
     chunkCount: resumeChunks,
@@ -649,6 +652,7 @@ function aggregateDashMeta(meta, trackName, trackPatch, speed = 0) {
     ...meta,
     tracks,
     downloadedBytes,
+    committedBytes: resumeBytes,
     resumeBytes,
     totalBytes,
     chunkCount,
@@ -662,6 +666,7 @@ function createDownloadCoordinator(baseMeta, initialStates) {
   const states = new Map(Object.entries(initialStates).map(([name, state]) => [name, {
     ...state,
     resumeBytes: Number(state.resumeBytes) || 0,
+    confirmedResume: Number(state.resumeBytes) || 0,
     chunkCount: Number(state.chunkCount) || 0,
     totalBytes: Number(state.totalBytes) || 0,
     volatileBytes: 0,
@@ -694,7 +699,7 @@ function createDownloadCoordinator(baseMeta, initialStates) {
   let persistenceQueue = Promise.resolve();
   let stopped = false;
 
-  const buildSnapshot = ({ durableOnly = false, speed = currentSpeed } = {}) => {
+  const buildSnapshot = ({ durableOnly = false, speed = currentSpeed, committing = null } = {}) => {
     if (baseMeta.mediaKind === "dash") {
       const tracks = {};
       for (const [name, state] of states) {
@@ -702,6 +707,7 @@ function createDownloadCoordinator(baseMeta, initialStates) {
           ...baseMeta.tracks[name],
           downloadedBytes: state.resumeBytes + (durableOnly ? 0 : state.volatileBytes),
           resumeBytes: state.resumeBytes,
+          committedBytes: committing === name ? state.resumeBytes : state.confirmedResume,
           totalBytes: state.totalBytes,
           chunkCount: state.chunkCount,
           metrics: publicDownloadMetrics(state.metrics)
@@ -721,6 +727,7 @@ function createDownloadCoordinator(baseMeta, initialStates) {
         ...baseMeta,
         tracks,
         downloadedBytes,
+        committedBytes: values.reduce((sum, track) => sum + track.committedBytes, 0),
         resumeBytes,
         totalBytes,
         chunkCount,
@@ -738,6 +745,7 @@ function createDownloadCoordinator(baseMeta, initialStates) {
     const snapshot = {
       ...baseMeta,
       downloadedBytes,
+      committedBytes: committing === stateName ? state.resumeBytes : state.confirmedResume,
       resumeBytes: state.resumeBytes,
       totalBytes: state.totalBytes,
       chunkCount: state.chunkCount,
@@ -845,14 +853,17 @@ function createDownloadCoordinator(baseMeta, initialStates) {
         baseMeta.autoRetryCount = 0;
         baseMeta.nextRetryAt = 0;
         baseMeta.retryDelayMs = 0;
-        const snapshot = buildSnapshot();
+        // 提交中的水位只写进同一原子事务；完成前 UI 广播仍读 confirmedResume。
+        const snapshot = buildSnapshot({ committing: name });
         const startedAt = performance.now();
         try {
           await putChunksAndVideo(snapshot, chunks);
+          state.confirmedResume = nextResume;
           addDbWriteTime(states, performance.now() - startedAt);
         } catch (error) {
           state.resumeBytes = previousResume;
           state.chunkCount = previousIndex;
+          state.metrics.committedBytes = previousResume;
           state.volatileBytes += committedBytes;
           throw error;
         }
@@ -1248,6 +1259,7 @@ async function fetchCandidate(url, meta, job) {
     meta = {
       ...meta,
       downloadedBytes,
+      committedBytes: storedBytes,
       resumeBytes: storedBytes,
       totalBytes,
       chunkCount: chunkIndex,
@@ -1301,6 +1313,7 @@ async function fetchCandidate(url, meta, job) {
         meta = {
           ...meta,
           downloadedBytes: 0,
+          committedBytes: 0,
           resumeBytes: 0,
           chunkCount: 0,
           progress: 0,
@@ -1364,6 +1377,7 @@ async function fetchCandidate(url, meta, job) {
       meta = {
         ...meta,
         downloadedBytes: storedBytes,
+        committedBytes: storedBytes,
         resumeBytes: storedBytes,
         chunkCount: chunkIndex,
         progress: totalBytes ? Math.min(storedBytes / totalBytes, 0.999) : 0,
@@ -1696,6 +1710,7 @@ function releasedTrack(track) {
 }
 
 async function deleteVideo(videoId) {
+  const deletedVideo = await getVideo(videoId);
   const playback = playbackUrls.get(videoId);
   if (playback) {
     if (typeof playback === "string") {
@@ -1711,7 +1726,7 @@ async function deleteVideo(videoId) {
     job.controller.abort();
   }
   await deleteVideoData(videoId);
-  chrome.runtime.sendMessage({ target: "background", type: "CACHE_DELETED", videoId }).catch(() => {});
+  chrome.runtime.sendMessage({ target: "background", type: "CACHE_DELETED", videoId, tabId: deletedVideo?.tabId }).catch(() => {});
   return { deleted: true };
 }
 

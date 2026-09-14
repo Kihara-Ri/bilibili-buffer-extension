@@ -1,3 +1,4 @@
+import { newerTask, taskBadge } from "./task-presentation.js";
 import { buildCacheSizeInfo } from "./cache-size.js";
 import {
   AUTO_QUALITY,
@@ -45,10 +46,12 @@ const CACHE_MODE_KEY = "cacheModeV1";
 let creatingOffscreen;
 let restoringDownloads;
 let popupSnapshotQueue = Promise.resolve();
+let badgeQueue = Promise.resolve();
 const popupSnapshotMemory = new Map();
 
 if (chrome.runtime.id) startDevReloadBackground(ensureOffscreenDocument);
 void restoreActiveDownloads();
+void restoreTaskBadges();
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm?.name === DOWNLOAD_WATCHDOG_ALARM) void restoreActiveDownloads();
 });
@@ -177,13 +180,15 @@ async function handleMessage(message, sender) {
       void syncDownloadWatchdog();
       return { received: true };
     case "CACHE_DELETED":
-      broadcastToPopup(message);
+      await handleCacheEvent(message);
       void syncDownloadWatchdog();
       return { received: true };
     case "REFRESH_DOWNLOAD_SOURCE":
       return refreshDownloadSource(message.video);
     case "PLAYBACK_ACTIVE":
       if (sender.tab?.id) {
+        const active = (await listVideos()).some(video => video.tabId === sender.tab.id && video.status === "downloading");
+        if (active) { await updateTaskBadge(sender.tab.id); return { received: true }; }
         await chrome.action.setBadgeBackgroundColor({ color: "#1682a7", tabId: sender.tab.id });
         await chrome.action.setBadgeText({ text: "本地", tabId: sender.tab.id });
       }
@@ -565,30 +570,40 @@ async function getPageInfo(inputUrl) {
   };
 }
 
-async function handleCacheEvent(message) {
-  const { video } = message;
-  if (!video) return;
-  const tabId = Number.isInteger(video.tabId) ? video.tabId : undefined;
+/** @param {number} tabId @param {object|null} incoming @returns {Promise<void>} */
+function updateTaskBadge(tabId, incoming = null) {
+  // 队列仅防止异步 API 乱序，不保存任务真相；SW 重启后从 IndexedDB 重建。
+  const next = badgeQueue.then(async () => {
+    const videos = await listVideos();
+    const index = incoming ? videos.findIndex(video => video.id === incoming.id) : -1;
+    if (index >= 0) videos[index] = newerTask(videos[index], incoming);
+    const badge = taskBadge(videos, tabId);
+    await chrome.action.setBadgeBackgroundColor({ color: badge.color, tabId });
+    await chrome.action.setBadgeText({ text: badge.text, tabId });
+    await chrome.action.setTitle?.({ title: badge.title, tabId });
+  });
+  badgeQueue = next.catch(() => {});
+  return next;
+}
+
+async function restoreTaskBadges() {
   try {
-    if (tabId !== undefined) {
-      if (message.type === "CACHE_COMPLETE") {
-        await chrome.action.setBadgeBackgroundColor({ color: "#1682a7", tabId });
-        await chrome.action.setBadgeText({ text: "✓", tabId });
-        chrome.tabs.sendMessage(tabId, { type: "CACHE_READY", videoId: video.id }).catch(() => {});
-      } else if (message.type === "CACHE_ERROR") {
-        await chrome.action.setBadgeBackgroundColor({ color: "#8b5b64", tabId });
-        await chrome.action.setBadgeText({ text: "!", tabId });
-      } else {
-        const percent = Math.max(0, Math.min(99, Math.round((video.progress || 0) * 100)));
-        await chrome.action.setBadgeBackgroundColor({ color: "#fb7299", tabId });
-        await chrome.action.setBadgeText({ text: String(percent), tabId });
-      }
+    const ids = new Set((await listVideos()).map(video => video.tabId).filter(Number.isInteger));
+    for (const id of ids) await updateTaskBadge(id).catch(() => {});
+  } catch { /* 数据库或旧标签页暂不可用；下一条任务事件会重新派生徽标。 */ }
+}
+
+async function handleCacheEvent(message) {
+  const video = message.video;
+  const tabId = video?.tabId ?? message.tabId;
+  try {
+    if (Number.isInteger(tabId)) {
+      await updateTaskBadge(tabId, video);
+      if (message.type === 'CACHE_COMPLETE') chrome.tabs.sendMessage(tabId, { type: 'CACHE_READY', videoId: video.id }).catch(() => {});
     }
   } catch {
-    // 原标签页可能已经关闭；缓存任务与弹窗状态仍应继续更新。
-  } finally {
-    broadcastToPopup(message);
-  }
+    // 原标签页关闭不能中断下载或 Popup 推送。
+  } finally { broadcastToPopup(message); }
 }
 
 async function saveCachedVideo(videoId) {

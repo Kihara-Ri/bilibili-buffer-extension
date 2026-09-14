@@ -1,3 +1,5 @@
+import { compareLibraryTasks } from "./task-presentation.js";
+
 const DB_NAME = "bili-buffer-cache";
 const DB_VERSION = 1;
 const VIDEO_STORE = "videos";
@@ -66,7 +68,7 @@ export async function listVideos() {
   const db = await openCacheDb();
   const transaction = db.transaction(VIDEO_STORE, "readonly");
   const values = await requestToPromise(transaction.objectStore(VIDEO_STORE).getAll());
-  return values.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  return values.sort(compareLibraryTasks);
 }
 
 export async function putChunk(videoId, track, index, data) {

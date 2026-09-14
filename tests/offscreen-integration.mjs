@@ -104,6 +104,10 @@ try {
   assert(completed.tracks.video.metrics.cdnHost === "renewed.test", "刷新后没有切换到新视频 CDN");
   assert(completed.tracks.audio.metrics.cdnHost === "renewed.test", "刷新后没有切换到新音频 CDN");
   assert(sourceRefreshRequests >= 1, "签名地址失效后没有刷新播放地址");
+  const progress = broadcasts.filter(message => message.type === "CACHE_PROGRESS" && message.video?.status === "downloading");
+  assert(progress.length > 0 && progress.every(({video}) => Number.isFinite(video.committedBytes) && video.committedBytes <= video.resumeBytes), "所有下载快照都必须区分确认落盘与在途水位");
+  const watermark = new Map();
+  for (const { video } of progress) { const run = video.runStartedAt || 0; assert(video.committedBytes >= (watermark.get(run) || 0), "同次下载的确认落盘量不能随网络回滚减少"); watermark.set(run, video.committedBytes); }
 
   document.querySelector("#result").textContent = JSON.stringify({
     ok: true,
@@ -113,7 +117,8 @@ try {
     videoMetrics: completed.tracks.video.metrics,
     audioMetrics: completed.tracks.audio.metrics,
     progressEvents: broadcasts.filter((message) => message.type === "CACHE_PROGRESS").length,
-    sourceRefreshRequests
+    sourceRefreshRequests,
+    committedWatermarkVerified: true
   }, null, 2);
 } catch (error) {
   document.querySelector("#result").textContent = JSON.stringify({ ok: false, error: error.stack || error.message }, null, 2);
