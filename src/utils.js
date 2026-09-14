@@ -183,6 +183,25 @@ function getPersistedSourceUrls(value) {
 }
 
 export function getPersistedMediaSource(video) {
+  if (video?.mediaKind === "audio") {
+    const track = video.tracks?.audio || {};
+    const urls = getPersistedSourceUrls(track.sourceUrls);
+    if (!urls.length) return null;
+    return {
+      mediaKind: "audio",
+      tracks: { audio: { ...track, name: "audio", urls } },
+      duration: Number(video.duration) || 0,
+      quality: normalizeQualityId(video.quality || video.requestedQuality),
+      qualityLabel: video.qualityLabel || "",
+      requestedQuality: normalizeQualityId(video.requestedQuality || video.quality),
+      codec: video.codec || "",
+      codecLabel: video.codecLabel || "",
+      requestedCodec: normalizeCodecPreference(video.requestedCodec),
+      format: video.format || "audio",
+      mimeType: track.mimeType || "audio/mp4"
+    };
+  }
+
   if (video?.mediaKind === "dash") {
     const entries = Object.entries(video.tracks || {})
       .map(([name, track]) => [name, {
@@ -264,6 +283,100 @@ export function makeVideoId(bvid, cid) {
   return `${bvid}:${cid}`;
 }
 
+export const CACHE_MODES = Object.freeze({
+  VIDEO: "video",
+  AUDIO: "audio"
+});
+
+export function normalizeCacheMode(value, fallback = CACHE_MODES.VIDEO) {
+  return value === CACHE_MODES.AUDIO || value === CACHE_MODES.VIDEO ? value : fallback;
+}
+
+/** 仅缓存音频的记录既不参与网页自动播放，也不显示视频画质。 */
+export function isAudioOnlyCache(video) {
+  return video?.mediaKind === "audio" || normalizeCacheMode(video?.cacheMode) === CACHE_MODES.AUDIO;
+}
+
+export function getCacheMode(video) {
+  return isAudioOnlyCache(video) ? CACHE_MODES.AUDIO : CACHE_MODES.VIDEO;
+}
+
+const AUDIO_FAMILY_LABELS = Object.freeze({
+  flac: "Hi-Res 无损",
+  dolby: "杜比全景声",
+  aac: "AAC",
+  other: "音频"
+});
+
+const AUDIO_ID_LABELS = Object.freeze({
+  30216: "AAC 64K",
+  30232: "AAC 132K",
+  30280: "AAC 192K",
+  30250: "杜比全景声",
+  30251: "Hi-Res 无损"
+});
+
+export function getAudioFamily(track) {
+  const codecs = String(track?.codecs || "").trim().toLowerCase();
+  const mimeType = String(track?.mimeType || track?.mime_type || "").trim().toLowerCase();
+  if (codecs.startsWith("flac") || mimeType.includes("flac")) return "flac";
+  if (codecs.startsWith("ec-3") || codecs.startsWith("ac-3") || codecs.startsWith("ec-4")) return "dolby";
+  if (codecs.startsWith("mp4a") || mimeType.includes("mp4a") || mimeType.includes("aac")) return "aac";
+  return "other";
+}
+
+/** 用 B 站音质编号或编码给出一条可读的音频轨道说明。 */
+export function describeAudioTrack(value) {
+  const track = value?.tracks?.audio || value || {};
+  const id = Number(track.representationId ?? track.audioId ?? track.id) || 0;
+  if (AUDIO_ID_LABELS[id]) return AUDIO_ID_LABELS[id];
+  const family = getAudioFamily(track);
+  const bandwidth = Number(track.bandwidth) || 0;
+  if (family === "aac" && bandwidth > 0) return "AAC " + Math.round(bandwidth / 1000) + "K";
+  return AUDIO_FAMILY_LABELS[family];
+}
+
+/** 保存音频时沿用源容器的扩展名，不做任何转码。 */
+export function getAudioFileExtension(value) {
+  const track = value?.tracks?.audio || value || {};
+  const mimeType = String(track.mimeType || "").trim().toLowerCase();
+  if (getAudioFamily(track) === "flac") return "flac";
+  if (mimeType.includes("mpeg")) return "mp3";
+  return "m4a";
+}
+
+const AUDIO_CONTAINER_LABELS = Object.freeze({
+  "audio/mp4": "MP4 容器",
+  "audio/flac": "原生 FLAC",
+  "audio/mpeg": "MP3 容器",
+  "audio/ogg": "OGG 容器"
+});
+
+/**
+ * 说明音频文件的实际容器与编码。B 站 Hi-Res 无损是“MP4 容器 + FLAC 编码”，
+ * 播放器只报 MP4 属于正常现象，不是格式错误；保存时也完全按原样字节写出。
+ */
+export function describeAudioContainer(value) {
+  const track = value?.tracks?.audio || value || {};
+  const mimeType = String(track.mimeType || "").trim().toLowerCase();
+  const container = AUDIO_CONTAINER_LABELS[mimeType] || (mimeType || "未知容器");
+  const family = getAudioFamily(track);
+  const codec = family === "flac"
+    ? "FLAC 无损"
+    : family === "aac"
+      ? "AAC"
+      : family === "dolby"
+        ? "杜比"
+        : family === "mp3"
+          ? "MP3"
+          : "音频";
+  return `${container} · ${codec} 编码`;
+}
+
+export function makeAudioCacheVideoId(pageId) {
+  return pageId + ":a";
+}
+
 export function makeQualityVideoId(pageId, quality, codecPreference = "") {
   const normalized = normalizeQualityId(quality);
   if (!normalized) return pageId;
@@ -275,7 +388,7 @@ export function makeQualityVideoId(pageId, quality, codecPreference = "") {
 export function getVideoPageId(video) {
   if (video?.pageId) return video.pageId;
   if (video?.bvid && video?.cid) return makeVideoId(video.bvid, video.cid);
-  return String(video?.id || "").replace(/:q\d+(?::c(?:auto|av1|hevc|avc))?$/, "");
+  return String(video?.id || "").replace(/(?::q\d+(?::c(?:auto|av1|hevc|avc))?|:a)$/, "");
 }
 
 export function formatBytes(value) {
@@ -342,9 +455,11 @@ export function buildCachedDownloadPlan(cached) {
   const baseName = sanitizeDownloadFilename(`${title}${quality}`);
 
   if (cached?.playbackUrl) {
+    // 仅音频缓存直接用源容器扩展名（.m4a / .flac），合并后的视频缓存保存为单个 .mp4。
+    const extension = isAudioOnlyCache(video) ? getAudioFileExtension(video) : "mp4";
     return {
       splitTracks: false,
-      items: [{ url: cached.playbackUrl, filename: `${baseName}.mp4` }]
+      items: [{ url: cached.playbackUrl, filename: `${baseName}.${extension}` }]
     };
   }
 
@@ -354,9 +469,10 @@ export function buildCachedDownloadPlan(cached) {
     splitTracks: tracks.length > 1,
     items: tracks.map((track) => {
       const isAudio = track.name === "audio";
+      const extension = isAudio ? getAudioFileExtension(track) : "mp4";
       const filename = tracks.length > 1
-        ? `${baseName}.${isAudio ? "音频轨.m4a" : "视频轨.mp4"}`
-        : `${baseName}.${isAudio ? "m4a" : "mp4"}`;
+        ? `${baseName}.${isAudio ? "音频轨" : "视频轨"}.${extension}`
+        : `${baseName}.${extension}`;
       return { url: track.url, filename };
     })
   };
@@ -380,6 +496,11 @@ export function parseContentRange(value) {
 }
 
 export function hasCompleteByteCount(video) {
+  // 合并后的记录只保留一条 merged 分块序列；源轨道分块在合并成功后才释放。
+  const mergedTotal = Number(video?.merged?.totalBytes) || 0;
+  if (mergedTotal > 0) {
+    return (Number(video.merged.downloadedBytes ?? mergedTotal) || 0) === mergedTotal;
+  }
   const downloadedBytes = Number(video?.downloadedBytes) || 0;
   const totalBytes = Number(video?.totalBytes) || 0;
   return totalBytes > 0 && downloadedBytes === totalBytes;

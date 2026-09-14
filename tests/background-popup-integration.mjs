@@ -1,3 +1,5 @@
+import { deleteVideoData, putVideo } from "../src/db.js";
+
 let messageListener;
 let cookieChangeListener;
 let viewRequests = 0;
@@ -123,6 +125,48 @@ try {
   assert(library.ok && Array.isArray(library.videos), "片库直接读取失败");
   assert(offscreenCreates === 0, "仅读片库不应创建 Offscreen Document");
 
+  // 自动播放只认能顶替播放器的缓存：仅音频记录必须被排除，合并后的单文件必须保留。
+  const audioOnlyId = "BV1Kg8t6NEmN:456:a";
+  const mergedId = "BV1Kg8t6NEmN:456:q112:chevc";
+  await putVideo({
+    id: audioOnlyId,
+    pageId: "BV1Kg8t6NEmN:456",
+    bvid: "BV1Kg8t6NEmN",
+    cid: 456,
+    status: "complete",
+    mediaKind: "audio",
+    cacheMode: "audio",
+    qualityLabel: "Hi-Res 无损",
+    duration: 60,
+    downloadedBytes: 10,
+    totalBytes: 10,
+    updatedAt: Date.now(),
+    tracks: { audio: { representationId: 30251, codecs: "fLaC", mimeType: "audio/mp4", downloadedBytes: 10, resumeBytes: 10, totalBytes: 10, chunkCount: 1 } }
+  });
+  const audioOnlyLookup = await send({ type: "GET_CACHED_FOR_URL", url });
+  assert(audioOnlyLookup.ok && audioOnlyLookup.video === null, "仅音频缓存不应顶替网页播放器");
+  await putVideo({
+    id: mergedId,
+    pageId: "BV1Kg8t6NEmN:456",
+    bvid: "BV1Kg8t6NEmN",
+    cid: 456,
+    status: "complete",
+    mediaKind: "dash",
+    cacheMode: "video",
+    quality: 112,
+    qualityLabel: "1080P+",
+    duration: 60,
+    downloadedBytes: 100,
+    totalBytes: 100,
+    updatedAt: Date.now(),
+    merged: { totalBytes: 100, downloadedBytes: 100, chunkCount: 1, mimeType: "video/mp4" },
+    tracks: { video: { codecs: "hev1.1.6.L120.90" }, audio: { codecs: "mp4a.40.2" } }
+  });
+  const mergedLookup = await send({ type: "GET_CACHED_FOR_URL", url });
+  assert(mergedLookup.ok && mergedLookup.video?.id === mergedId, "合并后的单文件缓存应能顶替网页播放器");
+  await deleteVideoData(audioOnlyId).catch(() => {});
+  await deleteVideoData(mergedId).catch(() => {});
+
   const otherVideo = await send({
     type: "GET_POPUP_SNAPSHOT",
     tabId: 7,
@@ -167,7 +211,9 @@ try {
     preheatColor: restoredAssistColor.config.preheatColor,
     offscreenCreatesForLibrary: offscreenCreates,
     cookieChangeKeepsStaleSnapshot: invalidated.stale,
-    closedPageRefreshRequests: extensionPlayurlRequests
+    closedPageRefreshRequests: extensionPlayurlRequests,
+    audioOnlyExcludedFromPlayback: audioOnlyLookup.video === null,
+    mergedCacheAcceptedForPlayback: mergedLookup.video?.id === mergedId
   });
 } catch (error) {
   show({ ok: false, error: error.stack || error.message });

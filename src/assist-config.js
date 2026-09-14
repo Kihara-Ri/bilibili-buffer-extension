@@ -18,6 +18,8 @@ export const ASSIST_DEFAULTS = Object.freeze({
   maxPrefetchMBPerTrack: 200,
   maxConcurrency: 4,
   estimatorGuard: true,
+  progressColor: "#00a1d6",
+  showPreheatHighlight: true,
   preheatColor: DEFAULT_PREHEAT_COLOR
 });
 
@@ -39,6 +41,8 @@ export function sanitizeAssistConfig(patch, current = ASSIST_DEFAULTS) {
     mode: normalizeAssistMode(current?.mode),
     minWatchedSec: 0,
     minBufferAheadSec: 0,
+    progressColor: normalizePreheatColor(current?.progressColor, "#00a1d6"),
+    showPreheatHighlight: current?.showPreheatHighlight !== false,
     preheatColor: normalizePreheatColor(current?.preheatColor)
   };
   if (patch && Object.hasOwn(patch, "mode")) {
@@ -47,6 +51,10 @@ export function sanitizeAssistConfig(patch, current = ASSIST_DEFAULTS) {
   if (patch && typeof patch.estimatorGuard === "boolean") next.estimatorGuard = patch.estimatorGuard;
   if (patch && Object.hasOwn(patch, "preheatColor")) {
     next.preheatColor = normalizePreheatColor(patch.preheatColor, next.preheatColor);
+  }
+  if (typeof patch?.showPreheatHighlight === "boolean") next.showPreheatHighlight = patch.showPreheatHighlight;
+  if (patch && Object.hasOwn(patch, "progressColor")) {
+    next.progressColor = normalizePreheatColor(patch.progressColor, next.progressColor);
   }
   for (const [key, min, max] of [
     ["slowTtfbMs", 200, 10000],

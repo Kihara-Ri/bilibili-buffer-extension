@@ -39,3 +39,16 @@ test("无效颜色不会覆盖用户已有颜色或其他合法配置", () => {
   assert.equal(config.maxConcurrency, 6);
   assert.equal(normalizePreheatColor("white"), DEFAULT_PREHEAT_COLOR);
 });
+
+test("显示开关独立于提前加载，旧配置默认保留高亮并验证播放颜色", () => {
+  const legacy = sanitizeAssistConfig({ mode: "off" });
+  assert.equal(legacy.showPreheatHighlight, true);
+  assert.equal(legacy.progressColor, "#00a1d6");
+  const hidden = sanitizeAssistConfig({ showPreheatHighlight: false, progressColor: "#ABCDEF" });
+  assert.equal(hidden.mode, "always");
+  assert.equal(hidden.showPreheatHighlight, false);
+  assert.equal(hidden.progressColor, "#abcdef");
+  const invalid = sanitizeAssistConfig({ showPreheatHighlight: "true", progressColor: "red" }, hidden);
+  assert.equal(invalid.showPreheatHighlight, false);
+  assert.equal(invalid.progressColor, "#abcdef");
+});

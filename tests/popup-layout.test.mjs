@@ -12,11 +12,24 @@ test("Popup 使用缓存、播放和片库三个互斥一级视图", () => {
   assert.match(html, /id="library-view"[^>]*role="tabpanel"[^>]*hidden/);
 });
 
+test("缓存页提供视频 + 音频与仅音频两种缓存内容", () => {
+  assert.match(html, /id="cache-mode"[^>]*role="radiogroup"/);
+  const modes = [...html.matchAll(/data-cache-mode="(video|audio)"/g)].map((match) => match[1]);
+  assert.deepEqual(modes, ["video", "audio"]);
+  const videoButton = html.match(/<button[^>]*id="mode-video"[^>]*>/)?.[0] || "";
+  const audioButton = html.match(/<button[^>]*id="mode-audio"[^>]*>/)?.[0] || "";
+  assert.match(videoButton, /data-cache-mode="video"/);
+  assert.match(videoButton, /aria-checked="true"/);
+  assert.match(audioButton, /data-cache-mode="audio"/);
+  assert.match(audioButton, /aria-checked="false"/);
+  assert.match(html, /缓存内容/);
+});
+
 test("播放页只公开开启关闭开关，低频配色按需展开", () => {
   assert.match(html, /id="assist-toggle"[^>]*role="switch"/);
   assert.doesNotMatch(html, /data-assist-mode=/);
   assert.doesNotMatch(html, /class="assist-metrics"/);
-  assert.match(html, /<details class="assist-settings">[\s\S]*高亮颜色[\s\S]*id="assist-colors"[\s\S]*<\/details>/);
+  assert.match(html, /<details class="assist-settings">[\s\S]*进度条显示[\s\S]*id="assist-colors"[\s\S]*<\/details>/);
   assert.match(html, /id="assist-tab-indicator"/);
   assert.match(html, /id="library-count"/);
 });

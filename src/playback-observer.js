@@ -16,9 +16,6 @@
   const ESTIMATOR_BACKUP_KEY = "__bili_buffer_estimator_backup_v1";
   const MEDIA_RE = /^https?:\/\/[^/]*(?:bilivideo\.com|bilivideo\.cn|akamaized\.net)\//i;
   const MB = 1024 * 1024;
-  const PREHEAT_LAYER_CLASS = "bili-buffer-preheat-layer";
-  const PREHEAT_SEGMENT_CLASS = "bili-buffer-preheat-segment";
-  const PLAYBACK_BOUNDARY_CLASS = "bili-buffer-playback-boundary";
   const PREHEAT_STYLE_ID = "bili-buffer-preheat-progress-style";
   const DEFAULT_PREHEAT_COLOR = "#ff8a1f";
   const DEFAULTS = {
@@ -30,13 +27,15 @@
     maxPrefetchMBPerTrack: 200,
     maxConcurrency: 4,
     estimatorGuard: true,
+    progressColor: "#00a1d6",
+    showPreheatHighlight: true,
     preheatColor: DEFAULT_PREHEAT_COLOR
   };
   const cfg = { ...DEFAULTS };
   const tracks = new Map();
   const observedVideos = new WeakSet();
   let lastPageKey = currentPageKey();
-  let renderedPreheatRanges = [];
+  let playerSequence = 0;
   const stats = {
     requests: 0,
     slowRequests: 0,
@@ -53,6 +52,8 @@
     hosts: Object.create(null)
   };
 
+  const playbackCache = window.__biliBufferCache;
+  const prefetchControllers = new Set();
   const nativeFetch = window.fetch;
   const storageProto = window.Storage?.prototype;
   const nativeStorageSet = storageProto?.setItem;
@@ -163,7 +164,7 @@
     return cursor < to ? [cursor, to] : null;
   }
 
-  function trackFor(url) {
+  function trackFor(url, playerRequest = true) {
     const path = pathFor(url);
     if (!path) return null;
     const host = hostFor(url);
@@ -190,10 +191,10 @@
         cooldownUntil: 0,
         prefetchDisabled: false,
         lastSeen: Date.now(),
-        lastPlayerSeen: Date.now()
+        lastPlayerSeen: ++playerSequence
       };
       tracks.set(key, track);
-    } else {
+    } else if (playerRequest) {
       for (const existing of tracks.values()) {
         if (existing !== track && existing.path === path) existing.active = false;
       }
@@ -201,7 +202,7 @@
       track.host = hostFor(url) || track.host;
       track.active = true;
       track.lastSeen = Date.now();
-      track.lastPlayerSeen = Date.now();
+      track.lastPlayerSeen = ++playerSequence;
     }
     return track;
   }
@@ -209,8 +210,8 @@
   function recordMedia({ url, range, bytes = 0, ttfbMs = null, totalMs = null, contentRange = null, status = 0, completed = false, error = false }) {
     if (!MEDIA_RE.test(String(url || ""))) return;
     stats.requests += 1;
-    const track = trackFor(url);
-    if (!track) return;
+    const track = trackFor(url, false);
+    if (!track || track.url !== url) return;
     const host = hostStat(track.host);
     host.requests += 1;
     if (error || status >= 400) {
@@ -261,7 +262,7 @@
     const nativeSend = proto.send;
     const nativeSetHeader = proto.setRequestHeader;
     proto.open = function (method, url) {
-      this[NS] = { method: String(method || ""), url: String(url || "") };
+      this[NS] = { method: String(method || ""), url: String(url || ""), pageKey: currentPageKey() };
       return nativeOpen.apply(this, arguments);
     };
     proto.setRequestHeader = function (name, value) {
@@ -272,13 +273,15 @@
     proto.send = function () {
       const state = this[NS];
       if (state?.rangeHeader && MEDIA_RE.test(state.url)) {
+        resetTracksAfterNavigation();
+        trackFor(state.url);
         state.startedAt = performance.now();
         state.range = parseRangeHeader(state.rangeHeader);
         state.ttfbMs = null;
         this.addEventListener("readystatechange", () => {
-          if (this.readyState !== 2 || state.ttfbMs !== null) return;
+          if (this.readyState !== 2 || state.ttfbMs !== null || currentPageKey() !== state.pageKey) return;
           state.ttfbMs = performance.now() - state.startedAt;
-          const track = trackFor(state.url);
+          const track = trackFor(state.url, false);
           if (track) {
             primeTrackFromHeaders(
               track,
@@ -289,6 +292,7 @@
           }
         });
         this.addEventListener("loadend", () => {
+          if (currentPageKey() !== state.pageKey) return;
           let bytes = 0;
           try {
             if (this.response && typeof this.response.byteLength === "number") bytes = this.response.byteLength;
@@ -327,8 +331,12 @@
         rangeHeader = new Headers(init?.headers || input?.headers).get("range") || "";
       } catch { /* ignore */ }
       if (!rangeHeader || !MEDIA_RE.test(url)) return nativeFetch.apply(this, args);
+      resetTracksAfterNavigation();
+      trackFor(url);
+      const pageKey = currentPageKey();
       const startedAt = performance.now();
       return nativeFetch.apply(this, args).then((response) => {
+        if (currentPageKey() !== pageKey) return response;
         recordMedia({
           url,
           range: parseRangeHeader(rangeHeader),
@@ -340,7 +348,7 @@
         });
         return response;
       }, (error) => {
-        recordMedia({ url, range: parseRangeHeader(rangeHeader), error: true });
+        if (currentPageKey() === pageKey) recordMedia({ url, range: parseRangeHeader(rangeHeader), error: true });
         throw error;
       });
     };
@@ -410,7 +418,7 @@
 
   function pickJob() {
     const candidates = [...tracks.values()]
-      .filter((track) => track.anchor > 0 && shouldPrefetch(track))
+      .filter((track) => track.active !== false && track.anchor > 0 && shouldPrefetch(track))
       .sort((left, right) => right.lastSeen - left.lastSeen);
     for (const track of candidates) {
       const host = hostStat(track.host);
@@ -423,6 +431,34 @@
       const to = track.size
         ? Math.min(track.size, track.anchor + leadBytes(track), track.anchor + remainingBytes)
         : Math.min(track.anchor + leadBytes(track), track.anchor + remainingBytes);
+      // 优先补齐初始化区，SIDX 一般在文件头；最多探测 1 MiB，未知格式不伪造时间映射。
+      const index = playbackCache?.index(track.url);
+      if (playbackCache && !index && (track.indexProbeBytes || 0) < Math.min(track.size || MB, MB)) {
+        if (track.inflight.length) continue;
+        const probeEnd = Math.min(track.size || MB, track.indexProbeBytes ? MB : 64 * 1024);
+        track.indexProbeBytes = probeEnd;
+        const gap = firstGap(playbackCache.ranges(track.url), 0, probeEnd);
+        if (gap) return { track, start: gap[0], end: Math.min(gap[1], gap[0] + remainingBytes) };
+      }
+      if (index && playbackCache) {
+        // 清晰度切换后只为播放器最近使用的同类轨道预取，不用文件大小猜音视频。
+        const newer = [...tracks.values()].some(other => other !== track && other.active !== false && playbackCache.index(other.url)?.role === index.role
+          && other.lastPlayerSeen > track.lastPlayerSeen);
+        if (newer) continue;
+        const video = [...document.querySelectorAll("video")].find(item => !item.paused) || document.querySelectorAll("video")[0];
+        const now = Number(video?.currentTime) || 0;
+        const targets = [[0, index.segments[0].start], ...index.segments
+          .filter(segment => segment.timeEnd > now && segment.timeStart < now + cfg.leadSeconds)
+          .map(segment => [segment.start, segment.end])];
+        const resident = playbackCache.ranges(track.url);
+        for (const [left, right] of targets) {
+          const coverage = resident.map(range => range.slice());
+          for (const [a, b] of track.inflight) addRange(coverage, a, b);
+          const gap = firstGap(coverage, left, right);
+          if (gap) return { track, start: gap[0], end: Math.min(gap[1], gap[0] + host.chunkBytes, gap[0] + remainingBytes) };
+        }
+        continue;
+      }
       let cursor = track.anchor;
       for (let guard = 0; guard < 128 && cursor < to; guard += 1) {
         const gap = firstGap(track.covered, cursor, to);
@@ -442,10 +478,12 @@
     track.inflight.push([start, end]);
     stats.prefetching += 1;
     const controller = new AbortController();
+    prefetchControllers.add(controller);
+    const pageKey = currentPageKey(), requestUrl = track.url;
     const timer = setTimeout(() => controller.abort(new DOMException("预热超时", "TimeoutError")), 45000);
     const startedAt = performance.now();
     try {
-      const response = await nativeFetch.call(window, track.url, {
+      const response = await nativeFetch.call(window, requestUrl, {
         credentials: "omit",
         headers: { Range: `bytes=${start}-${end - 1}` },
         priority: "low",
@@ -463,13 +501,22 @@
       if (contentRange.total) track.size = contentRange.total;
       const reader = response.body.getReader();
       let bytes = 0;
+      const chunks = [];
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         bytes += value.byteLength;
+        if (bytes > end - start) { await reader.cancel(); throw new Error("预热响应超出请求范围"); }
+        chunks.push(value);
       }
       const expected = contentRange.end - contentRange.start + 1;
       if (bytes !== expected) throw new Error("预热响应提前结束");
+      // 导航/关闭/签名地址切换后到达的旧响应不能重新填充已清理的缓存。
+      if (controller.signal.aborted || cfg.mode !== "always" || currentPageKey() !== pageKey || tracks.get(track.key) !== track || track.url !== requestUrl) return;
+      const body = new Uint8Array(bytes);
+      let offset = 0;
+      for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+      playbackCache?.put(requestUrl, start, body, contentRange.total, { contentType: response.headers.get("content-type") || "application/octet-stream" });
       addRange(track.covered, start, start + bytes);
       addRange(track.prefetchedRanges, start, start + bytes);
       track.prefetchedBytes += bytes;
@@ -484,6 +531,7 @@
       if (elapsed < 8000) host.chunkBytes = MB;
       renderPreheatProgress();
     } catch {
+      if (controller.signal.aborted && controller.signal.reason?.name !== "TimeoutError") return;
       stats.prefetchErrors += 1;
       host.prefetchErrors += 1;
       track.consecutivePrefetchErrors += 1;
@@ -493,6 +541,7 @@
       host.chunkBytes = 512 * 1024;
     } finally {
       clearTimeout(timer);
+      prefetchControllers.delete(controller);
       stats.prefetching = Math.max(0, stats.prefetching - 1);
       const index = track.inflight.findIndex(([left, right]) => left === start && right === end);
       if (index >= 0) track.inflight.splice(index, 1);
@@ -626,6 +675,9 @@
       activeTracks: tracks.size,
       coldTracks: [...tracks.values()].filter((track) => track.cold).length,
       disabledTracks: [...tracks.values()].filter((track) => track.prefetchDisabled).length,
+      cacheHits: playbackCache?.stats.hits || 0,
+      cacheHitMB: +((playbackCache?.stats.hitBytes || 0) / MB).toFixed(2),
+      cacheResidentMB: +((playbackCache?.stats.bytes || 0) / MB).toFixed(2),
       prefetchChunks: stats.prefetchChunks,
       prefetchMB: +(stats.prefetchBytes / MB).toFixed(1),
       prefetchErrors: stats.prefetchErrors,
@@ -644,50 +696,33 @@
   }
 
   function normalizedPrefetchedRanges() {
-    const eligible = [...tracks.values()].filter((track) => (
-      track.active !== false && track.size > 0 && track.prefetchedRanges?.length
-    ));
-    if (!eligible.length) return [];
-
-    const progressive = eligible
-      .filter((track) => !/\.m4s$/i.test(track.path))
-      .sort((left, right) => right.lastPlayerSeen - left.lastPlayerSeen)[0];
-    if (progressive) return normalizedTrackRanges(progressive);
-
-    const dashPair = chooseCurrentDashPair(eligible);
-    if (!dashPair) return [];
-    return intersectRanges(
-      normalizedTrackRanges(dashPair.video),
-      normalizedTrackRanges(dashPair.audio)
-    );
+    const eligible = [...tracks.values()].filter(track => track.active !== false);
+    const pair = chooseCurrentDashPair(eligible);
+    if (!pair) return [];
+    // 新清晰度的初始化尚未解析时，不能继续借旧清晰度画黄色。
+    if (eligible.some(track => !playbackCache?.index(track.url)?.role && track.lastPlayerSeen > Math.min(pair.video.lastPlayerSeen, pair.audio.lastPlayerSeen))) return [];
+    return intersectRanges(normalizedTrackRanges(pair.video), normalizedTrackRanges(pair.audio));
   }
 
   function normalizedTrackRanges(track) {
     const normalized = [];
-    if (!(track?.size > 0)) return normalized;
-    for (const [start, end] of track.prefetchedRanges || []) {
-      const left = Math.max(0, Math.min(1, start / track.size));
-      const right = Math.max(0, Math.min(1, end / track.size));
+    const video = [...document.querySelectorAll("video")].find(item => !item.paused) || document.querySelectorAll("video")[0];
+    const duration = Number(video?.duration);
+    if (!playbackCache || !(duration > 0) || !Number.isFinite(duration)) return normalized;
+    // SIDX 给出每段真实时长；绝不把可变码率的字节占比伪装成可播放时间。
+    for (const [start, end] of playbackCache.timeRanges(track.url)) {
+      const left = Math.max(0, Math.min(1, start / duration));
+      const right = Math.max(0, Math.min(1, end / duration));
       if (right > left) addRange(normalized, left, right);
     }
     return normalized;
   }
 
   function chooseCurrentDashPair(candidates) {
-    const dash = candidates.filter((track) => /\.m4s$/i.test(track.path));
-    let selected = null;
-    for (let leftIndex = 0; leftIndex < dash.length; leftIndex += 1) {
-      for (let rightIndex = leftIndex + 1; rightIndex < dash.length; rightIndex += 1) {
-        const left = dash[leftIndex];
-        const right = dash[rightIndex];
-        const video = left.size >= right.size ? left : right;
-        const audio = video === left ? right : left;
-        if (video.size < audio.size * 1.5) continue;
-        const score = Math.min(video.lastPlayerSeen || 0, audio.lastPlayerSeen || 0);
-        if (!selected || score > selected.score) selected = { video, audio, score };
-      }
-    }
-    return selected;
+    const newest = role => candidates.filter(track => playbackCache?.index(track.url)?.role === role)
+      .sort((left, right) => right.lastPlayerSeen - left.lastPlayerSeen)[0];
+    const video = newest("video"), audio = newest("audio");
+    return video && audio ? { video, audio } : null;
   }
 
   function intersectRanges(leftRanges, rightRanges) {
@@ -711,114 +746,44 @@
     return /^#[0-9a-f]{6}$/.test(color) ? color : DEFAULT_PREHEAT_COLOR;
   }
 
-  function currentPlaybackRatio() {
-    const videos = [...document.querySelectorAll("video")].filter((video) => (
-      Number.isFinite(Number(video.duration)) && Number(video.duration) > 0
-    ));
-    const video = videos.find((candidate) => !candidate.paused && !candidate.ended) || videos[0];
-    if (!video) return null;
-    return Math.max(0, Math.min(1, (Number(video.currentTime) || 0) / Number(video.duration)));
-  }
-
-  function isPlaybackBoundaryConnected(ranges, ratio, tolerance = 0.002) {
-    if (!Number.isFinite(ratio)) return false;
-    return ranges.some(([start, end]) => ratio + tolerance >= start && ratio - tolerance <= end);
-  }
-
-  function buildTimelineSegments(weights) {
-    if (!Array.isArray(weights) || !weights.length) return [];
-    const normalizedWeights = weights.map((weight) => {
-      const value = Number(weight);
-      return Number.isFinite(value) && value > 0 ? value : 1;
-    });
-    const total = normalizedWeights.reduce((sum, weight) => sum + weight, 0);
-    let cursor = 0;
-    return normalizedWeights.map((weight, index) => {
-      const start = cursor / total;
-      cursor += weight;
-      return {
-        start,
-        end: index === normalizedWeights.length - 1 ? 1 : cursor / total,
-        index,
-        count: normalizedWeights.length
-      };
-    });
-  }
-
-  function projectRangesToTimelineSegment(ranges, segmentStart, segmentEnd) {
-    const span = Number(segmentEnd) - Number(segmentStart);
-    if (!(span > 0)) return [];
-    const projected = [];
-    for (const [start, end] of ranges || []) {
-      const intersectionStart = Math.max(Number(segmentStart), Number(start));
-      const intersectionEnd = Math.min(Number(segmentEnd), Number(end));
-      if (intersectionEnd <= intersectionStart) continue;
-      addRange(projected,
-        (intersectionStart - segmentStart) / span,
-        (intersectionEnd - segmentStart) / span);
+  // 黄色记录插件贡献，不能因进入播放器缓冲而变灰；已播放进度仍在最上层。
+  function timelineStates(played, nativeRanges, pluginRanges) {
+    played = Math.max(0, Math.min(1, Number(played) || 0));
+    const clean = (ranges) => (ranges || []).filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b) && b > a)
+      .map(([a, b]) => [Math.max(0, Math.min(1, a)), Math.max(0, Math.min(1, b))]);
+    const native = clean(nativeRanges);
+    const plugin = clean(pluginRanges);
+    const points = [...new Set([0, played, 1, ...native.flat(), ...plugin.flat()])].sort((a, b) => a - b);
+    const result = [];
+    for (let i = 1; i < points.length; i += 1) {
+      const start = points[i - 1], end = points[i];
+      if (end <= start) continue;
+      const midpoint = (start + end) / 2;
+      const contains = (ranges) => ranges.some(([a, b]) => a <= midpoint && midpoint < b);
+      const state = midpoint < played ? "played" : contains(plugin) ? "plugin" : contains(native) ? "native" : "empty";
+      const previous = result.at(-1);
+      if (previous?.state === state) previous.end = end;
+      else result.push({ start, end, state });
     }
-    return projected;
+    return result;
   }
 
-  function projectPlaybackRatioToTimelineSegment(ratio, segmentStart, segmentEnd, isLast = false) {
-    if (!Number.isFinite(ratio)) return null;
-    const span = Number(segmentEnd) - Number(segmentStart);
-    if (!(span > 0) || ratio < segmentStart || ratio > segmentEnd || (!isLast && ratio === segmentEnd)) return null;
-    return Math.max(0, Math.min(1, (ratio - segmentStart) / span));
+  // Native elements retain their dimensions, transforms, visibility and event handlers.
+  // Only the unplayed background is partitioned; the native played bar stays above it.
+  function timelineGradient(states, bufferColor = "#b8b8b8") {
+    const colors = {
+      played: "transparent",
+      native: bufferColor,
+      plugin: cfg.showPreheatHighlight === false ? bufferColor : normalizePreheatColor(cfg.preheatColor),
+      empty: "transparent"
+    };
+    return `linear-gradient(to right, ${states.map(({ start, end, state }) => `${colors[state]} ${start * 100}% ${end * 100}%`).join(", ")})`;
   }
 
-  function scheduleWidth(schedule) {
-    const wrap = schedule?.parentElement;
-    for (const element of [wrap, schedule]) {
-      const rectWidth = Number(element?.getBoundingClientRect?.().width);
-      if (rectWidth > 0) return rectWidth;
-      const offsetWidth = Number(element?.offsetWidth);
-      if (offsetWidth > 0) return offsetWidth;
-      const inlineWidth = Number.parseFloat(element?.style?.width || "");
-      if (inlineWidth > 0) return inlineWidth;
-    }
-    return 1;
-  }
-
-  function collectScheduleGroups() {
-    const schedules = [...document.querySelectorAll([
-      ".bpx-player-progress > .bpx-player-progress-schedule-wrap > .bpx-player-progress-schedule",
-      ".bpx-player-shadow-progress-schedule-wrap > .bpx-player-progress-schedule"
-    ].join(","))];
-    const groups = new Map();
-    for (const schedule of schedules) {
-      const root = schedule.closest?.(".bpx-player-progress, .bpx-player-shadow-progress-area")
-        || schedule.parentElement?.parentElement
-        || schedule.parentElement
-        || schedule;
-      if (!groups.has(root)) groups.set(root, []);
-      groups.get(root).push(schedule);
-    }
-    return [...groups.values()].map((groupSchedules) => {
-      const segments = buildTimelineSegments(groupSchedules.map(scheduleWidth));
-      return groupSchedules.map((schedule, index) => ({ schedule, ...segments[index] }));
-    });
-  }
-
-  function updatePlaybackBoundary() {
-    const ratio = currentPlaybackRatio();
-    const connected = isPlaybackBoundaryConnected(renderedPreheatRanges, ratio);
-    for (const boundary of document.querySelectorAll(`.${PLAYBACK_BOUNDARY_CLASS}`)) {
-      const layer = boundary.parentElement;
-      const segmentStart = Number(layer?.dataset?.timelineStart);
-      const segmentEnd = Number(layer?.dataset?.timelineEnd);
-      const segmentIndex = Number(layer?.dataset?.timelineIndex);
-      const segmentCount = Number(layer?.dataset?.timelineCount);
-      const localRatio = projectPlaybackRatioToTimelineSegment(
-        ratio,
-        segmentStart,
-        segmentEnd,
-        segmentIndex === segmentCount - 1
-      );
-      const visible = connected && localRatio !== null;
-      boundary.classList.toggle("is-visible", visible);
-      if (visible) boundary.style.transform = `translate3d(${localRatio * 100}%, 0, 0)`;
-    }
+  function timelineVideo(root) {
+    const player = root.closest?.(".bpx-player-container, #bilibili-player");
+    const candidates = [...(player || document).querySelectorAll("video")];
+    return candidates.find((video) => !video.paused && !video.ended) || candidates[0];
   }
 
   function ensurePreheatProgressStyle() {
@@ -827,97 +792,81 @@
     if (!style) return;
     style.id = PREHEAT_STYLE_ID;
     style.textContent = `
-      .${PREHEAT_LAYER_CLASS} {
-        position: absolute;
-        inset: 0;
-        z-index: 2;
-        overflow: hidden;
-        pointer-events: none;
+      .bpx-player-progress-schedule[data-bili-buffer-colors] > .bpx-player-progress-schedule-current {
+        background-color: var(--bili-buffer-played-color, #00a1d6) !important;
       }
-      .${PREHEAT_LAYER_CLASS} > .${PREHEAT_SEGMENT_CLASS} {
-        position: absolute;
-        top: 0;
-        bottom: 0;
-        min-width: 2px;
-        background: var(--bili-buffer-preheat-color, ${DEFAULT_PREHEAT_COLOR});
+      .bpx-player-progress-schedule[data-bili-buffer-paint] {
+        background-image: var(--bili-buffer-state-fill) !important;
       }
-      .${PREHEAT_LAYER_CLASS} > .${PLAYBACK_BOUNDARY_CLASS} {
-        position: absolute;
-        top: 0;
-        bottom: 0;
-        left: 0;
-        z-index: 2;
-        width: 100%;
-        border-left: 2px solid rgb(255 255 255 / 0.98);
-        background: transparent;
-        opacity: 0;
-        transform: translate3d(-100%, 0, 0);
-        will-change: transform;
-      }
-      .${PREHEAT_LAYER_CLASS} > .${PLAYBACK_BOUNDARY_CLASS}.is-visible {
-        opacity: 1;
-      }
-      .bpx-player-progress:hover .${PLAYBACK_BOUNDARY_CLASS},
-      .bpx-player-progress:focus-within .${PLAYBACK_BOUNDARY_CLASS},
-      .bpx-player-shadow-progress-area:hover .${PLAYBACK_BOUNDARY_CLASS},
-      .bpx-player-shadow-progress-area:focus-within .${PLAYBACK_BOUNDARY_CLASS} {
-        opacity: 0;
+      .bpx-player-progress-schedule[data-bili-buffer-paint] > .bpx-player-progress-schedule-buffer {
+        background-color: transparent !important;
       }
     `;
     (document.head || document.documentElement)?.append(style);
   }
 
+  const nativeBufferColors = new WeakMap();
+  function bufferColorFor(element) {
+    if (!element) return "rgba(255, 255, 255, 0.3)";
+    if (!nativeBufferColors.has(element)) nativeBufferColors.set(element, window.getComputedStyle(element).backgroundColor);
+    return nativeBufferColors.get(element);
+  }
+
+  function projectTimelineRanges(ranges, start, end) {
+    if (!(end > start)) return [];
+    return ranges.map(([a, b]) => [Math.max(start, a), Math.min(end, b)])
+      .filter(([a, b]) => b > a)
+      .map(([a, b]) => [(a - start) / (end - start), (b - start) / (end - start)]);
+  }
+
   function renderPreheatProgress() {
     ensurePreheatProgressStyle();
-    const ranges = normalizedPrefetchedRanges();
-    renderedPreheatRanges = ranges;
-    const preheatColor = normalizePreheatColor(cfg.preheatColor);
-    const activeSchedules = new Set();
-    for (const group of collectScheduleGroups()) {
-      for (const { schedule, start: timelineStart, end: timelineEnd, index, count } of group) {
-        activeSchedules.add(schedule);
-        const localRanges = projectRangesToTimelineSegment(ranges, timelineStart, timelineEnd);
-        let layer = [...schedule.children].find((child) => child.classList?.contains(PREHEAT_LAYER_CLASS));
-        if (!localRanges.length) {
-          layer?.remove();
+    const pluginRanges = normalizedPrefetchedRanges();
+    for (const root of document.querySelectorAll(".bpx-player-progress, .bpx-player-shadow-progress-area")) {
+      const video = timelineVideo(root);
+      const duration = Number(video?.duration);
+      const schedules = [...root.querySelectorAll(".bpx-player-progress-schedule")];
+      const widths = schedules.map((schedule) => schedule.getBoundingClientRect().width);
+      const total = widths.reduce((sum, width) => sum + width, 0);
+      const native = [];
+      if (duration > 0 && Number.isFinite(duration)) {
+        for (let i = 0; i < (video.buffered?.length || 0); i += 1) native.push([video.buffered.start(i) / duration, video.buffered.end(i) / duration]);
+      }
+      const fallbackColor = bufferColorFor(root.querySelector(".bpx-player-progress-schedule-buffer"));
+      let cursor = 0;
+      for (let i = 0; i < schedules.length; i += 1) {
+        const schedule = schedules[i];
+        const start = total > 0 ? cursor / total : 0;
+        cursor += widths[i];
+        const end = total > 0 ? cursor / total : 0;
+        schedule.dataset.biliBufferColors = "true";
+        const playedColor = /^#[0-9a-f]{6}$/i.test(cfg.progressColor || "") ? cfg.progressColor : "#00a1d6";
+        schedule.style.setProperty("--bili-buffer-played-color", playedColor);
+        const plugin = projectTimelineRanges(pluginRanges, start, end);
+        if (!(duration > 0) || !Number.isFinite(duration) || !plugin.length || !(widths[i] > 0)) {
+          delete schedule.dataset.biliBufferPaint;
+          schedule.style.removeProperty("--bili-buffer-state-fill");
           continue;
         }
-        if (!layer) {
-          layer = document.createElement("div");
-          layer.className = PREHEAT_LAYER_CLASS;
-          layer.setAttribute("aria-hidden", "true");
-          schedule.append(layer);
-        }
-        layer.style.setProperty("--bili-buffer-preheat-color", preheatColor);
-        layer.dataset.timelineStart = String(timelineStart);
-        layer.dataset.timelineEnd = String(timelineEnd);
-        layer.dataset.timelineIndex = String(index);
-        layer.dataset.timelineCount = String(count);
-        const rangeKey = localRanges.map(([start, end]) => `${start.toFixed(6)}-${end.toFixed(6)}`).join(",");
-        if (layer.dataset.rangeKey === rangeKey) continue;
-        const segments = localRanges.map(([start, end]) => {
-          const segment = document.createElement("span");
-          segment.className = PREHEAT_SEGMENT_CLASS;
-          segment.style.left = `${start * 100}%`;
-          segment.style.width = `${(end - start) * 100}%`;
-          return segment;
-        });
-        const boundary = document.createElement("span");
-        boundary.className = PLAYBACK_BOUNDARY_CLASS;
-        layer.replaceChildren(...segments, boundary);
-        layer.dataset.rangeKey = rangeKey;
+        const current = schedule.querySelector(".bpx-player-progress-schedule-current");
+        // Read the native played geometry. Never infer/reposition the TV handle.
+        const played = current ? Math.max(0, Math.min(1, current.getBoundingClientRect().width / widths[i])) : 0;
+        const buffer = schedule.querySelector(".bpx-player-progress-schedule-buffer");
+        const bufferColor = buffer ? bufferColorFor(buffer) : fallbackColor;
+        const states = timelineStates(played, projectTimelineRanges(native, start, end), plugin);
+        const fill = timelineGradient(states, bufferColor);
+        if (schedule.style.getPropertyValue("--bili-buffer-state-fill") !== fill) schedule.style.setProperty("--bili-buffer-state-fill", fill);
+        schedule.dataset.biliBufferPaint = "true";
       }
     }
-    for (const layer of document.querySelectorAll(`.${PREHEAT_LAYER_CLASS}`)) {
-      if (!activeSchedules.has(layer.parentElement)) layer.remove();
-    }
-    updatePlaybackBoundary();
   }
 
   function resetTracksAfterNavigation() {
     const nextPageKey = currentPageKey();
     if (nextPageKey === lastPageKey) return false;
     lastPageKey = nextPageKey;
+    for (const controller of prefetchControllers) controller.abort();
+    playbackCache?.clear();
     tracks.clear();
     renderPreheatProgress();
     return true;
@@ -931,6 +880,16 @@
       Object.assign(cfg, message.payload);
       cfg.mode = ["off", "observe"].includes(cfg.mode) ? "off" : "always";
       cfg.maxConcurrency = Math.max(1, Math.min(6, Number(cfg.maxConcurrency) || DEFAULTS.maxConcurrency));
+      if (cfg.mode === "off") {
+        for (const controller of prefetchControllers) controller.abort();
+        playbackCache?.clear();
+        for (const track of tracks.values()) {
+          track.indexProbeBytes = 0;
+          track.prefetchedBytes = 0;
+          track.prefetchedRanges = [];
+          track.covered = [];
+        }
+      }
       cfg.minWatchedSec = 0;
       cfg.minBufferAheadSec = 0;
       cfg.maxPrefetchMBPerTrack = Math.max(16, Math.min(1024, Number(cfg.maxPrefetchMBPerTrack) || DEFAULTS.maxPrefetchMBPerTrack));
@@ -969,13 +928,8 @@
     chooseCurrentDashPair,
     intersectRanges,
     normalizePreheatColor,
-    currentPlaybackRatio,
-    isPlaybackBoundaryConnected,
-    buildTimelineSegments,
-    projectRangesToTimelineSegment,
-    projectPlaybackRatioToTimelineSegment,
-    collectScheduleGroups,
-    updatePlaybackBoundary,
+    timelineStates,
+    timelineGradient,
     renderPreheatProgress,
     resetTracksAfterNavigation,
     setPlayedSec(value) { stats.playedSec = Number(value) || 0; },
@@ -985,6 +939,15 @@
   installEstimatorGuard();
   installXhrObserver();
   installFetchObserver();
+  playbackCache?.install({
+    enabled: () => { resetTracksAfterNavigation(); return cfg.mode === "always"; },
+    onChange: renderPreheatProgress,
+    onHit: (url, hit) => {
+      // 本地命中不是 CDN 吞吐样本，不能污染播放器的网络能力估计。
+      const track = trackFor(url);
+      if (track) primeTrackFromHeaders(track, { start: hit.start }, `bytes ${hit.start}-${hit.end - 1}/${hit.total}`, 206);
+    }
+  });
   scanVideos();
   new MutationObserver(scanVideos).observe(document, { childList: true, subtree: true });
   setInterval(() => {
@@ -994,17 +957,15 @@
   }, 1000);
   setInterval(renderPreheatProgress, 750);
   if (typeof window.requestAnimationFrame === "function") {
-    let lastBoundaryFrameAt = 0;
-    const animatePlaybackBoundary = (now) => {
-      if (now - lastBoundaryFrameAt >= 33) {
-        lastBoundaryFrameAt = now;
-        updatePlaybackBoundary();
-      }
-      window.requestAnimationFrame(animatePlaybackBoundary);
+    let lastPaint = 0;
+    const animate = (now) => {
+      if (!document.hidden && now - lastPaint >= 33) { lastPaint = now; renderPreheatProgress(); }
+      window.requestAnimationFrame(animate);
     };
-    window.requestAnimationFrame(animatePlaybackBoundary);
+    window.requestAnimationFrame(animate);
   }
   setInterval(() => {
+    resetTracksAfterNavigation();
     if (cfg.mode !== "always") return;
     while (stats.prefetching < cfg.maxConcurrency) {
       const job = pickJob();

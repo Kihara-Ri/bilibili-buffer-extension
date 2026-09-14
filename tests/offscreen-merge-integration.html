@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8"><title>Offscreen 双轨合并集成测试</title>
+    <script>
+      window.__errors = [];
+      window.addEventListener("error", (event) => window.__errors.push(String(event.message || event.error)));
+      window.addEventListener("unhandledrejection", (event) => {
+        window.__errors.push("rejection: " + String((event.reason && event.reason.stack) || event.reason));
+      });
+    </script>
+  </head>
+  <body>
+    <pre id="result">running</pre>
+    <pre id="step">boot</pre>
+    <script type="module" src="offscreen-merge-integration.mjs"></script>
+  </body>
+</html>

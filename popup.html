@@ -49,6 +49,14 @@
             </p>
 
             <div id="format-controls" class="format-controls" hidden>
+              <div class="quality-row">
+                <span class="quality-label">缓存内容</span>
+                <div id="cache-mode" class="cache-mode" role="radiogroup" aria-label="缓存内容">
+                  <button id="mode-video" type="button" role="radio" aria-checked="true" data-cache-mode="video">视频 + 音频</button>
+                  <button id="mode-audio" type="button" role="radio" aria-checked="false" tabindex="-1" data-cache-mode="audio">仅音频</button>
+                </div>
+              </div>
+
               <div id="quality-row" class="quality-row" hidden>
                 <span class="quality-label">画质</span>
                 <div id="quality-picker" class="quality-picker">
@@ -99,12 +107,21 @@
             <p id="assist-status" class="assist-status" role="status" aria-live="polite">等待视频加载</p>
             <details class="assist-settings">
               <summary>
-                <span>高亮颜色</span>
+                <span>进度条显示</span>
                 <span class="settings-summary-trailing">
                   <span id="assist-color-preview" class="assist-color-preview" aria-hidden="true"></span>
                   <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </span>
               </summary>
+              <div class="assist-appearance-row">
+                <label for="assist-progress-color">已播放颜色</label>
+                <input id="assist-progress-color" type="color" value="#00a1d6">
+              </div>
+              <label class="assist-appearance-row">
+                <span>区分插件缓冲</span>
+                <input id="assist-show-highlight" type="checkbox" checked>
+              </label>
+              <p class="assist-appearance-note">关闭后，原生缓冲和插件缓冲统一显示为亮灰色。</p>
               <div class="assist-color-row">
                 <div id="assist-colors" class="assist-color-palette" role="radiogroup" aria-label="提前加载高亮颜色"></div>
                 <label id="assist-custom-color-shell" class="assist-custom-color" title="选择自定义高亮颜色">

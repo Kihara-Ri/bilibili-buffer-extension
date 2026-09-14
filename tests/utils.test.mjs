@@ -3,6 +3,14 @@ import assert from "node:assert/strict";
 import {
   buildQualityOptions,
   buildCachedDownloadPlan,
+  describeAudioTrack,
+  getAudioFamily,
+  getAudioFileExtension,
+  describeAudioContainer,
+  getCacheMode,
+  isAudioOnlyCache,
+  makeAudioCacheVideoId,
+  normalizeCacheMode,
   buildMediaCodecOptions,
   buildMediaQualityOptions,
   formatBytes,
@@ -208,4 +216,104 @@ test("保存计划区分单文件 MP4 与 DASH 双轨", () => {
       { url: "blob:audio", filename: "测试 - P1 [1080P+].音频轨.m4a" }
     ]
   });
+});
+
+test("仅音频缓存使用独立键并保留原始音频格式", () => {
+  assert.equal(makeAudioCacheVideoId("BVabc:42"), "BVabc:42:a");
+  assert.equal(getVideoPageId({ id: "BVabc:42:a" }), "BVabc:42");
+  assert.equal(normalizeCacheMode("audio"), "audio");
+  assert.equal(normalizeCacheMode("video"), "video");
+  assert.equal(normalizeCacheMode("其他"), "video");
+  assert.equal(isAudioOnlyCache({ mediaKind: "audio" }), true);
+  assert.equal(isAudioOnlyCache({ cacheMode: "audio" }), true);
+  assert.equal(isAudioOnlyCache({ mediaKind: "dash", cacheMode: "video" }), false);
+  assert.equal(getCacheMode({ mediaKind: "audio" }), "audio");
+  assert.equal(getCacheMode({ mediaKind: "dash" }), "video");
+});
+
+test("识别音频编码族并给出可读说明与扩展名", () => {
+  const flac = { id: 30251, codecs: "fLaC", mimeType: "audio/mp4", bandwidth: 1_400_000 };
+  const dolby = { id: 30250, codecs: "ec-3", mimeType: "audio/mp4", bandwidth: 448_000 };
+  const aac = { id: 30280, codecs: "mp4a.40.2", mimeType: "audio/mp4", bandwidth: 192_000 };
+  assert.equal(getAudioFamily(flac), "flac");
+  assert.equal(getAudioFamily(dolby), "dolby");
+  assert.equal(getAudioFamily(aac), "aac");
+  assert.equal(getAudioFamily({ codecs: "unknown" }), "other");
+  assert.equal(describeAudioTrack(flac), "Hi-Res 无损");
+  assert.equal(describeAudioTrack(dolby), "杜比全景声");
+  assert.equal(describeAudioTrack(aac), "AAC 192K");
+  assert.equal(describeAudioTrack({ codecs: "mp4a.40.2", bandwidth: 64_000 }), "AAC 64K");
+  assert.equal(describeAudioTrack({ tracks: { audio: flac } }), "Hi-Res 无损");
+  assert.equal(getAudioFileExtension(flac), "flac");
+  assert.equal(getAudioFileExtension({ tracks: { audio: flac } }), "flac");
+  assert.equal(getAudioFileExtension(aac), "m4a");
+  assert.equal(getAudioFileExtension({ mimeType: "audio/mpeg" }), "mp3");
+});
+
+test("合并完成的记录以 merged 分块作为完成依据", () => {
+  assert.equal(hasCompleteByteCount({ merged: { totalBytes: 100, downloadedBytes: 100 } }), true);
+  assert.equal(hasCompleteByteCount({ merged: { totalBytes: 100, downloadedBytes: 60 } }), false);
+  assert.equal(hasCompleteByteCount({
+    merged: { totalBytes: 100, downloadedBytes: 100 },
+    downloadedBytes: 0,
+    totalBytes: 0
+  }), true);
+});
+
+test("说明音频文件的真实容器与编码", () => {
+  assert.equal(describeAudioContainer({ codecs: "fLaC", mimeType: "audio/mp4" }), "MP4 容器 · FLAC 无损 编码");
+  assert.equal(describeAudioContainer({ tracks: { audio: { codecs: "mp4a.40.2", mimeType: "audio/mp4" } } }), "MP4 容器 · AAC 编码");
+  assert.equal(describeAudioContainer({ codecs: "flac", mimeType: "audio/flac" }), "原生 FLAC · FLAC 无损 编码");
+  assert.equal(describeAudioContainer({}), "未知容器 · 音频 编码");
+});
+
+test("仅音频缓存保存为原始扩展名，合并缓存保存为单个 MP4", () => {
+  assert.deepEqual(buildCachedDownloadPlan({
+    video: {
+      title: "测试",
+      mediaKind: "audio",
+      cacheMode: "audio",
+      qualityLabel: "Hi-Res 无损",
+      tracks: { audio: { codecs: "fLaC", mimeType: "audio/mp4" } }
+    },
+    playbackUrl: "blob:audio"
+  }), {
+    splitTracks: false,
+    items: [{ url: "blob:audio", filename: "测试 [Hi-Res 无损].flac" }]
+  });
+
+  assert.deepEqual(buildCachedDownloadPlan({
+    video: {
+      title: "测试",
+      mediaKind: "dash",
+      qualityLabel: "1080P",
+      merged: { totalBytes: 100 },
+      tracks: { video: { codecs: "avc1.640032" }, audio: { codecs: "mp4a.40.2" } }
+    },
+    playbackUrl: "blob:merged"
+  }), {
+    splitTracks: false,
+    items: [{ url: "blob:merged", filename: "测试 [1080P].mp4" }]
+  });
+});
+
+test("关闭原标签页后可从仅音频记录恢复地址", () => {
+  const source = getPersistedMediaSource({
+    mediaKind: "audio",
+    cacheMode: "audio",
+    requestedQuality: 80,
+    duration: 60,
+    tracks: {
+      audio: {
+        codecs: "fLaC",
+        mimeType: "audio/mp4",
+        sourceUrls: ["https://cdn.example/audio.m4s", "javascript:bad"],
+        representationKey: "30251:0:fLaC"
+      }
+    }
+  });
+  assert.equal(source.mediaKind, "audio");
+  assert.deepEqual(source.tracks.audio.urls, ["https://cdn.example/audio.m4s"]);
+  assert.equal(source.mimeType, "audio/mp4");
+  assert.equal(getPersistedMediaSource({ mediaKind: "audio", tracks: {} }), null);
 });

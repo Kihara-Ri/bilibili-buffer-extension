@@ -307,6 +307,41 @@ h2 {
   border-bottom: 1px solid var(--line);
 }
 
+/* 缓存内容分段选择：视频 + 音频 / 仅音频。 */
+.cache-mode {
+  justify-self: end;
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-soft);
+}
+
+.cache-mode button {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  font-weight: 680;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.cache-mode button:hover:not([aria-checked="true"]) {
+  color: var(--ink);
+}
+
+.cache-mode button[aria-checked="true"] {
+  background: var(--surface-raised);
+  color: var(--blue-deep);
+  box-shadow: 0 1px 2px oklch(0.6 0.03 240 / 0.2);
+}
+
 .quality-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -1021,3 +1056,7 @@ h2 {
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
 }
+
+.assist-appearance-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; }
+.assist-appearance-row input[type="color"] { width: 36px; height: 28px; padding: 2px; border: 1px solid #aaa; border-radius: 6px; background: transparent; }
+.assist-appearance-note { font-size: 12px; line-height: 1.5; opacity: .75; margin: 8px 0 12px; }

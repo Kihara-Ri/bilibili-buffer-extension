@@ -1,16 +1,21 @@
 import { buildCacheSizeInfo } from "./cache-size.js";
 import {
   AUTO_QUALITY,
+  CACHE_MODES,
   buildCachedDownloadPlan,
   buildMediaCodecOptions,
   buildMediaQualityOptions,
+  getCacheMode,
   getCodecFamily,
   getVideoPageId,
   hasCompleteByteCount,
+  isAudioOnlyCache,
   isVideoCodecSelectionMatch,
+  makeAudioCacheVideoId,
   makeBiliSpaceUrl,
   makeVideoId,
   makeQualityVideoId,
+  normalizeCacheMode,
   normalizeCodecPreference,
   normalizeQualityId,
   parseBiliVideoUrl,
@@ -36,6 +41,7 @@ import { ASSIST_DEFAULTS, sanitizeAssistConfig } from "./assist-config.js";
 const OFFSCREEN_PATH = "offscreen.html";
 const POPUP_SNAPSHOTS_KEY = "popupPageSnapshotsV1";
 const ASSIST_CONFIG_KEY = "playbackAssistConfigV1";
+const CACHE_MODE_KEY = "cacheModeV1";
 let creatingOffscreen;
 let restoringDownloads;
 let popupSnapshotQueue = Promise.resolve();
@@ -74,6 +80,10 @@ async function handleMessage(message, sender) {
       return { saved: await savePopupSelection(message.tabId, message.url, message.quality, message.codec) };
     case "GET_ASSIST_STATE":
       return getAssistState(message.tabId);
+    case "GET_CACHE_MODE":
+      return { mode: await getCacheModePreference() };
+    case "SET_CACHE_MODE":
+      return { mode: await setCacheModePreference(message.mode) };
     case "SET_ASSIST_CONFIG":
       return { config: await setAssistConfig(message.patch) };
     case "ASSIST_COMMAND":
@@ -104,14 +114,19 @@ async function handleMessage(message, sender) {
       pageInfo.requestedQuality = normalizeQualityId(message.quality, AUTO_QUALITY);
       pageInfo.requestedQualityExplicit = normalizeQualityId(message.quality) > 0;
       pageInfo.requestedCodec = normalizeCodecPreference(message.codec);
+      pageInfo.cacheMode = normalizeCacheMode(message.mode);
       const pageId = pageInfo.id;
-      const matchingCache = (await listVideos()).find((video) => (
-        getVideoPageId(video) === pageId &&
-        Number(video.requestedQuality || video.quality) === pageInfo.requestedQuality &&
-        isVideoCodecSelectionMatch(video, pageInfo.requestedCodec)
-      ));
+      const matchingCache = (await listVideos()).find((video) => {
+        if (getVideoPageId(video) !== pageId) return false;
+        if (pageInfo.cacheMode === CACHE_MODES.AUDIO) return getCacheMode(video) === CACHE_MODES.AUDIO;
+        return getCacheMode(video) === CACHE_MODES.VIDEO &&
+          Number(video.requestedQuality || video.quality) === pageInfo.requestedQuality &&
+          isVideoCodecSelectionMatch(video, pageInfo.requestedCodec);
+      });
       pageInfo.pageId = pageId;
-      pageInfo.id = matchingCache?.id || makeQualityVideoId(pageId, pageInfo.requestedQuality, pageInfo.requestedCodec);
+      pageInfo.id = matchingCache?.id || (pageInfo.cacheMode === CACHE_MODES.AUDIO
+        ? makeAudioCacheVideoId(pageId)
+        : makeQualityVideoId(pageId, pageInfo.requestedQuality, pageInfo.requestedCodec));
       const auth = await getBiliSessionState();
       const playurl = await requestPlayurl(pageInfo, pageInfo.requestedQuality, message.tabId, auth);
       pageInfo.auth = playurl.auth;
@@ -137,7 +152,9 @@ async function handleMessage(message, sender) {
         .filter((video) => (
           getVideoPageId(video) === pageInfo.id &&
           video.status === "complete" &&
-          hasCompleteByteCount(video)
+          hasCompleteByteCount(video) &&
+          // 仅音频缓存不能顶替网页播放器，否则会变成没有画面的本地播放。
+          !isAudioOnlyCache(video)
         ))
         .sort((left, right) => (
           (Number(right.quality) || 0) - (Number(left.quality) || 0) ||
@@ -265,6 +282,21 @@ function buildCodecOptionsByQuality(playurlData, qualities) {
   ]));
 }
 
+async function getCacheModePreference() {
+  try {
+    const stored = await chrome.storage.local.get(CACHE_MODE_KEY);
+    return normalizeCacheMode(stored?.[CACHE_MODE_KEY]);
+  } catch {
+    return CACHE_MODES.VIDEO;
+  }
+}
+
+async function setCacheModePreference(value) {
+  const mode = normalizeCacheMode(value);
+  await chrome.storage.local.set({ [CACHE_MODE_KEY]: mode });
+  return mode;
+}
+
 async function getAssistConfig() {
   try {
     const stored = await chrome.storage.local.get(ASSIST_CONFIG_KEY);
@@ -385,7 +417,7 @@ async function refreshDownloadSource(video) {
   if (!video?.bvid || !video?.cid) throw new Error("缓存任务缺少视频身份，无法刷新播放地址");
   const auth = await getBiliSessionState();
   const requestedQuality = normalizeQualityId(video.requestedQuality ?? video.quality, AUTO_QUALITY);
-  const fnval = video.mediaKind === "dash" ? "4048" : "1";
+  const fnval = video.mediaKind === "dash" || video.mediaKind === "audio" ? "4048" : "1";
   const playurl = await requestPlayurl(video, requestedQuality, video.tabId, auth, fnval);
   return { auth: playurl.auth, playurlData: playurl.data };
 }
@@ -622,7 +654,7 @@ async function restoreActiveDownloadsNow() {
       try {
         const requestedQuality = normalizeQualityId(video.requestedQuality ?? video.quality, AUTO_QUALITY);
         const persistedCodec = getCodecFamily(video.tracks?.video?.codecs);
-        const fnval = video.mediaKind === "dash" ? "4048" : "1";
+        const fnval = video.mediaKind === "dash" || video.mediaKind === "audio" ? "4048" : "1";
         const playurl = await requestPlayurl(video, requestedQuality, video.tabId, auth, fnval);
         const result = await sendToOffscreen({
           type: "START_DOWNLOAD",

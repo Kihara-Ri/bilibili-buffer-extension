@@ -26,13 +26,13 @@ test("同一路径切换 CDN host 时分别记录热区间", () => {
 });
 
 test("只有音视频轨都预热的交集才映射为实心高亮", () => {
-  const { internals } = loadObserver();
+  const { internals, cacheTimes } = loadObserver();
   const video = internals.trackFor("https://a.bilivideo.com/path/video.m4s");
   video.size = 1000;
-  internals.addRange(video.prefetchedRanges, 100, 300);
+  cacheTimes.set(video.url, [[10, 30]]);
   const audio = internals.trackFor("https://a.bilivideo.com/path/audio.m4s");
   audio.size = 100;
-  internals.addRange(audio.prefetchedRanges, 20, 40);
+  cacheTimes.set(audio.url, [[20, 40]]);
 
   assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), [[0.2, 0.3]]);
 });
@@ -46,59 +46,44 @@ test("只预热 DASH 单轨时不显示可能误导的实心高亮", () => {
   assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), []);
 });
 
-test("单文件 MP4 预热仍可直接映射进度条", () => {
+test("未知索引的单文件 MP4 不再按字节比例伪造黄色", () => {
   const { internals } = loadObserver();
   const media = internals.trackFor("https://a.bilivideo.com/path/video.mp4");
   media.size = 1000;
   internals.addRange(media.prefetchedRanges, 100, 300);
 
-  assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), [[0.1, 0.3]]);
+  assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), []);
 });
 
-test("播放边缘只有接入预热片段时才显示白色分界", () => {
+
+test("四种状态互斥且覆盖全时间轴，黄色保留插件来源，不被灰色覆盖", () => {
   const { internals } = loadObserver();
-  const ranges = [[0.2, 0.3], [0.5, 0.7]];
-
-  assert.equal(internals.isPlaybackBoundaryConnected(ranges, 0.25), true);
-  assert.equal(internals.isPlaybackBoundaryConnected(ranges, 0.1985), true);
-  assert.equal(internals.isPlaybackBoundaryConnected(ranges, 0.4), false);
-  assert.equal(internals.isPlaybackBoundaryConnected(ranges, null), false);
-});
-
-test("多分段进度条按各段宽度建立唯一的全片时间区间", () => {
-  const { internals } = loadObserver();
-  const segments = fromVm(internals.buildTimelineSegments([30, 40, 30]));
-
-  assert.deepEqual(segments, [
-    { start: 0, end: 0.3, index: 0, count: 3 },
-    { start: 0.3, end: 0.7, index: 1, count: 3 },
-    { start: 0.7, end: 1, index: 2, count: 3 }
+  assert.deepEqual(fromVm(internals.timelineStates(.25, [[0, .4], [.6, .7]], [[.2, .5], [.65, .8]])), [
+    { start: 0, end: .25, state: "played" },
+    { start: .25, end: .5, state: "plugin" },
+    { start: .5, end: .6, state: "empty" },
+    { start: .6, end: .65, state: "native" },
+    { start: .65, end: .8, state: "plugin" },
+    { start: .8, end: 1, state: "empty" }
   ]);
 });
 
-test("全片预热范围只投影到实际相交的子进度段", () => {
+test("关闭区分后插件范围仍显示为缓冲，状态数据不丢失", () => {
   const { internals } = loadObserver();
-  const ranges = [[0.2, 0.3], [0.5, 0.7]];
-  const first = fromVm(internals.projectRangesToTimelineSegment(ranges, 0, 0.3));
-  const second = fromVm(internals.projectRangesToTimelineSegment(ranges, 0.3, 0.7));
-
-  assert.equal(first.length, 1);
-  assert.ok(Math.abs(first[0][0] - 2 / 3) < 1e-12);
-  assert.equal(first[0][1], 1);
-  assert.equal(second.length, 1);
-  assert.ok(Math.abs(second[0][0] - 0.5) < 1e-12);
-  assert.equal(second[0][1], 1);
-  assert.deepEqual(fromVm(internals.projectRangesToTimelineSegment(ranges, 0.7, 1)), []);
+  const states = internals.timelineStates(.1, [[.1, .2]], [[.2, .4]]);
+  const before = JSON.stringify(states);
+  assert.match(internals.timelineGradient(states), /#ff8a1f 20% 40%/);
+  internals.cfg.showPreheatHighlight = false;
+  assert.match(internals.timelineGradient(states), /#b8b8b8 20% 40%/);
+  assert.equal(JSON.stringify(states), before);
+  assert.match(internals.timelineGradient(states), /transparent 0% 10%/);
 });
 
-test("播放标记只换算到当前播放位置所属的子进度段", () => {
+test("空缓冲、播放结束和异常范围仍产生完整状态", () => {
   const { internals } = loadObserver();
-
-  assert.equal(internals.projectPlaybackRatioToTimelineSegment(0.25, 0, 0.3), 5 / 6);
-  assert.equal(internals.projectPlaybackRatioToTimelineSegment(0.25, 0.3, 0.7), null);
-  assert.equal(internals.projectPlaybackRatioToTimelineSegment(0.3, 0, 0.3), null);
-  assert.equal(internals.projectPlaybackRatioToTimelineSegment(0.3, 0.3, 0.7), 0);
-  assert.equal(internals.projectPlaybackRatioToTimelineSegment(1, 0.7, 1, true), 1);
+  assert.deepEqual(fromVm(internals.timelineStates(0, [], [])), [{ start: 0, end: 1, state: "empty" }]);
+  assert.deepEqual(fromVm(internals.timelineStates(1, [[0, 1]], [[0, 1]])), [{ start: 0, end: 1, state: "played" }]);
+  assert.deepEqual(fromVm(internals.timelineStates(0, [[NaN, 1], [.8, .2]], [[-1, 2]])), [{ start: 0, end: 1, state: "plugin" }]);
 });
 
 test("观察器只接受六位十六进制高亮颜色", () => {
@@ -169,7 +154,7 @@ test("开启调度不再因标签页隐藏或初始播放余量为零而暂停",
   const scheduler = intervals.find((interval) => interval.milliseconds === 400);
   assert.ok(scheduler);
   scheduler.callback();
-  assert.equal(internals.stats.prefetching, 2);
+  assert.equal(internals.stats.prefetching, 1);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(internals.stats.prefetching, 0);
 });
@@ -230,7 +215,38 @@ test("估计器护栏只在同 host 热样本充足且刚发生慢请求时清�
   assert.deepEqual(cleaned.entries["XHR|unrelated.bilivideo.com|4g|video"], estimator.entries["XHR|unrelated.bilivideo.com|4g|video"]);
 });
 
+test('新清晰度未解析/未预热时不借旧轨道的黄色，旧请求晚完成不夺回当前轨', () => {
+  const { internals, cacheTimes } = loadObserver();
+  const old = internals.trackFor('https://a.bilivideo.com/old-video.m4s'); cacheTimes.set(old.url, [[0, 40]]);
+  const audio = internals.trackFor('https://a.bilivideo.com/audio.m4s'); cacheTimes.set(audio.url, [[0, 40]]);
+  assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), [[0, .4]]);
+  const next = internals.trackFor('https://a.bilivideo.com/new-video.m4s');
+  assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), []);
+  cacheTimes.set(next.url, []);
+  internals.recordMedia({ url: old.url, range: { start: 0 }, status: 206, completed: true, bytes: 100 });
+  assert.equal(internals.chooseCurrentDashPair([...internals.tracks.values()]).video, next);
+  assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), []);
+  cacheTimes.set(next.url, [[20, 30]]);
+  assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), [[.2, .3]]);
+});
+test('关闭后重新开启允许重新补齐已清理的初始化区', () => {
+  const { internals, window, eventListeners } = loadObserver();
+  const track = internals.trackFor('https://a.bilivideo.com/video.m4s');
+  track.size = 2 * 1024 * 1024; track.anchor = 1000; track.indexProbeBytes = 1024 * 1024; track.prefetchedBytes = 200 * 1024 * 1024;
+  const config = mode => eventListeners.get('message')({ source: window, data: { channel: 'bili-buffer-playback-assist-v1', dir: 'ext->page', type: 'config', payload: { mode } } });
+  config('off'); config('always');
+  const job = internals.pickJob();
+  assert.equal(job.start, 0); assert.equal(job.end, 64 * 1024);
+});
+
 function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) {
+  const cacheTimes = new Map();
+  const cache = {
+    index: url => cacheTimes.has(url) ? { role: url.includes('audio') ? 'audio' : 'video' } : null,
+    timeRanges: url => cacheTimes.get(url) || [],
+    clear: () => cacheTimes.clear(), install() {}, ranges: () => [], stats: {}
+  };
+  const testVideo = { duration: 100, currentTime: 0, paused: true, buffered: { length: 0 }, addEventListener() {} };
   const eventListeners = new Map();
   const observedTargets = [];
   const intervals = [];
@@ -256,9 +272,10 @@ function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) 
     documentElement,
     hidden: false,
     addEventListener(type, listener) { eventListeners.set(`document:${type}`, listener); },
-    querySelectorAll() { return []; }
+    querySelectorAll(selector) { return selector === "video" ? [testVideo] : []; }
   };
   const window = {
+    __biliBufferCache: cache,
     Storage: FakeStorage,
     XMLHttpRequest: FakeXhr,
     fetch: async () => { throw new Error("测试不应发出真实请求"); },
@@ -294,6 +311,8 @@ function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) 
   vm.runInContext(source, context, { filename: "playback-observer.js" });
   return {
     internals: window.__biliBufferPlaybackAssistInternals,
+    window,
+    cacheTimes,
     localStorage,
     location,
     observedTargets,

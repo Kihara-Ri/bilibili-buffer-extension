@@ -1,4 +1,10 @@
-import { getCodecFamily, makeMimeCodec, normalizeCodecPreference, normalizeQualityId } from "./utils.js";
+import {
+  getAudioFamily,
+  getCodecFamily,
+  makeMimeCodec,
+  normalizeCodecPreference,
+  normalizeQualityId
+} from "./utils.js";
 
 export function getTrackUrls(track) {
   const primary = track?.baseUrl || track?.base_url;
@@ -15,22 +21,25 @@ function isSupportedTrack(track) {
     : /^(video|audio)\/mp4/i.test(type);
 }
 
-function codecPriority(codecs) {
-  const value = String(codecs || "").toLowerCase();
-  if (value.startsWith("avc1")) return 4;
-  if (value.startsWith("av01")) return 3;
-  if (value.startsWith("hvc1") || value.startsWith("hev1")) return 2;
-  if (value.startsWith("mp4a")) return 4;
-  return 1;
-}
+// 音频轨优先级：缓存视频时优先兼容性最好的 AAC，仅缓存音频时优先无损/杜比原轨。
+const AUDIO_FAMILY_PRIORITY = Object.freeze({
+  video: Object.freeze({ aac: 5, flac: 4, dolby: 3, other: 2 }),
+  audio: Object.freeze({ flac: 5, dolby: 4, aac: 3, other: 2 })
+});
 
-export function chooseRepresentation(tracks, predicate = () => true) {
+/**
+ * 选择音频表示。mode 为 "audio" 时优先 Hi-Res 无损（B 站 30251 fLaC），其次杜比全景声，最后按码率；
+ * mode 为 "video" 时默认取兼容性最好的 AAC，保证合并后的文件到处能播。
+ */
+export function chooseAudioRepresentation(tracks, { mode = "video" } = {}) {
+  const priority = AUDIO_FAMILY_PRIORITY[mode === "audio" ? "audio" : "video"];
   return (Array.isArray(tracks) ? tracks : [])
-    .filter((track) => predicate(track) && isSupportedTrack(track))
-    .sort((left, right) => {
-      const codecDifference = codecPriority(right.codecs) - codecPriority(left.codecs);
-      return codecDifference || (Number(right.bandwidth) || 0) - (Number(left.bandwidth) || 0);
-    })[0] || null;
+    .filter((track) => isSupportedTrack(track))
+    .map((track) => ({ track, weight: priority[getAudioFamily(track)] ?? 0 }))
+    .sort((left, right) => (
+      right.weight - left.weight ||
+      (Number(right.track.bandwidth) || 0) - (Number(left.track.bandwidth) || 0)
+    ))[0]?.track || null;
 }
 
 export function chooseVideoRepresentation(tracks, quality, codecPreference) {

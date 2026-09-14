@@ -18,6 +18,10 @@
       .bpx-player-progress-schedule-buffer { position: absolute; inset: 0; background: rgba(255, 255, 255, 0.3); transform: scaleX(0.7); transform-origin: left; }
       .bpx-player-progress-schedule-current { position: absolute; inset: 0; z-index: 99; background: #ff6699; transform: scaleX(0.08); transform-origin: left; }
       .bpx-player-shadow-progress-area { height: 2px; margin-top: 24px; }
+      .bpx-player-progress-schedule { border-radius: 2px; }
+      .bpx-player-progress:hover { height: 6px; }
+      .bpx-player-progress-thumb { position: absolute; left: 150px; top: -6px; width: 18px; height: 14px; background: #eeeeee; border: 2px solid #00a1d6; border-radius: 3px; z-index: 100; }
+      .bpx-player-progress-thumb::before { content: "TV"; color: #202124; font-size: 9px; }
       #result { margin-top: 24px; white-space: pre-wrap; }
     </style>
   </head>
@@ -31,15 +35,16 @@
         </div>
       </div>
       <div class="bpx-player-progress-schedule-wrap">
-        <div class="bpx-player-progress-schedule"></div>
+        <div class="bpx-player-progress-schedule"><div class="bpx-player-progress-schedule-buffer"></div><div class="bpx-player-progress-schedule-current"></div></div>
       </div>
       <div class="bpx-player-progress-schedule-wrap">
-        <div class="bpx-player-progress-schedule"></div>
+        <div class="bpx-player-progress-schedule"><div class="bpx-player-progress-schedule-buffer"></div><div class="bpx-player-progress-schedule-current"></div></div>
       </div>
+      <div class="bpx-player-progress-thumb" role="slider" tabindex="0" aria-label="原生小电视"></div>
     </div>
     <div class="bpx-player-shadow-progress-area">
       <div class="bpx-player-shadow-progress-schedule-wrap">
-        <div class="bpx-player-progress-schedule"></div>
+        <div class="bpx-player-progress-schedule"><div class="bpx-player-progress-schedule-buffer"></div><div class="bpx-player-progress-schedule-current"></div></div>
       </div>
     </div>
     <pre id="result">running</pre>

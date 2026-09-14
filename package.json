@@ -1,12 +1,14 @@
 {
   "name": "bili-buffer-extension",
-  "version": "2.5.2",
+  "version": "2.6.1",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev-reload-server.mjs",
     "build": "node scripts/build-release.mjs",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check src/background.js && node --check src/cache-size.js && node --check src/media-selection.js && node --check src/offscreen.js && node --check src/range-downloader.js && node --check src/download-retry.js && node --check src/assist-config.js && node --check src/playback-observer.js && node --check src/playback-bridge.js && node --check src/popup-snapshot.js && node --check src/popup.js && node --check src/content.js && node --check src/dev-reload.js && node --check scripts/dev-reload-server.mjs && node --check scripts/benchmark-range-download.mjs && node --check scripts/build-release.mjs && node --check tests/offscreen-integration.mjs && node --check tests/background-popup-integration.mjs && node --check tests/popup-instant-integration.mjs && node --check tests/playback-progress-integration.mjs"
+    "test:playback": "node tests/run-playback-cache-integration.mjs",
+    "test:extension": "npm run build && node tests/run-playback-extension-smoke.mjs",
+    "check": "node --check src/background.js && node --check src/cache-size.js && node --check src/media-selection.js && node --check src/mp4-merge.js && node --check src/offscreen.js && node --check src/range-downloader.js && node --check src/download-retry.js && node --check src/assist-config.js && node --check src/playback-cache.js && node --check tests/run-playback-cache-integration.mjs && node --check tests/run-playback-extension-smoke.mjs && node --check src/playback-observer.js && node --check src/playback-bridge.js && node --check src/popup-snapshot.js && node --check src/popup.js && node --check src/content.js && node --check src/dev-reload.js && node --check scripts/dev-reload-server.mjs && node --check scripts/benchmark-range-download.mjs && node --check scripts/build-release.mjs && node --check tests/offscreen-integration.mjs && node --check tests/background-popup-integration.mjs && node --check tests/popup-instant-integration.mjs && node --check tests/playback-progress-integration.mjs && node --check tests/offscreen-merge-integration.mjs && node --check tests/mp4-merge.test.mjs && node --check tests/mp4-audio.test.mjs && node --check tests/media-selection.test.mjs"
   }
 }
