@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node scripts/dev-reload-server.mjs",
     "build": "node scripts/build-release.mjs",
+    "icons": "node scripts/build-icons.mjs",
     "test": "node --test tests/*.test.mjs",
     "test:popup": "node tests/run-popup-stability.mjs",
     "test:playback": "node tests/run-playback-cache-integration.mjs",
