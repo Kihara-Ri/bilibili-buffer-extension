@@ -206,6 +206,38 @@ h2 {
   min-width: 0;
 }
 
+/* 常驻隐私页脚：内容必须保持单行，避免面板切换时高度跳动 */
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  padding: 6px var(--space-md) 8px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 0.66rem;
+}
+
+.app-footer-note {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.app-footer-link {
+  flex: none;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.app-footer-link:hover {
+  color: var(--blue-deep);
+  text-decoration: underline;
+}
+
 .panel-view {
   min-width: 0;
   padding: var(--space-md);

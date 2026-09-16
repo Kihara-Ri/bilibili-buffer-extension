@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bili 缓冲站 · 隐私说明 / Privacy Policy</title>
+    <!--
+      这个页面同时承担三个职责，修改时必须三者一起检查：
+      1. Chrome Web Store 仪表盘里的“隐私权政策网址”（推荐用 GitHub Pages 指向本文件）；
+      2. 扩展包内的本地副本（弹窗底部“隐私说明”直接打开它，满足 2026 年新增的
+         “在安装后也要显著披露数据处理方式”的要求）；
+      3. Limited Use 声明必须原样保留，Chrome Web Store 用户数据政策要求扩展在
+         自有网站上给出这句肯定性声明。
+      因此这里不引用任何外部资源：离线打开、被商店抓取、GitHub Pages 静态托管都要能正常显示。
+    -->
+    <style>
+      :root {
+        color-scheme: light dark;
+        --ink: #1f2b33;
+        --ink-soft: #5b6b76;
+        --line: #dde5ea;
+        --surface: #f7fbfd;
+        --accent: #0f7fa8;
+        --accent-soft: #eaf5fa;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root { --ink: #e8eef2; --ink-soft: #9fb0ba; --line: #2c3a43; --surface: #131a1f; --accent: #56b6d8; --accent-soft: #1b2b33; }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 40px 20px 72px;
+        background: var(--surface);
+        color: var(--ink);
+        font: 15px/1.72 "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      }
+      main { max-width: 760px; margin: 0 auto; }
+      header { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+      header svg { flex: none; width: 44px; height: 44px; }
+      h1 { margin: 0; font-size: 1.5rem; letter-spacing: -0.01em; }
+      .updated { margin: 0 0 28px; color: var(--ink-soft); font-size: 0.86rem; }
+      h2 { margin: 36px 0 10px; font-size: 1.06rem; }
+      h3 { margin: 22px 0 6px; font-size: 0.95rem; }
+      p, li { margin: 0 0 10px; }
+      ul { margin: 0 0 12px; padding-left: 22px; }
+      .lead { padding: 14px 18px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; background: var(--accent-soft); }
+      table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+      th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+      th { color: var(--ink-soft); font-weight: 620; }
+      code { padding: 1px 5px; border-radius: 4px; background: var(--accent-soft); font-size: 0.86em; }
+      a { color: var(--accent); }
+      hr { margin: 44px 0 28px; border: 0; border-top: 1px solid var(--line); }
+      .lang-note { color: var(--ink-soft); font-size: 0.86rem; }
+      footer { margin-top: 40px; color: var(--ink-soft); font-size: 0.86rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <svg viewBox="0 0 128 128" aria-hidden="true">
+          <g transform="translate(16 18)">
+            <path d="M27 5 38 15M69 5 58 15" fill="none" stroke="#176b87" stroke-width="7" stroke-linecap="round"/>
+            <rect x="0" y="12" width="96" height="72" rx="24" fill="#13a9df"/>
+            <rect x="8" y="20" width="80" height="48" rx="14" fill="#f7fcff"/>
+            <path d="M39 26 61 39 39 52Z" fill="#fb7299"/>
+            <path d="M18 60h60" fill="none" stroke="#cceef9" stroke-width="5" stroke-linecap="round"/>
+            <path d="M18 60h30" fill="none" stroke="#fb7299" stroke-width="5" stroke-linecap="round"/>
+            <circle cx="48" cy="60" r="3.5" fill="#176b87"/>
+            <path d="M22 84v3M74 84v3" fill="none" stroke="#176b87" stroke-width="7" stroke-linecap="round"/>
+          </g>
+        </svg>
+        <h1>Bili 缓冲站 · 隐私说明</h1>
+      </header>
+      <p class="updated">最后更新：2026-09-16 · 适用于扩展版本 2.6.3 及以后</p>
+
+      <p class="lead">
+        本扩展没有服务器。它不会把任何数据发送给开发者或第三方，所有缓存、偏好与任务状态都只保存在你自己的 Chrome 配置里。
+      </p>
+
+      <h2>1. 扩展会接触哪些数据</h2>
+      <table>
+        <thead>
+          <tr><th>数据</th><th>用途</th><th>存放位置与保留时间</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>登录态是否存在（<code>SESSDATA</code>）</td>
+            <td>只判断“当前是否已登录”，用于在面板上显示登录提示。只读取该 cookie 是否存在，不读取、不保存、不传输它的值。</td>
+            <td>不落盘。每次需要时重新查询一次。</td>
+          </tr>
+          <tr>
+            <td>当前标签页地址</td>
+            <td>识别 <code>BV</code> 号与分 P，构造该视频的播放清单请求，并在片库中判断“这个视频是否已缓存”。</td>
+            <td><code>chrome.storage.session</code> 里的界面快照，浏览器重启或扩展重新加载即失效。</td>
+          </tr>
+          <tr>
+            <td>你主动缓存的视频 / 音频数据</td>
+            <td>按你的操作从 B 站 CDN 下载并保存在本机，供离线播放与导出。</td>
+            <td>本机 IndexedDB。你在片库中删除，或卸载扩展时清除。</td>
+          </tr>
+          <tr>
+            <td>偏好设置（缓存内容、画质、进度条配色、提前加载开关）</td>
+            <td>下次打开面板时恢复你的选择。</td>
+            <td><code>chrome.storage.local</code>。删除扩展数据或卸载扩展时清除。</td>
+          </tr>
+          <tr>
+            <td>缓存任务进度与失败原因</td>
+            <td>显示进度、速度与重试状态，并在扩展重启后续传。</td>
+            <td><code>chrome.storage.local</code> 与本机 IndexedDB。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>2. 扩展不会做的事</h2>
+      <ul>
+        <li>不收集、不上传浏览历史，不记录你访问过的其他网站。</li>
+        <li>不读取 cookie 的值，不读取表单内容、密码或剪贴板。</li>
+        <li>不包含分析、埋点、遥测或广告 SDK，不注入广告，不替换网页内容。</li>
+        <li>不把数据卖给或转让给第三方，不用于个性化广告，不用于信用评估或借贷判断。</li>
+        <li>不把数据用于与“缓存 B 站视频”无关的任何目的。</li>
+      </ul>
+
+      <h2>3. 数据流向</h2>
+      <p>
+        扩展只会与你正在观看的 B 站域名通信：<code>*.bilibili.com</code>、<code>*.bilivideo.com</code>、
+        <code>*.bilivideo.cn</code>、<code>*.hdslb.com</code>、<code>*.akamaized.net</code>。
+        这些请求由你点击“缓存”或开启“提前加载”后发起，内容与你直接播放视频时浏览器发出的请求相同。
+        扩展为这些 CDN 请求补上 B 站 <code>Referer</code> 以满足防盗链校验，不会修改其他网站的任何请求。
+        除此之外没有任何外部端点，也没有开发者运营的服务端。
+      </p>
+
+      <h2>4. 数据删除</h2>
+      <ul>
+        <li>在片库中点击垃圾桶按钮：删除该视频的缓存与任务记录。</li>
+        <li>在 <code>chrome://extensions</code> 中清除扩展数据或卸载扩展：删除全部本地数据。</li>
+        <li>因为不存在服务器，开发者侧没有任何副本可供删除或导出。</li>
+      </ul>
+
+      <h2>5. 权限用途</h2>
+      <table>
+        <thead><tr><th>权限</th><th>用途</th></tr></thead>
+        <tbody>
+          <tr><td><code>activeTab</code></td><td>读取当前标签页的地址，判断它是不是支持的 B 站视频页；否则只能显示“无法读取当前页面”。</td></tr>
+          <tr><td><code>alarms</code></td><td>分钟级看门狗，在 Service Worker 被回收后重新接管等待中的缓存任务。</td></tr>
+          <tr><td><code>cookies</code></td><td>只查询 <code>SESSDATA</code> 是否存在，用于显示登录状态并在你登录 / 退出时刷新面板。</td></tr>
+          <tr><td><code>declarativeNetRequestWithHostAccess</code></td><td>为扩展自己发往 B 站 CDN 的下载请求补充 <code>Referer</code>，通过防盗链校验。</td></tr>
+          <tr><td><code>downloads</code></td><td>把已缓存的视频或音频保存为你选择的本地文件。</td></tr>
+          <tr><td><code>offscreen</code></td><td>在后台文档中执行下载与 MP4 重封装，使关闭弹窗或原视频页后任务仍可继续。</td></tr>
+          <tr><td><code>storage</code></td><td>保存偏好设置、任务进度与界面快照。</td></tr>
+          <tr><td><code>unlimitedStorage</code></td><td>允许在 IndexedDB 中保存体积可能超过默认配额的视频缓存。</td></tr>
+          <tr><td>站点访问权限</td><td>仅限上列 B 站视频与 CDN 域名；扩展不使用 <code>*://*/*</code> 一类的通配权限。</td></tr>
+        </tbody>
+      </table>
+
+      <h2>6. 第三方</h2>
+      <p>
+        扩展不集成任何第三方 SDK 或服务。你通过扩展保存的媒体数据来自哔哩哔哩，其内容与使用受
+        <a href="https://www.bilibili.com/protocal/licence.html" target="_blank" rel="noopener noreferrer">哔哩哔哩用户协议</a>
+        与相关版权约定约束；请只缓存你有权观看的内容。
+      </p>
+
+      <h2>7. 儿童</h2>
+      <p>扩展不是面向 13 岁以下儿童设计的产品，也不会主动收集儿童的个人信息。</p>
+
+      <h2>8. 变更与联系</h2>
+      <p>
+        如果数据处理方式发生变化，我们会同时更新本页面和扩展的版本说明。任何疑问或删除请求可通过
+        <a href="https://github.com/Kihara-Ri/bilibili-buffer-extension/issues" target="_blank" rel="noopener noreferrer">项目 Issue 页面</a>
+        提出。
+      </p>
+
+      <h2>9. Chrome Web Store 有限使用声明 / Limited Use</h2>
+      <!-- 这句必须保持连续原文：商店要求扩展在自有网站上给出该肯定性声明，抓取时不能被标签切断。 -->
+      <p>The use of information received from Google APIs will adhere to the Chrome Web Store User Data Policy, including the Limited Use requirements.</p>
+      <p>
+        政策原文见
+        <a href="https://developer.chrome.com/docs/webstore/program-policies/user-data-faq" target="_blank" rel="noopener noreferrer">Chrome Web Store User Data Policy / 用户数据政策</a>。
+      </p>
+      <p>
+        本扩展对用户数据的使用遵守 Chrome Web Store 用户数据政策（含 Limited Use 要求）：
+        数据仅用于实现“缓存并离线播放 B 站视频”这一已披露的单一用途，不出售、不转让、不用于广告或信用评估。
+      </p>
+
+      <hr>
+      <h2 lang="en">Privacy Policy (English)</h2>
+      <p lang="en">
+        This extension has no server. It does not transmit any data to the developer or to third parties; all cached media,
+        preferences and task state stay in your local Chrome profile.
+      </p>
+      <ul lang="en">
+        <li><strong>Login state:</strong> it only checks whether the <code>SESSDATA</code> cookie exists in order to show a login hint. The cookie value is never read, stored or transmitted.</li>
+        <li><strong>Current tab URL:</strong> used to identify the video you are watching and to look up its cached copy. Kept in <code>chrome.storage.session</code> only.</li>
+        <li><strong>Cached media:</strong> downloaded from Bilibili CDNs only when you click "cache", and stored in your local IndexedDB.</li>
+        <li><strong>Preferences and task progress:</strong> stored in <code>chrome.storage.local</code> so progress can resume after a restart.</li>
+        <li>No analytics, telemetry, ads, or third-party SDKs. No selling or transferring of data. No browsing-history collection.</li>
+        <li>Network access is limited to <code>*.bilibili.com</code>, <code>*.bilivideo.com</code>, <code>*.bilivideo.cn</code>, <code>*.hdslb.com</code> and <code>*.akamaized.net</code>.</li>
+        <li>Deleting a video from the library, clearing the extension's data, or uninstalling the extension removes all local data.</li>
+      </ul>
+      <p lang="en">
+        The use of information received from Google APIs will adhere to the Chrome Web Store User Data Policy,
+        including the Limited Use requirements.
+      </p>
+      <footer>
+        本页面可离线打开；扩展包内的 <code>privacy.html</code> 与线上版本内容一致。
+      </footer>
+    </main>
+  </body>
+</html>

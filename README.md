@@ -1,6 +1,8 @@
 # Bili 缓冲站
 
-当前版本：**2.6.2**。
+当前版本：**2.6.3**。
+
+2.6.3：图标重做为带透明留白的规范尺寸（此前是整块不透明白底）；弹窗新增常驻隐私入口与本地隐私页面；发布构建增加上架自检；补充 Chrome Web Store 提审资料与商店素材。
 
 2.6.2：重做播放进度条配色；片库刷新保留悬停与焦点；保存/删除统一纯图标；缓存进度采用确认落盘量，速度单行平滑，多任务不再互相争抢徽标。
 
@@ -18,6 +20,21 @@ npm run test:playback
 npm run test:popup      # 真实 Popup 的持续刷新、悬停/焦点、数值、失败回退及多任务链路
 npm run test:extension  # 构建、真实加载、修改标记后自动重载并校验哈希
 ```
+
+### 发布与上架
+
+```bash
+npm run check            # 遍历仓库的语法检查
+npm test                 # 单元测试 + 上架合规测试（清单字段、权限、图标、隐私声明、商店素材）
+npm run build            # 生成 dist/unpacked 与 dist/bili-buffer-extension-<version>.zip
+                         # 末尾自动执行 npm run verify，逐项检查上架要求并打印 SHA-256
+npm run icons            # 从 assets/*.svg 母版重导出 16/32/48/128 图标（需要 Playwright）
+npm run store:assets     # 重新生成商店截图与促销图（需要 Playwright）
+```
+
+上架所需的文案、权限理由、数据使用披露与素材规格见 [store/listing.md](store/listing.md)，
+提交流程与常见驳回原因的对应防线见 [store/README.md](store/README.md)；
+隐私政策同时以 [privacy.html](privacy.html) 打包进扩展，可发布为 GitHub Pages 后填入商店的隐私政策网址。
 
 也可用 `PLAYWRIGHT_MODULE=/绝对路径/playwright/index.mjs npm run test:playback` 复用已有安装。测试使用 Playwright `channel: 'chromium'`，本地真实双轨夹具与受控网络延迟，不依赖登录会话。报告包含网络请求计数、XHR 事件/取消、缓存命中和拖动起播耗时；不是对用户真实 B 站线路的测速。
 

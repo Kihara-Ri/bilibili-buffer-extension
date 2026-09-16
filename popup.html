@@ -140,6 +140,16 @@
           </section>
         </section>
       </div>
+
+      <!--
+        常驻的隐私入口。Chrome Web Store 2026 年的政策更新要求“安装后也要显著披露
+        数据处理方式”，所以这里给出一句常驻说明加一个本地隐私页面链接；页面随扩展
+        一起打包，离线可用，不需要联网。
+      -->
+      <footer class="app-footer">
+        <span class="app-footer-note">缓存与登录态只保存在本机</span>
+        <a id="privacy-link" class="app-footer-link" href="privacy.html" target="_blank" rel="noopener noreferrer">隐私说明</a>
+      </footer>
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>

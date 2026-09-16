@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Popup 场景夹具（用于生成商店截图）</title>
+    <link rel="stylesheet" href="../../popup.css">
+    <style>
+      /* 真实 Popup 由 Chrome 提供底色与高度上限，这里手工补上，
+         否则截图会出现透明底和随内容无限增高的画布。 */
+      html, body { height: auto; background: oklch(0.985 0.008 225); }
+      body { width: 360px; height: 640px; overflow: hidden; }
+      #scene-result { position: fixed; left: -9999px; }
+    </style>
+  </head>
+  <body>
+    <pre id="scene-result">booting</pre>
+    <script type="module" src="./popup-scene.mjs"></script>
+  </body>
+</html>
