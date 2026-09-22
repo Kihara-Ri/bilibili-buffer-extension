@@ -1108,7 +1108,8 @@
     }
   });
   scanVideos();
-  new MutationObserver(scanVideos).observe(document, { childList: true, subtree: true });
+  // 能力缺失时只是少一次自动补扫；1 秒定时器仍会周期扫描 video，不影响播放。
+  if (typeof MutationObserver === "function") new MutationObserver(scanVideos).observe(document, { childList: true, subtree: true });
   setInterval(() => {
     resetTracksAfterNavigation();
     if (anyVideoPlaying()) stats.playedSec += 1;

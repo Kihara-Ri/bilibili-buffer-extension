@@ -11,6 +11,10 @@
   const PAUSE_MS = 60_000;
   const MEDIA_HOST = /(^|\.)(bilivideo\.com|bilivideo\.cn|hdslb\.com|akamaized\.net)$/;
   const URL_KEYS = /^(baseUrl|base_url|backupUrl|backup_url)$/;
+  // 能力探测：缺少 base64 或消息通道时整体降级，绝不因为一个缺失的浏览器 API 打断播放。
+  const CAPABLE = typeof atob === 'function' && typeof btoa === 'function' && typeof window.postMessage === 'function';
+  let idSeed = 0;
+  const newId = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `r${Date.now().toString(36)}-${(idSeed += 1).toString(36)}`);
   const authorized = new Map();
   const sizeHints = new Map();
 
@@ -71,6 +75,8 @@
    * @returns {{read: Function}} */
   function createReuseClient() {
     const pending = new Map();
+    const unavailable = { read: async () => null };
+    if (!CAPABLE) return unavailable;
     let inFlight = 0, failures = 0, pausedUntil = 0;
     window.addEventListener('message', (event) => {
       const message = event.data;
@@ -90,7 +96,7 @@
         if (![start, end, total].every(Number.isSafeInteger) || total <= 0 || end <= start || end > total) return null;
         if (end - start > MAX_BYTES) return null;
         if (Date.now() < pausedUntil || inFlight >= 1) return null;
-        const rpcId = crypto.randomUUID();
+        const rpcId = newId();
         inFlight += 1;
         let result = null;
         try {

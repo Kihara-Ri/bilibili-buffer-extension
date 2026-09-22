@@ -49,6 +49,10 @@ export function sourceRangeScope(sender, { runtimeId, offscreenUrl } = {}) {
  * @param {IDBFactory} factory @param {string} name @returns {object}
  */
 export function createSourceRepository(factory = globalThis.indexedDB, name = "bili-buffer-source-ranges-v1") {
+  // 能力缺失（无 IndexedDB 或无 open）时返回一个恒为空的服务仓库：调用方无需分支，也永远不会抛错。
+  if (!factory || typeof factory.open !== "function") {
+    return { disabled: true, list: async () => [], put: async () => false, clear: async () => {} };
+  }
   let opening = null;
   const open = () => opening ||= new Promise((resolve, reject) => {
     const request = factory.open(name, 1);
@@ -141,12 +145,13 @@ export function createSourceService({ repository, account, now = Date.now }) {
     const bytes = unb64(request.body);
     if (bytes.length !== facts.end - facts.start) return false;
     const contentType = /^(video|audio)\/[-\w.+]+$/.test(request.contentType || "") ? request.contentType : "application/octet-stream";
-    await repository.put({
+    // 事务成功且真实写入才算成功；停用/被拒的仓库返回 false，调用方据此判未命中。
+    const stored = await repository.put({
       id: `${facts.source}\u0000${partition}\u0000${facts.start}`,
       source: facts.source, partition, start: facts.start, end: facts.end, total: facts.total,
       expires: facts.expires, created: now(), contentType, data: new Blob([bytes])
     });
-    return true;
+    return stored !== false;
   };
   return {
     /** 串行处理，避免并发写入时同一 source 的回收互相覆盖。
