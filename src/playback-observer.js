@@ -52,6 +52,8 @@
     stallMs: 0,
     waitingSince: 0,
     playedSec: 0,
+    reuseHits: 0,
+    reuseBytes: 0,
     lastSlowAt: 0,
     hosts: Object.create(null)
   };
@@ -65,10 +67,15 @@
     ? window.BiliRequestBudget.createBudgetFetch((...args) => nativeFetch.apply(window,args),window.BiliRequestBudget.createPageRpc())
     : (...args) => nativeFetch.apply(window,args);
   const network = window.BiliPlaybackNetwork.createNetwork({ fetch: networkFetch });
+  // 离线原始范围的读取器由 playback-reuse.js 提供；缺失时全部走网络，功能整体降级。
+  const reuse = globalThis.BiliPlaybackReuse;
+  const reuseClient = reuse?.createReuseClient?.() || null;
   const PLAYURL_RE = /^https:\/\/api\.bilibili\.com\/x\/(?:player\/(?:wbi\/)?playurl|player\/v2)(?:\?|$)/;
   function capturePlayurl(payload, pageKey) {
     if (currentPageKey() !== pageKey) return;
     try { network.register(payload); } catch { /* 非 DASH 或站点字段变化时继续使用原地址。 */ }
+    // 同时记录本次会话授权的精确地址，离线已下载的原始范围只对这些地址开放。
+    reuse?.notePlayurl(payload);
   }
   let initialPlayinfo = null;
   function captureInitialPlayinfo() {
@@ -459,6 +466,28 @@
     const start = Number(parsed[1]);
     const end = parsed[2] ? Number(parsed[2]) + 1 : network.total(url);
     if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start || end - start > 16 * MB) return null;
+    // 只有本次会话已在 playurl 里授权过的地址才尝试复用本机已下载的原始范围；
+    // 未授权、无总量、超限、超时或桥不可用都返回 null，随后完全走原有网络路径。
+    if (reuseClient) {
+      const reuseTotal = reuse.totalHint(url) || network.total(url);
+      const reused = reuseTotal > 0 ? await reuseClient.read({url, start, end, total: reuseTotal}) : null;
+      if (reused) {
+        const track = trackFor(url);
+        if (track) {
+          track.size = reused.total;
+          track.anchor = Math.max(track.anchor, end);
+          track.cooldownUntil = 0;
+          track.prefetchDisabled = false;
+        }
+        // 复用的字节来自本机磁盘，单独计数，不参与 CDN 吞吐与节点健康度统计。
+        stats.reuseHits += 1;
+        stats.reuseBytes += reused.body.length;
+        playbackCache?.put(url, start, reused.body, reused.total, {contentType: reused.contentType});
+        renderPreheatProgress();
+        return {body: reused.body, start, end: start + reused.body.length, total: reused.total, contentType: reused.contentType};
+      }
+    }
+
     const key = `${url}|${start}|${end}`;
     let entry = urgentFlights.get(key);
     if (!entry) {
@@ -753,6 +782,8 @@
       acceleratedRequests: transfer.accelerated,
       acceleratedMB: +(transfer.acceleratedBytes / MB).toFixed(2),
       nativeFallbacks: transfer.nativeFallbacks,
+      reuseHits: stats.reuseHits,
+      reuseMB: +(stats.reuseBytes / MB).toFixed(2),
       blockedNodes: transfer.blocked,
       cdnMode: transfer.cdnMode,
       networkReceivedMB: +(transfer.receivedBytes / MB).toFixed(2),
@@ -760,6 +791,7 @@
       coldTracks: [...tracks.values()].filter((track) => track.cold).length,
       disabledTracks: [...tracks.values()].filter((track) => track.prefetchDisabled).length,
       cacheHits: (playbackCache?.stats.hits || 0) + (playbackCache?.stats.partialHits || 0),
+    reuseHits: stats.reuseHits,
       cacheHitMB: +(((playbackCache?.stats.hitBytes || 0) + (playbackCache?.stats.partialHitBytes || 0)) / MB).toFixed(2),
       cacheResidentMB: +((playbackCache?.stats.bytes || 0) / MB).toFixed(2),
       prefetchChunks: stats.prefetchChunks,

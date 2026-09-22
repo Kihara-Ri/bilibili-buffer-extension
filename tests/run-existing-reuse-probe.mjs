@@ -1,0 +1,60 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { createChromeEvaluator } from '../scripts/lib/existing-chrome.mjs';
+const [pid, tab] = process.argv.slice(2), evaluate = createChromeEvaluator(pid, tab);
+const source = (await readFile(new URL('../src/source-range-store.js', import.meta.url), 'utf8')).replaceAll('export ', '');
+// 在用户真实 Chrome 里用真实 IndexedDB/Blob/atob 验证镜像：写入、跨主机按路径复用、账户隔离与清理。
+const code = String.raw`(() => {
+ const result = window.__biliReuseProbe = { state: 'running' };
+ void (async () => { try {
+  ${source}
+  const name = 'bili-buffer-probe-' + Date.now();
+  const bytesOf = (start, end) => Uint8Array.from({ length: end - start }, (_, i) => (start + i) & 0xff);
+  const encode = (value) => { let text = ''; for (let at = 0; at < value.length; at += 8192) text += String.fromCharCode(...value.subarray(at, at + 8192)); return btoa(text); };
+  const deadline = Math.floor(Date.now() / 1000) + 3600;
+  const path = '/upgcxcode/9/9/9-1-30280.m4s';
+  const url = (host) => 'https://' + host + path + '?deadline=' + deadline;
+  const repository = createSourceRepository(indexedDB, name);
+  const service = createSourceService({ repository, account: async () => 'probe-account' });
+  const total = 8192;
+  const stored = await service.handle({ op: 'write', url: url('a.bilivideo.com'), start: 0, end: 512, total, contentType: 'video/mp4', body: encode(bytesOf(0, 512)) }, 'writer');
+  const hit = await service.handle({ op: 'read', url: url('b.bilivideo.com'), start: 0, end: 512, total }, 'reader');
+  const hole = await service.handle({ op: 'read', url: url('a.bilivideo.com'), start: 400, end: 600, total }, 'reader');
+  const wrongTotal = await service.handle({ op: 'read', url: url('a.bilivideo.com'), start: 0, end: 512, total: total + 1 }, 'reader');
+  const decoded = hit.hit ? Uint8Array.from(atob(hit.body), (c) => c.charCodeAt(0)) : new Uint8Array();
+  const later = createSourceService({ repository, account: async () => 'other-account' });
+  const isolated = await later.handle({ op: 'read', url: url('a.bilivideo.com'), start: 0, end: 512, total }, 'reader');
+  const pageWrite = await service.handle({ op: 'write', url: url('a.bilivideo.com'), start: 512, end: 640, total, body: encode(bytesOf(512, 640)) }, 'reader');
+  await service.clear();
+  const cleared = await service.handle({ op: 'read', url: url('a.bilivideo.com'), start: 0, end: 512, total }, 'reader');
+  indexedDB.deleteDatabase(name);
+  result.stored = !!stored.stored;
+  result.hit = !!hit.hit;
+  result.length = decoded.length;
+  result.firstBytes = Array.from(decoded.subarray(0, 4));
+  result.lastByte = decoded[decoded.length - 1];
+  result.hole = JSON.stringify(hole);
+  result.wrongTotal = JSON.stringify(wrongTotal);
+  result.isolated = JSON.stringify(isolated);
+  result.pageWrite = JSON.stringify(pageWrite);
+  result.cleared = JSON.stringify(cleared);
+  result.state = 'done';
+ } catch (error) { result.state = 'error'; result.error = error.message; } })();
+ return 'started';
+})();`;
+new Function(code);
+assert.equal(await evaluate(code), 'started');
+let result;
+for (let attempt = 0; attempt < 60; attempt += 1) { await new Promise((resolve) => setTimeout(resolve, 150)); result = JSON.parse(await evaluate('JSON.stringify(window.__biliReuseProbe)')); if (result.state !== 'running') break; }
+assert.equal(result.state, 'done', result.error);
+assert.equal(result.stored, true);
+assert.equal(result.hit, true);
+assert.equal(result.length, 512);
+assert.deepEqual(result.firstBytes, [0, 1, 2, 3]);
+assert.equal(result.lastByte, 255);
+assert.equal(result.hole, '{}');
+assert.equal(result.wrongTotal, '{}');
+assert.equal(result.isolated, '{}');
+assert.equal(result.pageWrite, '{}');
+assert.equal(result.cleared, '{}');
+console.log(JSON.stringify({ ok: true, kind: 'existing-chrome-source-range-probe', ...result }));

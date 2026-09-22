@@ -46,6 +46,45 @@ import {
   downloadByteRanges,
   rankRangeCandidates
 } from "./range-downloader.js";
+// 已校验的源范围镜像：给播放侧复用离线已下载的原始字节。
+// 只镜像「CDN 直接下载并逐字节校验过」的范围，合并/抽音轨产物永不进入。
+const SOURCE_MIRROR_BUDGET = 96 * 1024 * 1024;
+const SOURCE_MIRROR_RANGE = 2 * 1024 * 1024;
+
+/** 把 Blob 转成 base64；分块拼接避免大范围触发参数上限。 */
+async function blobToBase64(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let text = "";
+  for (let at = 0; at < bytes.length; at += 8192) text += String.fromCharCode(...bytes.subarray(at, at + 8192));
+  return btoa(text);
+}
+
+/** 一次下载任务内的镜像写入器：有配额、有熔断、串行发送，全部失败都静默降级。
+ * @returns {{onVerifiedRange: Function}}
+ */
+function createSourceMirror() {
+  let budget = SOURCE_MIRROR_BUDGET, failures = 0, disabled = false;
+  let queue = Promise.resolve();
+  const onVerifiedRange = ({ url, start, end, total, data, contentType } = {}) => {
+    const size = Number(end) - Number(start);
+    if (disabled || !data || !Number.isSafeInteger(size) || size <= 0 || size > SOURCE_MIRROR_RANGE || budget < size) return;
+    budget -= size;
+    queue = queue.then(async () => {
+      const result = await chrome.runtime.sendMessage({
+        target: "background", type: "SOURCE_RANGE",
+        request: { op: "write", url, start, end, total, contentType, body: await blobToBase64(data) }
+      });
+      if (!result?.ok) throw new Error("源范围未写入镜像");
+      failures = 0;
+    }).catch(() => {
+      // 连续失败说明后台或存储不可用：停止本任务后续镜像，绝不影响下载。
+      failures += 1;
+      if (failures >= 3) disabled = true;
+    });
+  };
+  return { onVerifiedRange };
+}
+
 import { isRecoverableDownloadError, makeDownloadRetryState } from "./download-retry.js";
 import { startDevReloadPolling } from "./dev-reload.js";
 import "./request-budget-client.js";
@@ -581,6 +620,7 @@ async function downloadProgressiveSource(video, existing, source, job) {
     };
   }
 
+  const mirror = createSourceMirror();
   const coordinator = createDownloadCoordinator({ ...meta, totalBytes: ranking.totalBytes }, {
     media: { resumeBytes, chunkCount: resumeChunks, totalBytes: ranking.totalBytes }
   });
@@ -595,7 +635,8 @@ async function downloadProgressiveSource(video, existing, source, job) {
       concurrency: DEFAULT_RANGE_CONCURRENCY,
       signal: job.controller.signal,
       onReceive: (delta) => coordinator.receive("media", delta),
-      onCommit: (batch) => coordinator.commit("media", batch)
+      onCommit: (batch) => coordinator.commit("media", batch),
+      onVerifiedRange: mirror.onVerifiedRange
     });
     coordinator.setTransferMetrics("media", result.metrics);
     await coordinator.stop();
@@ -1034,6 +1075,8 @@ async function downloadTrackSource(video, existing, source, job) {
   if (job.controller.signal.aborted) abortFromJob();
   else job.controller.signal.addEventListener("abort", abortFromJob, { once: true });
   let primaryError = null;
+  // 每个下载任务共享一份镜像配额与熔断状态；轨道各自的回调都指向同一个 mirror。
+  const mirror = createSourceMirror();
 
   const tasks = sourceEntries.map(async ([trackName, sourceTrack]) => {
     try {
@@ -1057,7 +1100,8 @@ async function downloadTrackSource(video, existing, source, job) {
         concurrency: trackConcurrency,
         signal: localController.signal,
         onReceive: (delta) => coordinator.receive(trackName, delta),
-        onCommit: (batch) => coordinator.commit(trackName, batch)
+        onCommit: (batch) => coordinator.commit(trackName, batch),
+        onVerifiedRange: mirror.onVerifiedRange
       });
       coordinator.setTransferMetrics(trackName, result.metrics);
     } catch (error) {

@@ -169,6 +169,13 @@ export async function downloadByteRanges(options) {
           metrics,
           receive
         });
+        // 已通过 Content-Range 逐字节校验的范围才交给镜像；回调失败绝不影响下载主流程。
+        try {
+          options.onVerifiedRange?.({
+            url: result.url, start: result.range.start, end: result.range.end + 1,
+            total: result.totalBytes, data: result.data, contentType: result.contentType
+          });
+        } catch { /* 镜像只是优化，失败不能中断下载。 */ }
         await commitCompleted(result);
       } catch (error) {
         fatalError ||= error;controller.abort(fatalError);wake();
@@ -325,6 +332,7 @@ async function readRange(url, start, end, options) {
   const bodyMs = Math.max(completedAt - headersAt, 0.1);
   return {
     data: new Blob(parts, { type: "application/octet-stream" }),
+    contentType: response.headers.get("content-type") || "application/octet-stream",
     totalBytes: contentRange.total,
     contentRange,
     ttfbMs,

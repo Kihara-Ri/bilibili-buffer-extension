@@ -57,6 +57,17 @@
     if (event.source !== window) return;
     const message = event.data;
     if (!message || message.channel !== CHANNEL || message.dir !== "page->ext") return;
+    if(message.type==='reuseRead'){
+      const p=message.payload;
+      // 页面只能请求播放器自己正在用的范围；请求参数在这里再次收敛，不信任页面输入。
+      if(!p || !/^[a-zA-Z0-9-]{1,80}$/.test(p.rpcId||'') || typeof p.url!=='string' || ![p.start,p.end,p.total].every(Number.isSafeInteger))return;
+      const started=Date.now();
+      void chrome.runtime.sendMessage({target:'background',type:'SOURCE_RANGE',request:{op:'read',url:p.url,start:p.start,end:p.end,total:p.total}}).then(result=>{
+        // 页面已超时的迟到回包直接丢弃，避免把过期字节写进缓存。
+        toPage('reuseReply',{rpcId:p.rpcId,result:Date.now()-started>1400?{}:result||{}});
+      }).catch(()=>toPage('reuseReply',{rpcId:p.rpcId,result:{}}));
+      return;
+    }
     if(message.type==='budgetRpc'){
       const p=message.payload;
       if(!p || !/^[a-zA-Z0-9-]{1,80}$/.test(p.id||'') || !/^[a-zA-Z0-9-]{1,80}$/.test(p.rpcId||'') || !['acquire','release'].includes(p.op))return;

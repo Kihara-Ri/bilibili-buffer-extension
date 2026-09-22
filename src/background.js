@@ -39,8 +39,26 @@ import {
 } from "./download-retry.js";
 import { ASSIST_DEFAULTS, sanitizeAssistConfig } from "./assist-config.js";
 import { createBudgetService, budgetOwner } from "./request-budget.js";
+import { createSourceRepository, createSourceService, sourceRangeScope } from "./source-range-store.js";
 
 const requestBudget = createBudgetService(chrome.storage.session, async () => (await getAssistConfig()).maxConcurrency);
+// 离线已下载的源范围镜像：只接收逐字节校验过的 CDN 范围，供播放侧按「路径 + 总长」复用。
+const sourceRanges = createSourceService({
+  repository: typeof indexedDB === "undefined" ? null : createSourceRepository(),
+  account: biliAccountFingerprint
+});
+
+/** 用 SESSDATA 的不可逆摘要做账户分区；原始 cookie 值不落盘、不进消息、不进日志。
+ * @returns {Promise<string>}
+ */
+async function biliAccountFingerprint() {
+  try {
+    const cookie = await chrome.cookies.get({ url: "https://www.bilibili.com/", name: "SESSDATA" });
+    if (!cookie?.value || !globalThis.crypto?.subtle) return "anonymous";
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(cookie.value));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 32);
+  } catch { return "anonymous"; }
+}
 const OFFSCREEN_PATH = "offscreen.html";
 const POPUP_SNAPSHOTS_KEY = "popupPageSnapshotsV1";
 const ASSIST_CONFIG_KEY = "playbackAssistConfigV1";
@@ -75,6 +93,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleMessage(message, sender) {
   switch (message?.type) {
+    case "SOURCE_RANGE": {
+      const request = message.request;
+      if (!request || typeof request !== "object") return {};
+      // 写入只允许扩展自己的下载文档，读取只允许 B 站视频页；其余来源直接拒绝。
+      const scope = sourceRangeScope(sender, {
+        runtimeId: chrome.runtime.id,
+        offscreenUrl: chrome.runtime.getURL(OFFSCREEN_PATH)
+      });
+      if (!scope || (request.op === "write") !== (scope === "writer")) return {};
+      return sourceRanges.handle(request, scope);
+    }
     case "DOWNLOAD_BUDGET": {
       const owner=budgetOwner(sender,chrome.runtime.id);
       if(!owner) throw new Error("下载预算来源无效");
