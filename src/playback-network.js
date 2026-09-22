@@ -2,12 +2,54 @@
   'use strict';
   const MiB = 1024 * 1024;
   const abortError = () => new DOMException('播放请求已取消', 'AbortError');
+  /** 按主机与范围量级比较有效吞吐；三个样本确认一次试探，避免一次抖动追涨杀跌。
+   * @returns {{choose: Function, record: Function, snapshot: Function, reset: Function}}
+   */
+  function createAdaptiveBudget() {
+    const states=new Map();let sequence=0;
+    const median=values=>[...values].sort((a,b)=>a-b)[Math.floor(values.length/2)];
+    return {
+      choose(url,bytes,ceiling,sizeBudget) {
+        const host=new URL(url).hostname, cap=Math.max(1,Math.min(ceiling,sizeBudget));
+        const key=host+'|'+Math.ceil(Math.log2(Math.max(1,bytes)));
+        let state=states.get(key);
+        if(!state || state.cap!==cap){state={host,cap,workers:cap,phase:'baseline',samples:[],epoch:++sequence,reference:null};states.set(key,state);}
+        while(states.size>32)states.delete(states.keys().next().value);
+        return {key,epoch:state.epoch,workers:state.workers};
+      },
+      record(ticket,{bytes,ms,rescues=0}) {
+        const state=states.get(ticket.key);
+        // 极短请求主要测到调度噪声，救援样本混入额外节点；二者不用于判定并发收益。
+        if(!state || state.epoch!==ticket.epoch || bytes<512*1024 || !Number.isFinite(ms) || ms<200 || rescues) return;
+        state.samples.push(bytes*1000/ms);
+        const needed=state.phase==='hold'?6:3;
+        if(state.samples.length<needed)return;
+        const rate=median(state.samples);state.samples=[];state.epoch=++sequence;
+        if(state.phase==='baseline' || state.phase==='hold'){
+          state.reference={workers:state.workers,rate};
+          if(state.workers<state.cap && state.phase==='hold'){
+            state.workers=Math.min(state.cap,state.workers*2);state.phase='probe-up';
+          }else if(state.workers>1){state.workers=Math.max(1,Math.floor(state.workers/2));state.phase='probe-down';}
+          else state.phase='hold';
+        }else{
+          const worthwhile=state.phase==='probe-down' ? rate>=state.reference.rate*.9 : rate>=state.reference.rate*1.1;
+          if(!worthwhile)state.workers=state.reference.workers;
+          state.phase='hold';
+        }
+      },
+      snapshot(){return [...states.values()].map(({host,workers,phase})=>({host,workers,phase}));},
+      reset(){states.clear();sequence++;}
+    };
+  }
+
   /** 在线请求与预热共享的分块下载器；签名 URL 只留在内存，公开状态只有主机名。
    * @param {{fetch: Function, maxConcurrency?: number, cdnMode?: string, hedgeMs?: number, timeoutMs?: number, firstByteMs?: number, stallMs?: number}} options
    * @returns {object} register/download/tune/reset/snapshot 配合页面世代使用。
    */
   function createNetwork({ fetch: fetcher, maxConcurrency = 32, cdnMode = 'original', hedgeMs = 700, timeoutMs = 10000, firstByteMs = 3500, stallMs = 2500 } = {}) {
     const groups = new Map(), totals = new Map(), roles = new Map(), health = new Map();
+    const adaptive = createAdaptiveBudget();
+    let downloadSerial = 0;
     const pending = [], running = new Set(), jobs = new Set();
     let ceiling = Math.max(1, Math.min(32, Math.floor(maxConcurrency))), limit = Math.min(8, ceiling), mode = cdnMode;
     let generation = 0, receivedBytes = 0, rescues = 0, lastHost = '', lastTune = -Infinity, requestSequence = 0, sampleAt = performance.now(), sampleBytes = 0, speed = 0;
@@ -169,6 +211,7 @@
       if (!globalThis.BiliPlaybackRoutes.mediaUrl(url) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start<0 || end<=start || end-start>16*MiB) throw new Error('不支持的媒体范围');
       const epoch=generation, controller=new AbortController(), cancel=()=>controller.abort(signal.reason);
       signal.addEventListener('abort',cancel,{once:true});if(signal.aborted)cancel();jobs.add(controller);
+      const serial=++downloadSerial, exclusive=jobs.size===1;
       const deadline=setTimeout(()=>controller.abort(new DOMException('媒体请求超时','TimeoutError')),25000);
       try {
         if(controller.signal.aborted)throw controller.signal.reason;
@@ -189,7 +232,10 @@
         // 每个任务最多排入少量工作者，避免长视频请求把音频/后续请求淹没在队列里。
         // 真实 Chrome 实测：2 MiB 用 8 路优于盲开 32，8 MiB 则受益于 32 路。
         // 每 256 KiB 分配一个普通工作者；救援仍共享全局预算，用户较低上限优先。
-        const requestConcurrency = priority > 0 ? Math.min(ceiling, Math.max(1, Math.ceil((target-start)/(256*1024)))) : ceiling;
+        const sizeBudget = priority > 0 ? Math.min(ceiling, Math.max(1, Math.ceil((target-start)/(256*1024)))) : ceiling;
+        const ticket=adaptive.choose(url,target-start,ceiling,sizeBudget);
+        const requestConcurrency = priority > 0 ? ticket.workers : sizeBudget;
+        const sampleStart=performance.now(), initialRescues=rescues;
         let next=0;
         await Promise.all(Array.from({length:Math.min(ranges.length,requestConcurrency)},async()=>{
           while(next<ranges.length){const index=next++, [from,to]=ranges[index];
@@ -205,6 +251,7 @@
         let position=start;
         for(const part of parts){if(part.start!==position)throw new Error('媒体分块存在缺口');bytes.set(part.result.bytes,position-start);position+=part.result.bytes.length;}
         if(position!==start+length)throw new Error('媒体分块长度不一致');
+        if(priority>0 && exclusive && jobs.size===1 && serial===downloadSerial && requestConcurrency<=limit) adaptive.record(ticket,{bytes:length,ms:performance.now()-sampleStart,rescues:rescues-initialRescues});
         totals.set(url,known);
         if(priority>0){accelerated++;acceleratedBytes+=length;}
         return {bytes,total:known,contentType:parts[0].result.contentType};
@@ -226,12 +273,12 @@
       return {active:running.size,limit,speed:Math.round(speed),receivedBytes,rescues,host:lastHost,accelerated,acceleratedBytes,nativeFallbacks,queued:pending.length,cdnMode:mode,blocked:[...health.values()].filter(h=>h.until>now).length};
     }
     function reset() {
-      generation++;for(const job of jobs)job.abort(abortError());groups.clear();roles.clear();totals.clear();health.clear();
+      generation++;adaptive.reset();for(const job of jobs)job.abort(abortError());groups.clear();roles.clear();totals.clear();health.clear();
       receivedBytes=0;sampleBytes=0;speed=0;rescues=0;lastHost='';lastTune=-Infinity;sampleAt=performance.now();limit=floor();accelerated=0;acceleratedBytes=0;nativeFallbacks=0;
     }
     return {register,download,tune,snapshot,reset,role:url=>roles.get(url),total:url=>totals.get(url)||0,
       fallback(){nativeFallbacks++;}, setMode(value){mode=['mainland','auto','original'].includes(value)?value:'original';},
       setMax(value){ceiling=Math.max(1,Math.min(32,Math.floor(value)||32));limit=Math.min(ceiling,Math.max(limit,floor()));drain();}};
   }
-  globalThis.BiliPlaybackNetwork={createNetwork};
+  globalThis.BiliPlaybackNetwork={createNetwork,createAdaptiveBudget};
 })();
