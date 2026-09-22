@@ -72,25 +72,31 @@ export async function rankRangeCandidates(urls, options = {}) {
 }
 
 export async function downloadByteRanges(options) {
-  const ranges = buildByteRanges(options.start, options.totalBytes, options.rangeSize);
+  // 整个乱序窗口（含正在下载和等待落盘的块）有字节上限，而不只是限制连接数。
+  const maxBufferedBytes=Math.max(1,Math.min(16*1024*1024,Math.floor(Number(options.maxBufferedBytes)||16*1024*1024)));
+  const rangeSize=Math.max(1,Math.min(maxBufferedBytes,DEFAULT_RANGE_SIZE,Math.floor(Number(options.rangeSize)||DEFAULT_RANGE_SIZE)));
+  if(!Number.isSafeInteger(Number(options.totalBytes))||Number(options.totalBytes)<0)throw Error('无效媒体总长');
+  const first=Math.max(0,Math.floor(Number(options.start)||0));
+  const rangeCount=Math.max(0,Math.ceil((Number(options.totalBytes)-first)/rangeSize));
+  const rangeAt=ordinal=>({ordinal,start:first+ordinal*rangeSize,end:Math.min(Number(options.totalBytes)-1,first+(ordinal+1)*rangeSize-1)});
   const concurrency = Math.max(1, Math.min(
     Math.floor(Number(options.concurrency) || DEFAULT_RANGE_CONCURRENCY),
-    ranges.length || 1
+    rangeCount || 1, 32, Math.max(1,Math.floor(maxBufferedBytes/rangeSize))
   ));
   const metrics = {
     strategy: "parallel-range",
     concurrency,
-    rangeSize: Math.max(1, Math.floor(Number(options.rangeSize) || DEFAULT_RANGE_SIZE)),
+    rangeSize, maxBufferedBytes, peakBufferedBytes: 0,
     requestCount: 0,
     retryCount: 0,
     slowRequestCount: 0,
     cdnSwitchCount: 0,
     networkBytes: 0,
     committedBytes: 0,
-    rangeCount: ranges.length,
+    rangeCount,
     startedAt: Date.now()
   };
-  if (!ranges.length) return { metrics: { ...metrics, completedAt: Date.now() } };
+  if (!rangeCount) return { metrics: { ...metrics, completedAt: Date.now() } };
 
   const urls = uniqueHttpUrls(options.urls);
   if (!urls.length) throw new Error("没有可用的 CDN 地址");
@@ -102,6 +108,21 @@ export async function downloadByteRanges(options) {
   let nextCommit = 0;
   let fatalError = null;
   let commitQueue = Promise.resolve();
+  const controller=new AbortController(),waiters=new Set();let bufferedBytes=0;
+  const wake=()=>{for(const resolve of waiters)resolve();waiters.clear();};
+  const cancel=()=>{controller.abort(options.signal.reason);wake();};
+  options.signal?.addEventListener('abort',cancel,{once:true});if(options.signal?.aborted)cancel();
+  async function takeRange(){
+    for(;;){
+      if(controller.signal.aborted)throw controller.signal.reason;
+      if(nextRange>=rangeCount)return -1;
+      const range=rangeAt(nextRange),size=range.end-range.start+1;
+      // 只有事务成功后才释放字节；慢首块与慢磁盘都会对后续请求产生背压。
+      if(bufferedBytes+size<=maxBufferedBytes){bufferedBytes+=size;metrics.peakBufferedBytes=Math.max(metrics.peakBufferedBytes,bufferedBytes);return nextRange++;}
+      await new Promise(resolve=>waiters.add(resolve));
+    }
+  }
+
 
   const receive = (delta, detail = {}) => {
     if (delta > 0) metrics.networkBytes += delta;
@@ -122,7 +143,8 @@ export async function downloadByteRanges(options) {
       await options.onCommit(batch);
       for (const entry of batch) completed.delete(entry.range.ordinal);
       nextCommit = cursor;
-      metrics.committedBytes += batch.reduce((sum, entry) => sum + entry.data.size, 0);
+      const committed=batch.reduce((sum,entry)=>sum+entry.data.size,0);
+      metrics.committedBytes += committed;bufferedBytes-=committed;wake();
     });
     commitQueue = operation;
     return operation;
@@ -130,18 +152,16 @@ export async function downloadByteRanges(options) {
 
   const worker = async () => {
     while (!fatalError) {
-      const index = nextRange;
-      nextRange += 1;
-      if (index >= ranges.length) return;
       try {
+        const index=await takeRange();if(index<0)return;
         const rankedUrls = rankDynamicCandidates(urls, candidateStats, options.slowTtfbMs);
         if (rankedUrls[0] !== preferredUrl) {
           preferredUrl = rankedUrls[0];
           metrics.cdnSwitchCount += 1;
         }
-        const result = await fetchRangeWithFallback(rankedUrls, ranges[index], {
+        const result = await fetchRangeWithFallback(rankedUrls, rangeAt(index), {
           fetchImpl,
-          signal: options.signal,
+          signal: controller.signal,
           totalBytes: options.totalBytes,
           timeoutMs: options.timeoutMs,
           slowTtfbMs: options.slowTtfbMs,
@@ -151,7 +171,7 @@ export async function downloadByteRanges(options) {
         });
         await commitCompleted(result);
       } catch (error) {
-        fatalError = error;
+        fatalError ||= error;controller.abort(fatalError);wake();
         return;
       }
     }
@@ -163,8 +183,9 @@ export async function downloadByteRanges(options) {
   } catch (error) {
     fatalError ||= error;
   }
+  options.signal?.removeEventListener("abort",cancel);wake();
   if (fatalError) throw fatalError;
-  if (nextCommit !== ranges.length) throw new Error("并发分块没有形成连续结果");
+  if (nextCommit !== rangeCount) throw new Error("并发分块没有形成连续结果");
   metrics.completedAt = Date.now();
   metrics.cdnHost = getHost(preferredUrl);
   metrics.hosts = publicCandidateStats(candidateStats);

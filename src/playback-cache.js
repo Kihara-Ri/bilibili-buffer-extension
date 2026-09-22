@@ -5,7 +5,7 @@
   /** @typedef {{start: number, end: number, timeStart: number, timeEnd: number}} MediaSegment */
   /** @typedef {{segments: MediaSegment[], initEnd: number, role: 'video'|'audio'|null}} SegmentIndex */
   const resources = new Map();
-  const stats = { bytes: 0, hits: 0, hitBytes: 0, misses: 0, evictions: 0, partialHits: 0, partialHitBytes: 0 };
+  const stats = { bytes: 0, hits: 0, hitBytes: 0, misses: 0, evictions: 0, partialHits: 0, partialHitBytes: 0, partialBytes: 0, partialPeak: 0 };
   let limit = 128 * 1024 * 1024, sequence = 0, installed = false, epoch = 0;
   const INDEX_LIMIT = 1024 * 1024;
   // 单次请求最多重组 16 MiB。规划期会复制驻留快照、下载期会持有缺口正文、交付期还有一份输出，
@@ -181,10 +181,13 @@
     if (!entry || !parsed) return null;
     const start = Number(parsed[1]), end = parsed[2] ? Number(parsed[2]) + 1 : entry.total;
     if (!safe(start) || !safe(end) || end <= start || end > entry.total || end - start > MAX_REASSEMBLY) return null;
+    const reserved=2*(end-start);
+    if(stats.partialBytes+reserved>32*1024*1024)return null;
     const { parts, gaps } = coverage(entry, start, end);
     // parts 为空说明请求范围内没有任何可复用字节，交回旧路径而非伪装成部分命中。
     if (!parts.length || !gaps.length || gaps.length > MAX_GAPS) return null;
-    return { url, start, end, total: entry.total, contentType: entry.contentType, length: end - start, parts, gaps };
+    stats.partialBytes+=reserved;stats.partialPeak=Math.max(stats.partialPeak,stats.partialBytes);let released=false;
+    return { url, start, end, total: entry.total, contentType: entry.contentType, length: end - start, parts, gaps,release(){if(!released){released=true;stats.partialBytes-=reserved;}} };
   }
   /** 校验每个缺口结果后拼接；任何边界、长度或总长不一致都返回 null，绝不交付半成品。
    * @param {object} plan @param {object[]} results @returns {CacheHit & {reused: number}|null}
@@ -296,9 +299,10 @@
       resources.set(url, entry);
     }
     if (!pieces(entry, start, start + bytes.byteLength, prefetched)) {
-      const copy = new Uint8Array(bytes.byteLength); copy.set(bytes);
-      entry.blocks.push({ start, bytes: copy, prefetched, order: ++sequence });
-      stats.bytes += copy.length;
+      // 先把借来的候选加入回收决策，再复制真正留下的块；避免复制后才腾空间的驻留峰值。
+      const block={start,bytes,prefetched,order:++sequence};entry.blocks.push(block);stats.bytes+=bytes.byteLength;trim();
+      if(!entry.blocks.includes(block))return false;
+      const copy = new Uint8Array(bytes.byteLength);copy.set(bytes);block.bytes=copy;
     }
     if (!entry.index) {
       let end = 0;
@@ -422,7 +426,7 @@
           }).catch(error => {
             if (request.signal.aborted || requestEpoch !== epoch) throw request.signal.reason || new DOMException("页面已切换", "AbortError");
             return nativeFetch.call(window, input, init);
-          });
+          }).finally(()=>plan?.release());
         }
       }
       const requestEpoch = epoch;
@@ -522,7 +526,7 @@
           event("timeout"); if (this._cacheGeneration === generation + 1) event("loadend");
         }, this.timeout);
         event("loadstart");
-        if (!alive()) return;
+        if (!alive()) {plan?.release();return;}
         Promise.resolve().then(() => {
           if (!alive() || req.epoch !== epoch || signal.aborted) throw new DOMException("已取消", "AbortError");
           if (!plan) return loadRange(req.url, rangeHeader, signal);
@@ -534,7 +538,7 @@
           this._cacheReply = null; this._cachePending = false; this._skipNativeLoadstart = true;
           if (this.timeout > 0) super.timeout = Math.max(1, this.timeout - (performance.now() - sentAt));
           super.send(body);
-        });
+        }).finally(()=>plan?.release());
       }
       abort() {
         this._networkController?.abort(); clearTimeout(this._networkTimer);

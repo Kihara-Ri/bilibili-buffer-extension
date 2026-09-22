@@ -54,6 +54,25 @@
     let ceiling = Math.max(1, Math.min(32, Math.floor(maxConcurrency))), limit = Math.min(8, ceiling), mode = cdnMode;
     let generation = 0, receivedBytes = 0, rescues = 0, lastHost = '', lastTune = -Infinity, requestSequence = 0, sampleAt = performance.now(), sampleBytes = 0, speed = 0;
     let accelerated = 0, acceleratedBytes = 0, nativeFallbacks = 0;
+    const MEMORY_LIMIT=64*MiB,memoryQueue=[];let memoryBytes=0,memoryPeak=0;
+    function drainMemory(){
+      let index;
+      while((index=memoryQueue.findIndex(job=>memoryBytes+job.bytes<=MEMORY_LIMIT))>=0){
+        const job=memoryQueue.splice(index,1)[0];job.signal.removeEventListener('abort',job.cancel);
+        if(job.signal.aborted){job.reject(job.signal.reason);continue;}
+        memoryBytes+=job.bytes;memoryPeak=Math.max(memoryPeak,memoryBytes);let released=false;
+        job.resolve(()=>{if(released)return;released=true;memoryBytes-=job.bytes;drainMemory();});
+      }
+    }
+    // 在创建正文前预留整段拼接的双份空间与救援副本；等待者取消/导航必须可唤醒。
+    function reserveMemory(bytes,signal,priority){
+      if(signal.aborted)return Promise.reject(signal.reason);
+      return new Promise((resolve,reject)=>{
+        const job={bytes,signal,priority,resolve,reject,cancel:null};
+        job.cancel=()=>{const i=memoryQueue.indexOf(job);if(i>=0)memoryQueue.splice(i,1);signal.removeEventListener('abort',job.cancel);reject(signal.reason);drainMemory();};
+        signal.addEventListener('abort',job.cancel,{once:true});memoryQueue.push(job);memoryQueue.sort((a,b)=>b.priority-a.priority);drainMemory();
+      });
+    }
     const floor = () => Math.min(8, ceiling);
     function drain() {
       while (running.size < limit) {
@@ -217,7 +236,9 @@
       signal.addEventListener('abort',cancel,{once:true});if(signal.aborted)cancel();jobs.add(controller);
       const serial=++downloadSerial, exclusive=jobs.size===1;
       const deadline=setTimeout(()=>controller.abort(new DOMException('媒体请求超时','TimeoutError')),25000);
+      let releaseMemory=()=>{};
       try {
+        releaseMemory=await reserveMemory(2*(end-start)+ceiling*512*1024,controller.signal,priority);
         if(controller.signal.aborted)throw controller.signal.reason;
         let known=total || totals.get(url) || 0;
         let head=null, cursor=start;
@@ -259,7 +280,7 @@
         totals.set(url,known);
         if(priority>0){accelerated++;acceleratedBytes+=length;}
         return {bytes,total:known,contentType:parts[0].result.contentType};
-      } finally {clearTimeout(deadline);controller.abort();signal.removeEventListener('abort',cancel);jobs.delete(controller);}
+      } finally {clearTimeout(deadline);controller.abort();signal.removeEventListener('abort',cancel);jobs.delete(controller);releaseMemory();}
     }
     function tune({ahead,demand,rate=0,requiredRate=0,now=performance.now()}) {
       // 真正可播放缓冲不足 3 秒时立即拉满，不能等低吞吐样本或下个慢周期。
@@ -274,7 +295,7 @@
     function snapshot() {
       const now=performance.now(), elapsed=now-sampleAt;
       if(elapsed>=500){const rate=(receivedBytes-sampleBytes)*1000/elapsed;speed=rate>0 || running.size ? speed*.6+rate*.4 : 0;sampleAt=now;sampleBytes=receivedBytes;}
-      return {active:Math.max(0,running.size-budgetPending),limit,speed:Math.round(speed),receivedBytes,rescues,host:lastHost,accelerated,acceleratedBytes,nativeFallbacks,queued:pending.length+budgetPending,cdnMode:mode,blocked:[...health.values()].filter(h=>h.until>now).length};
+      return {active:Math.max(0,running.size-budgetPending),limit,speed:Math.round(speed),receivedBytes,rescues,host:lastHost,accelerated,acceleratedBytes,nativeFallbacks,queued:pending.length+budgetPending,memoryBytes,memoryPeak,memoryLimit:MEMORY_LIMIT,memoryQueued:memoryQueue.length,cdnMode:mode,blocked:[...health.values()].filter(h=>h.until>now).length};
     }
     function reset() {
       generation++;adaptive.reset();for(const job of jobs)job.abort(abortError());groups.clear();roles.clear();totals.clear();health.clear();
