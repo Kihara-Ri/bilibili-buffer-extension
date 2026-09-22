@@ -57,6 +57,20 @@
     if (event.source !== window) return;
     const message = event.data;
     if (!message || message.channel !== CHANNEL || message.dir !== "page->ext") return;
+    if(message.type==='budgetRpc'){
+      const p=message.payload;
+      if(!p || !/^[a-zA-Z0-9-]{1,80}$/.test(p.id||'') || !/^[a-zA-Z0-9-]{1,80}$/.test(p.rpcId||'') || !['acquire','release'].includes(p.op))return;
+      const started=Date.now();
+      // tab/document 身份由 SW 的 sender 推导，页面不得提供其他标签的 owner。
+      void chrome.runtime.sendMessage({target:'background',type:'DOWNLOAD_BUDGET',request:{op:p.op,id:p.id,priority:p.priority>0?1:0}}).then(result=>{
+        if(result?.lease && Date.now()-started>1800){
+          void chrome.runtime.sendMessage({target:'background',type:'DOWNLOAD_BUDGET',request:{op:'release',id:p.id}}).catch(()=>{});
+          result={ok:false};
+        }
+        toPage('budgetReply',{rpcId:p.rpcId,result:result||{ok:false}});
+      }).catch(()=>toPage('budgetReply',{rpcId:p.rpcId,result:{ok:false}}));
+      return;
+    }
     if (message.type === "stats" && message.payload && typeof message.payload === "object") {
       lastStats = message.payload;
     } else if (message.type === "commandResult") {

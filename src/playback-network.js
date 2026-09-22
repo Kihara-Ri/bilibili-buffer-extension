@@ -49,7 +49,7 @@
   function createNetwork({ fetch: fetcher, maxConcurrency = 32, cdnMode = 'original', hedgeMs = 700, timeoutMs = 10000, firstByteMs = 3500, stallMs = 2500 } = {}) {
     const groups = new Map(), totals = new Map(), roles = new Map(), health = new Map();
     const adaptive = createAdaptiveBudget();
-    let downloadSerial = 0;
+    let downloadSerial = 0, budgetWaits = 0, budgetPending = 0;
     const pending = [], running = new Set(), jobs = new Set();
     let ceiling = Math.max(1, Math.min(32, Math.floor(maxConcurrency))), limit = Math.min(8, ceiling), mode = cdnMode;
     let generation = 0, receivedBytes = 0, rescues = 0, lastHost = '', lastTune = -Infinity, requestSequence = 0, sampleAt = performance.now(), sampleBytes = 0, speed = 0;
@@ -104,7 +104,7 @@
     }
     async function attempt(url, start, end, total, signal, priority, epoch, progress) {
       const release = await acquire(signal, priority);
-      const child = new AbortController(), began = performance.now();
+      const child = new AbortController();let began=performance.now(),budgetStarted=0,budgetWaiting=false;
       const cancel = () => child.abort(signal.reason);
       signal.addEventListener('abort', cancel, { once: true });
       if (signal.aborted) cancel();
@@ -115,7 +115,10 @@
       progress.started = true; progress.lastByte = began;
       try {
         if (child.signal.aborted) throw child.signal.reason;
-        const response = await fetcher(url, { headers: { Range: `bytes=${start}-${end - 1}` }, credentials: 'omit', cache: 'no-store', signal: child.signal, priority: priority > 0 ? 'high' : 'low' });
+        const response = await fetcher(url, { headers: { Range: `bytes=${start}-${end - 1}` }, credentials: 'omit', cache: 'no-store', signal: child.signal, priority: priority > 0 ? 'high' : 'low', onBudgetWait(waiting){
+          if(waiting){budgetStarted=performance.now();budgetWaiting=true;budgetPending++;progress.started=false;clearTimeout(firstTimer);}
+          else {if(budgetWaiting){budgetWaiting=false;budgetPending--;}if(performance.now()-budgetStarted>50)budgetWaits++;began=performance.now();progress.started=true;progress.lastByte=began;firstTimer=setTimeout(timeout,firstByteMs);}
+        } });
         clearTimeout(firstTimer);
         const ttfb = performance.now() - began;
         const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') || '');
@@ -157,7 +160,8 @@
       } finally {
         clearTimeout(firstTimer); clearTimeout(bodyTimer); clearTimeout(totalTimer);
         signal.removeEventListener('abort', cancel);
-        await reader?.cancel().catch(() => {}); release();
+        await reader?.cancel().catch(() => {});
+        if(budgetWaiting){budgetWaiting=false;budgetPending--;} release();
       }
     }
     async function piece(url, start, end, total, signal, priority, epoch, offset) {
@@ -235,7 +239,7 @@
         const sizeBudget = priority > 0 ? Math.min(ceiling, Math.max(1, Math.ceil((target-start)/(256*1024)))) : ceiling;
         const ticket=adaptive.choose(url,target-start,ceiling,sizeBudget);
         const requestConcurrency = priority > 0 ? ticket.workers : sizeBudget;
-        const sampleStart=performance.now(), initialRescues=rescues;
+        const sampleStart=performance.now(), initialRescues=rescues, initialBudgetWaits=budgetWaits;
         let next=0;
         await Promise.all(Array.from({length:Math.min(ranges.length,requestConcurrency)},async()=>{
           while(next<ranges.length){const index=next++, [from,to]=ranges[index];
@@ -251,7 +255,7 @@
         let position=start;
         for(const part of parts){if(part.start!==position)throw new Error('媒体分块存在缺口');bytes.set(part.result.bytes,position-start);position+=part.result.bytes.length;}
         if(position!==start+length)throw new Error('媒体分块长度不一致');
-        if(priority>0 && exclusive && jobs.size===1 && serial===downloadSerial && requestConcurrency<=limit) adaptive.record(ticket,{bytes:length,ms:performance.now()-sampleStart,rescues:rescues-initialRescues});
+        if(priority>0 && exclusive && jobs.size===1 && serial===downloadSerial && requestConcurrency<=limit && budgetWaits===initialBudgetWaits) adaptive.record(ticket,{bytes:length,ms:performance.now()-sampleStart,rescues:rescues-initialRescues});
         totals.set(url,known);
         if(priority>0){accelerated++;acceleratedBytes+=length;}
         return {bytes,total:known,contentType:parts[0].result.contentType};
@@ -270,7 +274,7 @@
     function snapshot() {
       const now=performance.now(), elapsed=now-sampleAt;
       if(elapsed>=500){const rate=(receivedBytes-sampleBytes)*1000/elapsed;speed=rate>0 || running.size ? speed*.6+rate*.4 : 0;sampleAt=now;sampleBytes=receivedBytes;}
-      return {active:running.size,limit,speed:Math.round(speed),receivedBytes,rescues,host:lastHost,accelerated,acceleratedBytes,nativeFallbacks,queued:pending.length,cdnMode:mode,blocked:[...health.values()].filter(h=>h.until>now).length};
+      return {active:Math.max(0,running.size-budgetPending),limit,speed:Math.round(speed),receivedBytes,rescues,host:lastHost,accelerated,acceleratedBytes,nativeFallbacks,queued:pending.length+budgetPending,cdnMode:mode,blocked:[...health.values()].filter(h=>h.until>now).length};
     }
     function reset() {
       generation++;adaptive.reset();for(const job of jobs)job.abort(abortError());groups.clear();roles.clear();totals.clear();health.clear();

@@ -5,7 +5,7 @@ test('生产 MAIN world 注册缓存在观察器之前，版本与检查命令�
   const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url)));
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url)));
   const main = manifest.content_scripts.find(entry => entry.world === 'MAIN');
-  assert.deepEqual(main.js, ['src/playback-cache.js', 'src/playback-routes.js', 'src/playback-network.js', 'src/playback-observer.js']);
+  assert.deepEqual(main.js, ['src/playback-cache.js', 'src/playback-routes.js', 'src/playback-network.js', 'src/request-budget-client.js', 'src/playback-observer.js']);
   assert.equal(main.run_at, 'document_start');
   assert.equal(manifest.version, pkg.version);
   // npm run check 已改为遍历仓库跑 node --check（见 scripts/check-syntax.mjs），

@@ -38,7 +38,9 @@ import {
   makeDownloadWatchdogSchedule
 } from "./download-retry.js";
 import { ASSIST_DEFAULTS, sanitizeAssistConfig } from "./assist-config.js";
+import { createBudgetService, budgetOwner } from "./request-budget.js";
 
+const requestBudget = createBudgetService(chrome.storage.session, async () => (await getAssistConfig()).maxConcurrency);
 const OFFSCREEN_PATH = "offscreen.html";
 const POPUP_SNAPSHOTS_KEY = "popupPageSnapshotsV1";
 const ASSIST_CONFIG_KEY = "playbackAssistConfigV1";
@@ -73,6 +75,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleMessage(message, sender) {
   switch (message?.type) {
+    case "DOWNLOAD_BUDGET": {
+      const owner=budgetOwner(sender,chrome.runtime.id);
+      if(!owner) throw new Error("下载预算来源无效");
+      return requestBudget(message.request || {},owner);
+    }
     case "GET_POPUP_SNAPSHOT": {
       const snapshot = await readPopupSnapshot(message.tabId, message.url);
       return { snapshot, stale: snapshot ? !isPopupSnapshotFresh(snapshot) : true };

@@ -59,7 +59,10 @@
   const prefetchJobs = new Map();
   const urgentFlights = new Map();
   const nativeFetch = window.fetch;
-  const network = window.BiliPlaybackNetwork.createNetwork({ fetch: (...args) => nativeFetch.apply(window, args) });
+  const networkFetch = window.BiliRequestBudget
+    ? window.BiliRequestBudget.createBudgetFetch((...args) => nativeFetch.apply(window,args),window.BiliRequestBudget.createPageRpc())
+    : (...args) => nativeFetch.apply(window,args);
+  const network = window.BiliPlaybackNetwork.createNetwork({ fetch: networkFetch });
   const PLAYURL_RE = /^https:\/\/api\.bilibili\.com\/x\/(?:player\/(?:wbi\/)?playurl|player\/v2)(?:\?|$)/;
   function capturePlayurl(payload, pageKey) {
     if (currentPageKey() !== pageKey) return;
