@@ -19,20 +19,106 @@
     catch { return false; }
   };
   const safe = (value) => Number.isSafeInteger(value) && value >= 0;
+  // 播放位置感知的保留提示由观察器刷新；缓存只按提示决定回收顺序，不自行猜测用户在看的区间。
+  const retention = new Map();
+  const DEFAULT_AHEAD_SECONDS = 45;
+  const DEFAULT_REWIND_SECONDS = 5;
+  const RETENTION_LIMIT = 64;
   function discard(url) {
     const entry = resources.get(url);
     if (entry) stats.bytes -= entry.blocks.reduce((sum, block) => sum + block.bytes.length, 0);
     resources.delete(url);
+    retention.delete(url);
+  }
+  const seconds = (value, fallback) => Number.isFinite(value) && value >= 0 ? value : fallback;
+  // 合并相邻/重叠保护区间；一次回收涉及的区间数量很小，保持稳定排序。
+  function addSpan(list, start, end) {
+    if (!(end > start)) return;
+    list.push([start, end]);
+    list.sort((left, right) => left[0] - right[0]);
+    const merged = [];
+    for (const span of list) {
+      const previous = merged.at(-1);
+      if (previous && span[0] <= previous[1]) previous[1] = Math.max(previous[1], span[1]);
+      else merged.push(span.slice());
+    }
+    list.splice(0, list.length, ...merged);
+  }
+  // 把「当前播放位置 ± 窗口」映射成字节保护区间：优先真实 SIDX 分段；无索引时按总大小/时长比例回退。
+  // 初始化/索引区在活动轨道上始终受保护，因为它是后续解析与播放的入口。
+  function protectSpans(entry, hint) {
+    const spans = [];
+    const initEnd = entry.index?.segments?.length ? entry.index.segments[0].start : Math.min(entry.total, INDEX_LIMIT);
+    if (hint.protectInit !== false && initEnd > 0) addSpan(spans, 0, initEnd);
+    const position = seconds(hint.position, 0);
+    const ahead = seconds(hint.ahead, DEFAULT_AHEAD_SECONDS);
+    const rewind = seconds(hint.rewind, DEFAULT_REWIND_SECONDS);
+    const from = Math.max(0, position - rewind), to = position + ahead;
+    if (entry.index?.segments?.length) {
+      for (const segment of entry.index.segments) {
+        if (segment.timeEnd > from && segment.timeStart < to) addSpan(spans, segment.start, segment.end);
+      }
+    } else {
+      const duration = seconds(hint.duration, 0);
+      if (duration > 0 && entry.total > 0) {
+        const perSecond = entry.total / duration;
+        addSpan(spans, Math.floor(from * perSecond), Math.min(entry.total, Math.ceil(to * perSecond)));
+      }
+    }
+    return spans;
+  }
+  // 块到最近保护区的字节距离；0 表示位于保护区内。
+  function spanDistance(block, spans) {
+    const start = block.start, end = start + block.bytes.length;
+    let distance = Infinity;
+    for (const [left, right] of spans) {
+      if (end <= left) distance = Math.min(distance, left - end);
+      else if (start >= right) distance = Math.min(distance, start - right);
+      else return 0;
+    }
+    return distance;
+  }
+  // 回收顺序：非活动资源 → 活动但远离窗口 → 保护中的初始化/邻近窗口；同级先远后近、再按插入顺序。
+  function evictsBefore(left, right) {
+    if (left.tier !== right.tier) return left.tier < right.tier;
+    if (left.distance !== right.distance) return left.distance > right.distance;
+    return left.order < right.order;
+  }
+  // 资源条目上限同样优先清理非活动资源；全部活动时退回最早插入条目，避免旧清晰度挤掉当前播放。
+  function staleResource() {
+    let victim = null;
+    for (const entry of resources.values()) {
+      const hint = retention.get(entry.url);
+      const score = hint && hint.active !== false ? 1 : 0;
+      if (!victim || score < victim.score) victim = { entry, score };
+    }
+    return victim?.entry || null;
   }
   function trim() {
+    if (stats.bytes <= limit) return;
+    const plans = new Map();
+    for (const entry of resources.values()) {
+      const hint = retention.get(entry.url);
+      const active = Boolean(hint) && hint.active !== false;
+      plans.set(entry, { active, spans: active ? protectSpans(entry, hint) : [] });
+    }
     while (stats.bytes > limit) {
-      let oldest = null, owner = null;
-      for (const entry of resources.values()) for (const block of entry.blocks) {
-        if (!oldest || block.order < oldest.order) { oldest = block; owner = entry; }
+      let victim = null;
+      for (const entry of resources.values()) {
+        const plan = plans.get(entry);
+        for (const block of entry.blocks) {
+          const end = block.start + block.bytes.length;
+          // 必须真正与保护区重叠才算受保护；紧贴边界不算，否则相邻块会被误判为窗口内数据。
+          const inSpan = plan.spans.some(([left, right]) => block.start < right && end > left);
+          const distance = inSpan ? 0 : plan.spans.length ? spanDistance(block, plan.spans) : Infinity;
+          const key = { tier: inSpan ? 2 : plan.active ? 1 : 0, distance, order: block.order };
+          if (!victim || evictsBefore(key, victim.key)) victim = { block, entry, key };
+        }
       }
-      if (!oldest) break;
-      owner.blocks.splice(owner.blocks.indexOf(oldest), 1);
-      stats.bytes -= oldest.bytes.length;
+      // 整池都处于保护区时仍继续回收：保护只调整顺序，不能突破内存硬上限。
+      if (!victim) break;
+      victim.entry.blocks.splice(victim.entry.blocks.indexOf(victim.block), 1);
+      stats.bytes -= victim.block.bytes.length;
       stats.evictions++;
     }
   }
@@ -201,8 +287,12 @@
     let entry = resources.get(url);
     if (entry && entry.total !== total) { discard(url); entry = null; }
     if (!entry) {
-      while (resources.size >= 32) discard(resources.keys().next().value);
-      entry = { total, blocks: [], index: null, contentType };
+      while (resources.size >= 32) {
+        const stale = staleResource();
+        if (!stale) break;
+        discard(stale.url);
+      }
+      entry = { url, total, blocks: [], index: null, contentType };
       resources.set(url, entry);
     }
     if (!pieces(entry, start, start + bytes.byteLength, prefetched)) {
@@ -495,9 +585,29 @@
     },
     /** @param {string} url @returns {SegmentIndex|null} 已验证的分段索引。 */
     index: (url) => resources.get(url)?.index || null,
+    /** 刷新某资源的播放保留提示；观察器按当前播放位置调用，轨道失活应改用 release。
+     * @param {string} url @param {{active?: boolean, position?: number, ahead?: number, rewind?: number, duration?: number, protectInit?: boolean}} hint
+     * @returns {void}
+     */
+    retain(url, hint = {}) {
+      // 提示按 URL 隔离，长时间会话也不能让失活地址无限堆积。
+      if (retention.size >= RETENTION_LIMIT && !retention.has(url)) retention.delete(retention.keys().next().value);
+      retention.set(url, {
+        active: hint.active !== false,
+        position: seconds(hint.position, 0),
+        ahead: seconds(hint.ahead, DEFAULT_AHEAD_SECONDS),
+        rewind: seconds(hint.rewind, DEFAULT_REWIND_SECONDS),
+        duration: seconds(hint.duration, 0),
+        protectInit: hint.protectInit !== false
+      });
+    },
+    /** 取消单个资源的保留提示（轨道失活/取消）。 @param {string} url @returns {void} */
+    release(url) { retention.delete(url); },
+    /** 清空全部保留提示（导航或关闭辅助）。 @returns {void} */
+    clearRetention() { retention.clear(); },
     /** @param {number} bytes @returns {void} 设置全页缓存上限。 */
     setLimit(bytes) { if (safe(bytes)) { limit = bytes; trim(); } },
-    /** @returns {void} 导航时清理，避免旧视频数据占用内存。 */
-    clear() { epoch++; for(const controller of partialControllers)controller.abort(new DOMException("缓存已清理", "AbortError")); resources.clear(); stats.bytes = 0; }
+    /** @returns {void} 导航时取消缺口、清理旧正文与保留提示。 */
+    clear() { epoch++; for(const controller of partialControllers)controller.abort(new DOMException("缓存已清理", "AbortError")); resources.clear(); retention.clear(); stats.bytes = 0; }
   };
 })();

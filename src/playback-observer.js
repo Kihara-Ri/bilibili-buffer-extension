@@ -18,6 +18,8 @@
   const MB = 1024 * 1024;
   const PREHEAT_STYLE_ID = "bili-buffer-preheat-progress-style";
   const DEFAULT_PREHEAT_COLOR = "#ff8a1f";
+  // 回看窗口：拖动后短暂回到刚看过的位置也应命中，但窗口要小，避免保护过多历史数据。
+  const RETENTION_REWIND_SECONDS = 5;
   const DEFAULTS = {
     mode: "pending",
     slowTtfbMs: 800,
@@ -909,7 +911,24 @@
       .map(([a, b]) => [(a - start) / (end - start), (b - start) / (end - start)]);
   }
 
+  // 只把“用户正在看哪里”交给缓存，内存管理仍由缓存自身负责；
+  // 失活轨道显式释放，避免旧清晰度/旧 CDN 地址继续占用保护名额。
+  function updateRetentionHints() {
+    if (!playbackCache?.retain) return;
+    // 渲染定时器在关闭辅助后仍运行，不能重新保护刚被清理的旧轨道。
+    if (cfg.mode !== "always") { playbackCache.clearRetention?.(); return; }
+    const video = [...document.querySelectorAll("video")].find(item => !item.paused) || document.querySelectorAll("video")[0];
+    const position = Number(video?.currentTime) || 0;
+    const duration = Number(video?.duration) || 0;
+    const ahead = Math.max(1, Number(cfg.leadSeconds) || DEFAULTS.leadSeconds);
+    for (const track of tracks.values()) {
+      if (track.active === false) playbackCache.release?.(track.url);
+      else playbackCache.retain(track.url, { active: true, position, ahead, rewind: RETENTION_REWIND_SECONDS, duration, protectInit: true });
+    }
+  }
+
   function renderPreheatProgress() {
+    updateRetentionHints();
     ensurePreheatProgressStyle();
     const pluginRanges = normalizedPrefetchedRanges();
     for (const root of document.querySelectorAll(".bpx-player-progress, .bpx-player-shadow-progress-area")) {
@@ -1033,6 +1052,7 @@
     normalizedTrackRanges,
     chooseCurrentDashPair,
     intersectRanges,
+    updateRetentionHints,
     normalizePreheatColor,
     timelineStates,
     timelineGradient,
@@ -1074,6 +1094,7 @@
   setInterval(() => {
     resetTracksAfterNavigation();
     if (cfg.mode !== "always") return;
+    updateRetentionHints();
     captureInitialPlayinfo();
     const transfer = network.snapshot();
     // 驻留预热还未进入播放器，不可用它掩盖 video.buffered 的真实饥饿。
@@ -1094,6 +1115,6 @@
   }, 1000);
   setInterval(() => {
     const cutoff = Date.now() - 5 * 60 * 1000;
-    for (const [key, track] of tracks) if (track.lastSeen < cutoff && !track.inflight.length) tracks.delete(key);
+    for (const [key, track] of tracks) if (track.lastSeen < cutoff && !track.inflight.length) { playbackCache?.release?.(track.url); tracks.delete(key); }
   }, 30000);
 })();
