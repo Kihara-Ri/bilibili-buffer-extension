@@ -5,9 +5,15 @@
   /** @typedef {{start: number, end: number, timeStart: number, timeEnd: number}} MediaSegment */
   /** @typedef {{segments: MediaSegment[], initEnd: number, role: 'video'|'audio'|null}} SegmentIndex */
   const resources = new Map();
-  const stats = { bytes: 0, hits: 0, hitBytes: 0, misses: 0, evictions: 0 };
+  const stats = { bytes: 0, hits: 0, hitBytes: 0, misses: 0, evictions: 0, partialHits: 0, partialHitBytes: 0 };
   let limit = 128 * 1024 * 1024, sequence = 0, installed = false, epoch = 0;
   const INDEX_LIMIT = 1024 * 1024;
+  // 单次请求最多重组 16 MiB。规划期会复制驻留快照、下载期会持有缺口正文、交付期还有一份输出，
+  // 三者之和约为该上限的两倍，避免开放结尾请求把整部视频留在页面内存里。
+  const MAX_REASSEMBLY = 16 * 1024 * 1024;
+  // 缺口过多说明驻留极其碎片化，补齐的收益低于排一长串子请求；宁可整条交还原请求。
+  const MAX_GAPS = 32;
+  const partialControllers = new Set();
   const mediaUrl = (url) => {
     try { const u = new URL(url); return /^https?:$/.test(u.protocol) && /(^|\.)(bilivideo\.com|bilivideo\.cn|hdslb\.com|akamaized\.net)$/.test(u.hostname); }
     catch { return false; }
@@ -51,6 +57,95 @@
     for (const part of parts) { output.set(part, cursor); cursor += part.length; }
     return output;
   }
+  /** 在 [start,end) 内把“已驻留字节”与“缺口”拆开；驻留部分立即复制快照。
+   * 快照必须同步完成：缺口下载是异步的，期间可能发生容量回收或条目替换，
+   * 若只持有 subarray 视图，后续交付的字节就不再可控。
+   * @param {{blocks: {start: number, bytes: Uint8Array}[]}} entry @param {number} start @param {number} end
+   * @returns {{parts: {start: number, bytes: Uint8Array}[], gaps: number[][]}}
+   */
+  function coverage(entry, start, end) {
+    const blocks = [...entry.blocks].sort((left, right) => left.start - right.start);
+    const parts = [], gaps = [];
+    let cursor = start;
+    for (const block of blocks) {
+      const right = block.start + block.bytes.length;
+      if (right <= cursor) continue;
+      // 块按起点排序：第一个起点大于 cursor 的块之前，不可能再被后面的块覆盖。
+      if (block.start > cursor) {
+        const gapEnd = Math.min(block.start, end);
+        if (gapEnd > cursor) gaps.push([cursor, gapEnd]);
+        cursor = gapEnd;
+        if (cursor >= end) break;
+      }
+      const stop = Math.min(right, end);
+      if (stop > cursor) {
+        parts.push({ start: cursor, bytes: block.bytes.slice(cursor - block.start, stop - block.start) });
+        cursor = stop;
+      }
+      if (cursor >= end) break;
+    }
+    if (cursor < end) gaps.push([cursor, end]);
+    return { parts, gaps };
+  }
+  /** 部分命中规划：完整命中、越界、超过重组上限或缺口过多时返回 null（走原路径）。
+   * @param {string} url @param {string} range @returns {object|null}
+   */
+  function partialPlan(url, range) {
+    const entry = resources.get(url), parsed = /^bytes=(\d+)-(\d*)$/i.exec(String(range || "").trim());
+    if (!entry || !parsed) return null;
+    const start = Number(parsed[1]), end = parsed[2] ? Number(parsed[2]) + 1 : entry.total;
+    if (!safe(start) || !safe(end) || end <= start || end > entry.total || end - start > MAX_REASSEMBLY) return null;
+    const { parts, gaps } = coverage(entry, start, end);
+    // parts 为空说明请求范围内没有任何可复用字节，交回旧路径而非伪装成部分命中。
+    if (!parts.length || !gaps.length || gaps.length > MAX_GAPS) return null;
+    return { url, start, end, total: entry.total, contentType: entry.contentType, length: end - start, parts, gaps };
+  }
+  /** 校验每个缺口结果后拼接；任何边界、长度或总长不一致都返回 null，绝不交付半成品。
+   * @param {object} plan @param {object[]} results @returns {CacheHit & {reused: number}|null}
+   */
+  function assemble(plan, results) {
+    if (!Array.isArray(results) || results.length !== plan.gaps.length) return null;
+    const current = resources.get(plan.url);
+    if (current && current.total !== plan.total) return null;
+    const body = new Uint8Array(plan.length);
+    let contentType = plan.contentType, reused = 0;
+    for (const part of plan.parts) { body.set(part.bytes, part.start - plan.start); reused += part.bytes.length; }
+    for (let index = 0; index < plan.gaps.length; index += 1) {
+      const [gapStart, gapEnd] = plan.gaps[index], result = results[index];
+      const bytes = result?.body ? (result.body instanceof Uint8Array ? result.body : new Uint8Array(result.body)) : null;
+      if (!bytes || result.start !== gapStart || bytes.length !== gapEnd - gapStart) return null;
+      if (!Number.isSafeInteger(result.total) || result.total !== plan.total) return null;
+      body.set(bytes, gapStart - plan.start);
+      if (result.contentType) contentType = result.contentType;
+    }
+    return { body, start: plan.start, end: plan.end, total: plan.total, contentType, reused };
+  }
+  /** 失败时取消其余缺口，避免已经原生回退后后台仍下载同一范围。
+   * @param {object} plan @param {Function} loadRange @param {AbortSignal} signal @returns {Promise<object|null>}
+   */
+  async function fillPlan(plan, loadRange, signal) {
+    const controller=new AbortController(), cancel=()=>controller.abort(signal.reason);
+    signal.addEventListener('abort',cancel,{once:true});if(signal.aborted)cancel();
+    partialControllers.add(controller);
+    let abort;
+    const cancelled=new Promise((_,reject)=>{abort=()=>reject(controller.signal.reason);controller.signal.addEventListener('abort',abort,{once:true});if(controller.signal.aborted)abort();});
+    try {
+      const requests=plan.gaps.map(async ([from,to])=>{
+        if(controller.signal.aborted)throw controller.signal.reason;
+        const value=await loadRange(plan.url,`bytes=${from}-${to-1}`,controller.signal,{start:plan.start,end:plan.end});
+        if(!value || value.start!==from || value.end!==to || value.total!==plan.total || (value.body?.byteLength??-1)!==to-from)throw Error('缓存缺口结果不一致');
+        return value;
+      });
+      const results=await Promise.race([Promise.all(requests),cancelled]);
+      return assemble(plan,results);
+    } finally {
+      controller.signal.removeEventListener('abort',abort);controller.abort();
+      signal.removeEventListener('abort',cancel);partialControllers.delete(controller);
+    }
+  }
+
+  // 规划本身出错时退回“无部分命中”的原有整段路径，不影响播放器请求。
+  const safePartial = (url, range) => { try { return partialPlan(url, range); } catch { return null; } };
   // ISO BMFF 的 first_offset 相对 sidx 盒尾，不是文件起点；v1 使用 64 位值。
   function parseIndex(bytes, total) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -205,15 +300,22 @@
           });
         }
         stats.misses++;
-        if (loadRange && /^bytes=\d+-\d*$/i.test(request.headers.get("range") || "")) {
+        const rangeHeader = request.headers.get("range");
+        if (loadRange && /^bytes=\d+-\d*$/i.test(rangeHeader || "")) {
           const requestEpoch = epoch;
+          // 规划必须同步完成：驻留字节在此刻复制成快照，缺口下载期间的回收不会改动待交付内容。
+          const plan = safePartial(request.url, rangeHeader);
           return Promise.resolve().then(() => {
             if (request.signal.aborted || requestEpoch !== epoch) throw request.signal.reason || new DOMException("页面已切换", "AbortError");
-            return loadRange(request.url, request.headers.get("range"), request.signal);
+            if (!plan) return loadRange(request.url, rangeHeader, request.signal);
+            // 只对缺口发起下载；各缺口仍走 loadPlayerRange 的同一去重与取消语义。
+            return fillPlan(plan, loadRange, request.signal);
           }).then(hit => {
             if (request.signal.aborted) throw request.signal.reason || new DOMException("已取消", "AbortError");
             if (requestEpoch !== epoch) throw new DOMException("页面已切换", "AbortError");
             if (!hit || !enabled()) return nativeFetch.call(window, input, init);
+            // 部分命中的驻留字节来自本地缓存；缺口仍属网络下载，分开计数以免污染命中统计。
+            if (plan && hit.reused !== undefined) { stats.partialHits++; stats.partialHitBytes += hit.reused; }
             // 加速返回属于网络下载，不计作缓存命中；保留 fetch 正文消费前取消语义。
             let cleanup = () => {};
             const body = new ReadableStream({
@@ -280,11 +382,14 @@
         const eligible = this.readyState === 1 && req?.async && req.method === "GET" && body == null && !req.credentials && enabled()
           && this.responseType === "arraybuffer" && mediaUrl(req.url) && !req.headers.has("if-range") && !req.headers.has("authorization");
         if (req) req.epoch = epoch;
-        const hit = eligible ? safeMatch(req.url, req.headers.get("range")) : null;
+        const rangeHeader = req?.headers.get("range");
+        const hit = eligible ? safeMatch(req.url, rangeHeader) : null;
         if (!hit && eligible) stats.misses++;
         const sentAt = performance.now();
-        const canLoad = !hit && eligible && loadRange && /^bytes=\d+-\d*$/i.test(req.headers.get("range") || "");
+        const canLoad = !hit && eligible && loadRange && /^bytes=\d+-\d*$/i.test(rangeHeader || "");
         if (!hit && !canLoad) return super.send(body);
+        // 与 fetch 同策略：同步快照驻留字节，只把缺口交给 loadRange。
+        const plan = canLoad ? safePartial(req.url, rangeHeader) : null;
         const generation = ++this._cacheGeneration;
         this._cachePending = true;
         this._cacheReply = { hit, state: 1, aborted: false };
@@ -310,6 +415,7 @@
           this._cachePending = false;
           this.dispatchEvent(new Event("readystatechange")); if (!alive()) return;
           if (cached) hitRecorded(req.url, result);
+          else if (plan && result.reused !== undefined) { stats.partialHits++; stats.partialHitBytes += result.reused; }
           event("load", result.body.length, result.body.length);
           if (alive()) event("loadend", result.body.length, result.body.length);
         };
@@ -329,7 +435,8 @@
         if (!alive()) return;
         Promise.resolve().then(() => {
           if (!alive() || req.epoch !== epoch || signal.aborted) throw new DOMException("已取消", "AbortError");
-          return loadRange(req.url, req.headers.get("range"), signal);
+          if (!plan) return loadRange(req.url, rangeHeader, signal);
+          return fillPlan(plan, loadRange, signal);
         }).then(result => deliver(result, false), () => {
           if (!alive()) return;
           clearTimeout(this._networkTimer);
@@ -374,6 +481,8 @@
   }
   window.__biliBufferCache = {
     put, match, timeRanges, install, stats,
+    /** 单次部分命中允许重组的最大字节数；超过则交还整段原请求。 */
+    maxReassembly: MAX_REASSEMBLY,
     /** @param {string} url @returns {number[][]} 驻留字节区间（半开区间），用于调度缺口。 */
     ranges(url) {
       const result = [];
@@ -389,6 +498,6 @@
     /** @param {number} bytes @returns {void} 设置全页缓存上限。 */
     setLimit(bytes) { if (safe(bytes)) { limit = bytes; trim(); } },
     /** @returns {void} 导航时清理，避免旧视频数据占用内存。 */
-    clear() { epoch++; resources.clear(); stats.bytes = 0; }
+    clear() { epoch++; for(const controller of partialControllers)controller.abort(new DOMException("缓存已清理", "AbortError")); resources.clear(); stats.bytes = 0; }
   };
 })();

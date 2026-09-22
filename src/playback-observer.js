@@ -450,7 +450,7 @@
 
   // 只接管播放器实际请求的媒体范围，不依赖先成功收到原节点响应头。
   // 同范围请求共享任务，最后一个订阅者取消后才停止，避免 XHR 与 fetch 重复下载。
-  async function loadPlayerRange(url, range, signal) {
+  async function loadPlayerRange(url, range, signal, parentRange = null) {
     const parsed = /^bytes=(\d+)-(\d*)$/i.exec(range || "");
     if (!parsed || signal.aborted || cfg.mode !== "always") return null;
     resetTracksAfterNavigation(); captureInitialPlayinfo();
@@ -474,7 +474,9 @@
         const priority = network.role(url) === 'audio' ? 200 : 100;
         const result = await network.download(url,start,end,track.size,controller.signal,{priority});
         if (controller.signal.aborted || cfg.mode !== 'always' || currentPageKey() !== pageKey || tracks.get(track.key) !== track || track.url !== url) throw new DOMException('旧媒体请求已取消','AbortError');
-        track.size = result.total; track.anchor = start + result.bytes.length;
+        track.size = result.total;
+        // 同一部分命中的缺口统一使用原需求末端；向后 seek 必须允许锚点回退。
+        track.anchor = parentRange && Number.isSafeInteger(parentRange.end) ? Math.min(result.total,parentRange.end) : start + result.bytes.length;
         track.cooldownUntil = 0; track.prefetchDisabled = false;
         playbackCache?.put(url,start,result.bytes,result.total,{contentType:result.contentType});
         renderPreheatProgress();
@@ -755,8 +757,8 @@
       prefetchAheadSec: prefetchAhead(),
       coldTracks: [...tracks.values()].filter((track) => track.cold).length,
       disabledTracks: [...tracks.values()].filter((track) => track.prefetchDisabled).length,
-      cacheHits: playbackCache?.stats.hits || 0,
-      cacheHitMB: +((playbackCache?.stats.hitBytes || 0) / MB).toFixed(2),
+      cacheHits: (playbackCache?.stats.hits || 0) + (playbackCache?.stats.partialHits || 0),
+      cacheHitMB: +(((playbackCache?.stats.hitBytes || 0) + (playbackCache?.stats.partialHitBytes || 0)) / MB).toFixed(2),
       cacheResidentMB: +((playbackCache?.stats.bytes || 0) / MB).toFixed(2),
       prefetchChunks: stats.prefetchChunks,
       prefetchMB: +(stats.prefetchBytes / MB).toFixed(1),
