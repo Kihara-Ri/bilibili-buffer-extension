@@ -51,6 +51,9 @@ const elements = {
   assistToggle: document.querySelector("#assist-toggle"),
   assistToggleLabel: document.querySelector("#assist-toggle-label"),
   assistStatus: document.querySelector("#assist-status"),
+  cdnMode: document.querySelector("#assist-cdn-mode"),
+  concurrency: document.querySelector("#assist-concurrency"),
+  assistMetrics: Object.fromEntries(["speed", "hit", "buffer", "ready", "connections", "rescues", "node", "accelerated", "fallbacks"].map(key => [key, document.querySelector(`#assist-${key}`)])),
   appearance: document.querySelector("#assist-appearance"),
   appearanceReset: document.querySelector("#assist-appearance-reset"),
   preheatControls: document.querySelector("#assist-preheat-controls"),
@@ -130,6 +133,8 @@ elements.qualityMenu.addEventListener("keydown", navigateQualityMenu);
 elements.qualityMenu.addEventListener("toggle", handleQualityMenuToggle);
 elements.qualityTrigger.addEventListener("keydown", openQualityMenuFromKeyboard);
 elements.assistToggle.addEventListener("click", toggleAssist);
+elements.cdnMode.addEventListener("change", () => persistProgressAppearance({cdnMode:elements.cdnMode.value,networkPolicyVersion:3}));
+elements.concurrency.addEventListener("change", () => persistProgressAppearance({maxConcurrency:Number(elements.concurrency.value),networkPolicyVersion:3}));
 elements.assistColors.addEventListener("click", selectAssistColor);
 elements.appearanceReset.addEventListener('click', () => persistProgressAppearance({ progressColor: '#00a1d6', preheatColor: DEFAULT_PREHEAT_COLOR, showPreheatHighlight: true }));
 elements.assistColors.addEventListener('keydown', event => {
@@ -623,14 +628,17 @@ function renderQualityControl(cached) {
 async function refreshAssistState() {
   if (!state.tab?.id) return;
   const revision = state.appearanceRevision;
+  const readSequence = state.assistReadSequence = (state.assistReadSequence || 0) + 1;
   try {
     const result = await send("GET_ASSIST_STATE", { tabId: state.tab.id });
+    if (readSequence !== state.assistReadSequence) return;
     if (!state.appearancePending && revision === state.appearanceRevision) {
       state.assistConfig = result.config || state.assistConfig;
       state.confirmedAssistConfig = state.assistConfig;
     }
     state.assistStats = result.stats || null;
   } catch {
+    if (readSequence !== state.assistReadSequence) return;
     state.assistStats = null;
   }
   renderAssist();
@@ -647,6 +655,23 @@ function renderAssist() {
   const config = state.assistConfig || { mode: "always", preheatColor: DEFAULT_PREHEAT_COLOR };
   const stats = state.assistStats;
   const enabled = config.mode !== "off";
+  if (document.activeElement !== elements.cdnMode) elements.cdnMode.value = config.cdnMode || "original";
+  if (document.activeElement !== elements.concurrency) elements.concurrency.value = String(config.maxConcurrency || 32);
+  const live = enabled && stats && Date.now() - stats.at < 5000;
+  const finite = value => Math.max(0, Number(value) || 0);
+  const metrics = {
+    speed: live ? formatSpeed(finite(stats.networkSpeed)) : "—",
+    hit: live ? formatBytes(finite(stats.cacheHitMB) * 1024 * 1024) : "—",
+    buffer: live ? `${finite(stats.bufferAheadSec).toFixed(1)} 秒` : "—",
+    ready: live ? `${finite(stats.prefetchAheadSec).toFixed(1)} 秒` : "—",
+    connections: live ? `${finite(stats.networkActive)} / ${finite(stats.networkLimit)}` : "—",
+    rescues: live ? `${finite(stats.networkRescues)} 次` : "—",
+    accelerated: live ? `${finite(stats.acceleratedRequests)} 次` : "—",
+    fallbacks: live ? `${finite(stats.nativeFallbacks)} 次` : "—",
+    node: live ? (stats.networkHost || "等待连接") : (enabled ? "等待数据" : "已关闭")
+  };
+  for (const [key, value] of Object.entries(metrics)) setText(elements.assistMetrics[key], value);
+  setAttr(elements.assistMetrics.node, "title", metrics.node);
   elements.assistToggle.setAttribute("aria-checked", String(enabled));
   elements.assistToggleLabel.textContent = enabled ? "开启" : "关闭";
   if (document.activeElement !== elements.progressColor) elements.progressColor.value = config.progressColor || "#00a1d6";
@@ -663,7 +688,7 @@ function renderAssist() {
     status = "等待视频加载";
     statusState = "waiting";
   } else if (enabled && stats.prefetching > 0) {
-    status = "正在提前加载后续内容";
+    status = stats.networkActive > 0 ? "正在加速媒体加载" : "正在提前加载后续内容";
     statusState = "active";
   } else if (enabled && stats.prefetchMB > 0) {
     status = `已提前加载 ${Number(stats.prefetchMB).toFixed(1)} MB`;

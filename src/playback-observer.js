@@ -14,7 +14,7 @@
   const CHANNEL = "bili-buffer-playback-assist-v1";
   const ESTIMATOR_KEY = "bilibili_dash_throughput_lru_v1";
   const ESTIMATOR_BACKUP_KEY = "__bili_buffer_estimator_backup_v1";
-  const MEDIA_RE = /^https?:\/\/[^/]*(?:bilivideo\.com|bilivideo\.cn|akamaized\.net)\//i;
+  const MEDIA_RE = /^https?:\/\/[^/]*(?:bilivideo\.com|bilivideo\.cn|hdslb\.com|akamaized\.net)\//i;
   const MB = 1024 * 1024;
   const PREHEAT_STYLE_ID = "bili-buffer-preheat-progress-style";
   const DEFAULT_PREHEAT_COLOR = "#ff8a1f";
@@ -25,7 +25,9 @@
     minWatchedSec: 0,
     minBufferAheadSec: 0,
     maxPrefetchMBPerTrack: 200,
-    maxConcurrency: 4,
+    maxConcurrency: 32,
+    cdnMode: "original",
+    networkPolicyVersion: 3,
     estimatorGuard: true,
     progressColor: "#00a1d6",
     showPreheatHighlight: true,
@@ -54,7 +56,23 @@
 
   const playbackCache = window.__biliBufferCache;
   const prefetchControllers = new Set();
+  const prefetchJobs = new Map();
+  const urgentFlights = new Map();
   const nativeFetch = window.fetch;
+  const network = window.BiliPlaybackNetwork.createNetwork({ fetch: (...args) => nativeFetch.apply(window, args) });
+  const PLAYURL_RE = /^https:\/\/api\.bilibili\.com\/x\/(?:player\/(?:wbi\/)?playurl|player\/v2)(?:\?|$)/;
+  function capturePlayurl(payload, pageKey) {
+    if (currentPageKey() !== pageKey) return;
+    try { network.register(payload); } catch { /* 非 DASH 或站点字段变化时继续使用原地址。 */ }
+  }
+  let initialPlayinfo = null;
+  function captureInitialPlayinfo() {
+    const payload = window.__playinfo__;
+    if (payload && payload !== initialPlayinfo) {
+      initialPlayinfo = payload;
+      capturePlayurl(payload, currentPageKey());
+    }
+  }
   const storageProto = window.Storage?.prototype;
   const nativeStorageSet = storageProto?.setItem;
 
@@ -272,6 +290,16 @@
     };
     proto.send = function () {
       const state = this[NS];
+      if (state && PLAYURL_RE.test(state.url)) {
+        resetTracksAfterNavigation();
+        const capture = () => {
+          if (this.readyState !== 4) return;
+          this.removeEventListener("readystatechange", capture, true);
+          try { capturePlayurl(this.responseType === 'json' ? this.response : JSON.parse(this.responseText), state.pageKey); } catch { /* 忽略非 JSON 响应。 */ }
+        };
+        // 完成状态早于 load：播放器在 onload 内立即发媒体请求前先登记备用地址。
+        this.addEventListener("readystatechange", capture, true);
+      }
       if (state?.rangeHeader && MEDIA_RE.test(state.url)) {
         resetTracksAfterNavigation();
         trackFor(state.url);
@@ -330,6 +358,14 @@
       try {
         rangeHeader = new Headers(init?.headers || input?.headers).get("range") || "";
       } catch { /* ignore */ }
+      if (PLAYURL_RE.test(url)) {
+        resetTracksAfterNavigation();
+        const pageKey = currentPageKey();
+        return nativeFetch.apply(this, args).then(response => {
+          void response.clone().json().then(payload => capturePlayurl(payload, pageKey)).catch(() => {});
+          return response;
+        });
+      }
       if (!rangeHeader || !MEDIA_RE.test(url)) return nativeFetch.apply(this, args);
       resetTracksAfterNavigation();
       trackFor(url);
@@ -409,24 +445,76 @@
     return Math.max(8 * MB, Math.min(48 * MB, requested));
   }
 
+  // 只接管播放器实际请求的媒体范围，不依赖先成功收到原节点响应头。
+  // 同范围请求共享任务，最后一个订阅者取消后才停止，避免 XHR 与 fetch 重复下载。
+  async function loadPlayerRange(url, range, signal) {
+    const parsed = /^bytes=(\d+)-(\d*)$/i.exec(range || "");
+    if (!parsed || signal.aborted || cfg.mode !== "always") return null;
+    resetTracksAfterNavigation(); captureInitialPlayinfo();
+    const start = Number(parsed[1]);
+    const end = parsed[2] ? Number(parsed[2]) + 1 : network.total(url);
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start || end - start > 16 * MB) return null;
+    const key = `${url}|${start}|${end}`;
+    let entry = urgentFlights.get(key);
+    if (!entry) {
+      const controller = new AbortController(), pageKey = currentPageKey();
+      const track = trackFor(url);
+      if (!track) return null;
+      // 避免后台预热占用正在播放的同一段：让更高优先级的需求任务接管重叠区间。
+      for (const [control, job] of prefetchJobs) {
+        if (job.track.url === url && start < job.end && end > job.start) control.abort();
+      }
+      entry = {controller, users:0, promise:null};
+      const current = entry;
+      entry.promise = (async () => {
+        network.tune({ahead:currentBufferAhead(),demand:true,now:performance.now()});
+        const priority = network.role(url) === 'audio' ? 200 : 100;
+        const result = await network.download(url,start,end,track.size,controller.signal,{priority});
+        if (controller.signal.aborted || cfg.mode !== 'always' || currentPageKey() !== pageKey || tracks.get(track.key) !== track || track.url !== url) throw new DOMException('旧媒体请求已取消','AbortError');
+        track.size = result.total; track.anchor = start + result.bytes.length;
+        track.cooldownUntil = 0; track.prefetchDisabled = false;
+        playbackCache?.put(url,start,result.bytes,result.total,{contentType:result.contentType});
+        renderPreheatProgress();
+        return {body:result.bytes,start,end:start+result.bytes.length,total:result.total,contentType:result.contentType};
+      })().catch(error => { if (!controller.signal.aborted) network.fallback(); throw error; }).finally(() => {
+        if (urgentFlights.get(key) === current) urgentFlights.delete(key);
+      });
+      urgentFlights.set(key,entry);
+    }
+    entry.users++;
+    return new Promise((resolve,reject) => {
+      let finished = false;
+      const finish = () => {
+        if (finished) return false; finished = true;
+        signal.removeEventListener('abort',cancel);entry.users--;
+        if (!entry.users) entry.controller.abort();
+        return true;
+      };
+      const cancel = () => { if (finish()) reject(signal.reason || new DOMException('已取消','AbortError')); };
+      signal.addEventListener('abort',cancel,{once:true});
+      if (signal.aborted) cancel();
+      entry.promise.then(value => {if(finish())resolve(value);},error => {if(finish())reject(error);});
+    });
+  }
+
   function shouldPrefetch(track) {
     if (cfg.mode !== "always") return false;
     if (track.prefetchDisabled || Date.now() < track.cooldownUntil) return false;
-    if (track.prefetchedBytes >= Math.max(1, Number(cfg.maxPrefetchMBPerTrack) || 1) * MB) return false;
+    // 限制的是驻留内存与前方窗口，不能在长视频累计下载 200 MB 后永久停止加速。
     return true;
   }
 
   function pickJob() {
     const candidates = [...tracks.values()]
       .filter((track) => track.active !== false && track.anchor > 0 && shouldPrefetch(track))
-      .sort((left, right) => right.lastSeen - left.lastSeen);
+      .sort((left, right) => (left.lastPrefetchAt || 0) - (right.lastPrefetchAt || 0));
     for (const track of candidates) {
       const host = hostStat(track.host);
       const sameHostInflight = track.inflight.length;
-      if (sameHostInflight >= Math.min(cfg.maxConcurrency, host.prefetchConcurrency)) continue;
-      const byteCap = Math.max(1, Number(cfg.maxPrefetchMBPerTrack) || 1) * MB;
+      if (sameHostInflight >= 1) continue;
+      const byteCap = 8 * MB;
       const reservedBytes = track.inflight.reduce((sum, [start, end]) => sum + Math.max(0, end - start), 0);
-      const remainingBytes = byteCap - track.prefetchedBytes - reservedBytes;
+      const remainingBytes = byteCap - reservedBytes;
       if (remainingBytes <= 0) continue;
       const to = track.size
         ? Math.min(track.size, track.anchor + leadBytes(track), track.anchor + remainingBytes)
@@ -479,44 +567,18 @@
     stats.prefetching += 1;
     const controller = new AbortController();
     prefetchControllers.add(controller);
+    prefetchJobs.set(controller, job);
+    track.lastPrefetchAt = performance.now();
     const pageKey = currentPageKey(), requestUrl = track.url;
     const timer = setTimeout(() => controller.abort(new DOMException("预热超时", "TimeoutError")), 45000);
     const startedAt = performance.now();
     try {
-      const response = await nativeFetch.call(window, requestUrl, {
-        credentials: "omit",
-        headers: { Range: `bytes=${start}-${end - 1}` },
-        priority: "low",
-        signal: controller.signal
-      });
-      if (response.status !== 206 || !response.body) {
-        await response.body?.cancel?.().catch(() => {});
-        throw new Error(`预热 Range 返回 HTTP ${response.status}`);
-      }
-      const contentRange = parseContentRange(response.headers.get("content-range"));
-      if (!contentRange || contentRange.start !== start || contentRange.end > end - 1) {
-        await response.body.cancel().catch(() => {});
-        throw new Error("预热 Range 范围不一致");
-      }
-      if (contentRange.total) track.size = contentRange.total;
-      const reader = response.body.getReader();
-      let bytes = 0;
-      const chunks = [];
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        bytes += value.byteLength;
-        if (bytes > end - start) { await reader.cancel(); throw new Error("预热响应超出请求范围"); }
-        chunks.push(value);
-      }
-      const expected = contentRange.end - contentRange.start + 1;
-      if (bytes !== expected) throw new Error("预热响应提前结束");
-      // 导航/关闭/签名地址切换后到达的旧响应不能重新填充已清理的缓存。
-      if (controller.signal.aborted || cfg.mode !== "always" || currentPageKey() !== pageKey || tracks.get(track.key) !== track || track.url !== requestUrl) return;
-      const body = new Uint8Array(bytes);
-      let offset = 0;
-      for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
-      playbackCache?.put(requestUrl, start, body, contentRange.total, { contentType: response.headers.get("content-type") || "application/octet-stream" });
+      const result = await network.download(requestUrl, start, end, track.size, controller.signal);
+      const body = result.bytes, bytes = body.byteLength;
+      // 备用 CDN 的数据验证后写到播放器原 URL 下；不把签名地址或节点切换暴露给播放器。
+      if (controller.signal.aborted || cfg.mode !== "always" || currentPageKey() !== pageKey || tracks.get(track.key) !== track || track.url !== requestUrl || track.active === false) return;
+      track.size = result.total;
+      playbackCache?.put(requestUrl, start, body, result.total, { contentType: result.contentType });
       addRange(track.covered, start, start + bytes);
       addRange(track.prefetchedRanges, start, start + bytes);
       track.prefetchedBytes += bytes;
@@ -536,12 +598,14 @@
       host.prefetchErrors += 1;
       track.consecutivePrefetchErrors += 1;
       track.cooldownUntil = Date.now() + Math.min(30000, 1000 * (2 ** Math.min(track.consecutivePrefetchErrors, 5)));
-      if (track.consecutivePrefetchErrors >= 6) track.prefetchDisabled = true;
+      track.prefetchDisabled = false; // 冷缓存失败后仍允许恢复，不能永久停用轨道。
+      track.indexProbeBytes = 0;
       host.prefetchConcurrency = Math.max(1, Math.ceil(host.prefetchConcurrency / 2));
       host.chunkBytes = 512 * 1024;
     } finally {
       clearTimeout(timer);
       prefetchControllers.delete(controller);
+      prefetchJobs.delete(controller);
       stats.prefetching = Math.max(0, stats.prefetching - 1);
       const index = track.inflight.findIndex(([left, right]) => left === start && right === end);
       if (index >= 0) track.inflight.splice(index, 1);
@@ -652,6 +716,7 @@
   }
 
   function publicStats() {
+    const transfer = network.snapshot();
     const hosts = {};
     for (const [name, host] of Object.entries(stats.hosts)) {
       hosts[name] = {
@@ -672,7 +737,19 @@
       requests: stats.requests,
       slowRequests: stats.slowRequests,
       requestErrors: stats.requestErrors,
-      activeTracks: tracks.size,
+      activeTracks: [...tracks.values()].filter(track => track.active !== false).length,
+      networkSpeed: transfer.speed,
+      networkActive: transfer.active,
+      networkLimit: transfer.limit,
+      networkHost: transfer.host,
+      networkRescues: transfer.rescues,
+      acceleratedRequests: transfer.accelerated,
+      acceleratedMB: +(transfer.acceleratedBytes / MB).toFixed(2),
+      nativeFallbacks: transfer.nativeFallbacks,
+      blockedNodes: transfer.blocked,
+      cdnMode: transfer.cdnMode,
+      networkReceivedMB: +(transfer.receivedBytes / MB).toFixed(2),
+      prefetchAheadSec: prefetchAhead(),
       coldTracks: [...tracks.values()].filter((track) => track.cold).length,
       disabledTracks: [...tracks.values()].filter((track) => track.prefetchDisabled).length,
       cacheHits: playbackCache?.stats.hits || 0,
@@ -693,6 +770,14 @@
       estimator: readEstimator(),
       hosts
     };
+  }
+
+  function prefetchAhead() {
+    const video = [...document.querySelectorAll("video")].find(item => !item.paused) || document.querySelectorAll("video")[0];
+    if (!(video?.duration > 0)) return 0;
+    const now = video.currentTime / video.duration;
+    const range = normalizedPrefetchedRanges().find(([start, end]) => start <= now + .001 && end > now);
+    return range ? +((range[1] - now) * video.duration).toFixed(1) : 0;
   }
 
   function normalizedPrefetchedRanges() {
@@ -868,6 +953,11 @@
     for (const controller of prefetchControllers) controller.abort();
     playbackCache?.clear();
     tracks.clear();
+    network.reset();
+    urgentFlights.clear();
+    initialPlayinfo = window.__playinfo__; // SPA 导航后不重新注册旧页面留下的清单。
+    stats.prefetchBytes = 0;
+    stats.prefetchErrors = 0;
     renderPreheatProgress();
     return true;
   }
@@ -879,10 +969,17 @@
     if (message.type === "config" && message.payload && typeof message.payload === "object") {
       Object.assign(cfg, message.payload);
       cfg.mode = ["off", "observe"].includes(cfg.mode) ? "off" : "always";
-      cfg.maxConcurrency = Math.max(1, Math.min(6, Number(cfg.maxConcurrency) || DEFAULTS.maxConcurrency));
+      if (cfg.networkPolicyVersion !== 3) cfg.maxConcurrency = 32;
+      cfg.networkPolicyVersion = 3;
+      cfg.maxConcurrency = Math.max(1, Math.min(32, Number(cfg.maxConcurrency) || DEFAULTS.maxConcurrency));
+      network.setMax(cfg.maxConcurrency);
+      network.setMode(cfg.cdnMode);
       if (cfg.mode === "off") {
         for (const controller of prefetchControllers) controller.abort();
         playbackCache?.clear();
+        network.reset();
+        urgentFlights.clear();
+        initialPlayinfo = null;
         for (const track of tracks.values()) {
           track.indexProbeBytes = 0;
           track.prefetchedBytes = 0;
@@ -908,6 +1005,10 @@
 
   window.__biliBufferPlaybackAssistInternals = {
     cfg,
+    network,
+    capturePlayurl,
+    prefetch,
+    loadPlayerRange,
     stats,
     tracks,
     percentile,
@@ -940,6 +1041,7 @@
   installXhrObserver();
   installFetchObserver();
   playbackCache?.install({
+    loadRange: loadPlayerRange,
     enabled: () => { resetTracksAfterNavigation(); return cfg.mode === "always"; },
     onChange: renderPreheatProgress,
     onHit: (url, hit) => {
@@ -967,7 +1069,16 @@
   setInterval(() => {
     resetTracksAfterNavigation();
     if (cfg.mode !== "always") return;
-    while (stats.prefetching < cfg.maxConcurrency) {
+    captureInitialPlayinfo();
+    const transfer = network.snapshot();
+    // 驻留预热还未进入播放器，不可用它掩盖 video.buffered 的真实饥饿。
+    const video = [...document.querySelectorAll("video")][0];
+    const duration = Number(video?.duration) || 0;
+    const activeTracks = [...tracks.values()].filter(track => track.active !== false);
+    const requiredRate = duration > 0 ? activeTracks.reduce((sum, track) => sum + (track.size || 0) / duration, 0) * (Number(video?.playbackRate) || 1) : 0;
+    network.tune({ ahead: currentBufferAhead(), demand: urgentFlights.size > 0 || stats.prefetching > 0 || activeTracks.some(track => track.anchor > 0 && shouldPrefetch(track)), rate: transfer.speed, requiredRate });
+    // 后台仅安排音视频各一段，内部自行拆块；共享池优先满足播放器的当前请求。
+    while (stats.prefetching < 2) {
       const job = pickJob();
       if (!job) break;
       void prefetch(job);

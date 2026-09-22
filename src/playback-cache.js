@@ -9,7 +9,7 @@
   let limit = 128 * 1024 * 1024, sequence = 0, installed = false, epoch = 0;
   const INDEX_LIMIT = 1024 * 1024;
   const mediaUrl = (url) => {
-    try { const u = new URL(url); return /^https?:$/.test(u.protocol) && /(^|\.)(bilivideo\.com|bilivideo\.cn|akamaized\.net)$/.test(u.hostname); }
+    try { const u = new URL(url); return /^https?:$/.test(u.protocol) && /(^|\.)(bilivideo\.com|bilivideo\.cn|hdslb\.com|akamaized\.net)$/.test(u.hostname); }
     catch { return false; }
   };
   const safe = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -159,10 +159,10 @@
     "Content-Range": `bytes ${hit.start}-${hit.end - 1}/${hit.total}`, "Accept-Ranges": "bytes"
   });
   /** 安装 MAIN world 请求适配器；不跨 SW 消息通道传输媒体，也不依赖 SW 保活。
-   * @param {{enabled?: () => boolean, onHit?: (url: string, hit: CacheHit) => void, onChange?: () => void}} options
+   * @param {{enabled?: () => boolean, onHit?: (url: string, hit: CacheHit) => void, onChange?: () => void, loadRange?: Function}} options
    * @returns {void}
    */
-  function install({ enabled = () => true, onHit = () => {}, onChange = () => {} } = {}) {
+  function install({ enabled = () => true, onHit = () => {}, onChange = () => {}, loadRange = null } = {}) {
     if (installed) return; installed = true;
     const hitRecorded = (url, hit) => { stats.hits++; stats.hitBytes += hit.body.length; onHit(url, hit); };
     const inspect = (url, header, body, contentType, requestEpoch) => {
@@ -205,6 +205,33 @@
           });
         }
         stats.misses++;
+        if (loadRange && /^bytes=\d+-\d*$/i.test(request.headers.get("range") || "")) {
+          const requestEpoch = epoch;
+          return Promise.resolve().then(() => {
+            if (request.signal.aborted || requestEpoch !== epoch) throw request.signal.reason || new DOMException("页面已切换", "AbortError");
+            return loadRange(request.url, request.headers.get("range"), request.signal);
+          }).then(hit => {
+            if (request.signal.aborted) throw request.signal.reason || new DOMException("已取消", "AbortError");
+            if (requestEpoch !== epoch) throw new DOMException("页面已切换", "AbortError");
+            if (!hit || !enabled()) return nativeFetch.call(window, input, init);
+            // 加速返回属于网络下载，不计作缓存命中；保留 fetch 正文消费前取消语义。
+            let cleanup = () => {};
+            const body = new ReadableStream({
+              start(controller) {
+                const abort = () => { controller.error(request.signal.reason); cleanup(); };
+                cleanup = () => request.signal.removeEventListener("abort", abort);
+                request.signal.addEventListener("abort", abort, {once:true});
+              },
+              pull(controller) { controller.enqueue(hit.body); controller.close(); cleanup(); }, cancel() { cleanup(); }
+            }, {highWaterMark:0});
+            const response = new Response(body, {status:206, statusText:"Partial Content", headers:headersFor(hit)});
+            Object.defineProperties(response, {url:{value:request.url}, type:{value:"cors"}});
+            return response;
+          }).catch(error => {
+            if (request.signal.aborted || requestEpoch !== epoch) throw request.signal.reason || new DOMException("页面已切换", "AbortError");
+            return nativeFetch.call(window, input, init);
+          });
+        }
       }
       const requestEpoch = epoch;
       const result = nativeFetch.apply(this, arguments);
@@ -223,6 +250,9 @@
     class CachedXhr extends NativeXhr {
       constructor() {
         super(); this._cacheRequest = null; this._cacheReply = null; this._cacheGeneration = 0; this._cachePending = false;
+        this.addEventListener("loadstart", event => {
+          if (this._skipNativeLoadstart && event.isTrusted) { this._skipNativeLoadstart = false; event.stopImmediatePropagation(); }
+        }, true);
         this.addEventListener("load", () => {
           const req = this._cacheRequest;
           if (!this._cacheReply && req && enabled() && mediaUrl(req.url) && this.status === 206 && this.responseType === "arraybuffer" && this.response) {
@@ -231,9 +261,13 @@
         });
       }
       open(method, url, async = true, ...rest) {
+        this._networkController?.abort(); clearTimeout(this._networkTimer);
         this._cacheGeneration++; this._cachePending = false; this._cacheReply = null;
         this._cacheRequest = { method: String(method).toUpperCase(), url: String(url), async: async !== false, headers: new Headers(), credentials: rest.some(value => value != null) };
-        return super.open(method, url, async, ...rest);
+        const result = super.open(method, url, async, ...rest);
+        this._skipNativeLoadstart = false;
+        if (this._requestedTimeout != null) super.timeout = this._requestedTimeout;
+        return result;
       }
       setRequestHeader(name, value) {
         if (this._cachePending || this._cacheReply) throw new DOMException("Request already sent", "InvalidStateError");
@@ -247,31 +281,66 @@
           && this.responseType === "arraybuffer" && mediaUrl(req.url) && !req.headers.has("if-range") && !req.headers.has("authorization");
         if (req) req.epoch = epoch;
         const hit = eligible ? safeMatch(req.url, req.headers.get("range")) : null;
-        if (!hit) { if (eligible) stats.misses++; return super.send(body); }
+        if (!hit && eligible) stats.misses++;
+        const sentAt = performance.now();
+        const canLoad = !hit && eligible && loadRange && /^bytes=\d+-\d*$/i.test(req.headers.get("range") || "");
+        if (!hit && !canLoad) return super.send(body);
         const generation = ++this._cacheGeneration;
         this._cachePending = true;
         this._cacheReply = { hit, state: 1, aborted: false };
         const alive = () => this._cacheGeneration === generation;
-        const event = (type, loaded = 0) => this.dispatchEvent(new ProgressEvent(type, { lengthComputable: true, loaded, total: hit.body.length }));
-        setTimeout(() => {
+        const event = (type, loaded = 0, total = 0) => this.dispatchEvent(new ProgressEvent(type, { lengthComputable: total > 0, loaded, total }));
+        const deliver = (result, cached) => {
           if (!alive()) return;
-          if (!enabled() || req.epoch !== epoch) { this._cacheReply = null; this._cachePending = false; super.send(body); return; }
-          event("loadstart"); if (!alive()) return;
+          clearTimeout(this._networkTimer);
+          if (req.epoch !== epoch) { this.abort(); return; }
+          if (!enabled() || !result) {
+            this._cacheReply = null; this._cachePending = false;
+            if (!cached) { this._skipNativeLoadstart = true; if (this.timeout > 0) super.timeout = Math.max(1, this.timeout - (performance.now() - sentAt)); }
+            super.send(body); return;
+          }
+          this._cacheReply.hit = result;
+          if (cached) { event("loadstart"); if (!alive()) return; }
           for (const state of [2, 3]) {
             this._cacheReply.state = state;
             this.dispatchEvent(new Event("readystatechange")); if (!alive()) return;
           }
-          event("progress", hit.body.length); if (!alive()) return;
+          event("progress", result.body.length, result.body.length); if (!alive()) return;
           this._cacheReply.state = 4;
           this._cachePending = false;
           this.dispatchEvent(new Event("readystatechange")); if (!alive()) return;
-          this._cachePending = false;
-          hitRecorded(req.url, hit);
-          event("load", hit.body.length);
-          if (this._cacheGeneration === generation) event("loadend", hit.body.length);
-        }, 0);
+          if (cached) hitRecorded(req.url, result);
+          event("load", result.body.length, result.body.length);
+          if (alive()) event("loadend", result.body.length, result.body.length);
+        };
+        if (hit) { setTimeout(() => deliver(hit, true), 0); return; }
+        this._networkController = new AbortController();
+        const signal = this._networkController.signal;
+        // XHR 的 timeout 从 send 开始；不能等多路下载结束后再启动原生计时。
+        if (this.timeout > 0) this._networkTimer = setTimeout(() => {
+          if (!alive()) return;
+          this._networkController.abort(); this._cacheGeneration++; this._cachePending = false;
+          this._cacheReply.aborted = true; this._cacheReply.state = 4;
+          this.dispatchEvent(new Event("readystatechange"));
+          if (this._cacheGeneration !== generation + 1) return;
+          event("timeout"); if (this._cacheGeneration === generation + 1) event("loadend");
+        }, this.timeout);
+        event("loadstart");
+        if (!alive()) return;
+        Promise.resolve().then(() => {
+          if (!alive() || req.epoch !== epoch || signal.aborted) throw new DOMException("已取消", "AbortError");
+          return loadRange(req.url, req.headers.get("range"), signal);
+        }).then(result => deliver(result, false), () => {
+          if (!alive()) return;
+          clearTimeout(this._networkTimer);
+          if (req.epoch !== epoch || signal.aborted) { this.abort(); return; }
+          this._cacheReply = null; this._cachePending = false; this._skipNativeLoadstart = true;
+          if (this.timeout > 0) super.timeout = Math.max(1, this.timeout - (performance.now() - sentAt));
+          super.send(body);
+        });
       }
       abort() {
+        this._networkController?.abort(); clearTimeout(this._networkTimer);
         if (!this._cacheReply) return super.abort();
         const pending = this._cachePending;
         this._cacheGeneration++; this._cachePending = false;
@@ -286,9 +355,11 @@
         }
         if (this._cacheReply === reply) reply.state = 0;
       }
+      get timeout() { return this._requestedTimeout ?? super.timeout; }
+      set timeout(value) { super.timeout = value; this._requestedTimeout = super.timeout; }
       get responseType() { return super.responseType; }
       set responseType(value) {
-        if (this._cacheReply?.state >= 3) throw new DOMException("Response already loading", "InvalidStateError");
+        if (this._cachePending || this._cacheReply?.state >= 3) throw new DOMException("Response already loading", "InvalidStateError");
         super.responseType = value;
       }
       get readyState() { return this._cacheReply?.state ?? super.readyState; }

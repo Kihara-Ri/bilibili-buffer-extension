@@ -393,7 +393,7 @@ export function getVideoPageId(video) {
 
 export function formatBytes(value) {
   const bytes = Number(value) || 0;
-  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024) return `${Math.max(0, Math.round(bytes))} B`;
   const units = ["KB", "MB", "GB", "TB"];
   let size = bytes / 1024;
   let index = 0;

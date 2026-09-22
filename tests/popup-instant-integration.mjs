@@ -171,11 +171,22 @@ globalThis.chrome = {
       if (message.type === "SAVE_VIDEO") { await delay(350); return window.__popupTest.failSave ? { ok: false, error: "模拟保存失败" } : { ok: true }; }
       if (message.type === "DELETE_VIDEO") { await delay(120); const index = libraryVideos.findIndex(video => video.id === message.videoId); if (index >= 0) libraryVideos.splice(index, 1); return { ok: true }; }
       if (message.type === "GET_ASSIST_STATE") {
+        const scripted = window.__popupTest.assistReadQueue?.shift();
+        if (scripted) {
+          const response = { ok: true, config: assistConfig, stats: { at: Date.now(), activeTracks: 2, networkHost: scripted.host } };
+          await delay(scripted.delay);
+          return response;
+        }
         if (window.__popupTest?.holdConfigRead) return { ok: false, error: "暂不重新读取配置" };
         return {
           ok: true,
           config: assistConfig,
           stats: {
+            at: Date.now(),
+            networkSpeed: 12345678, cacheHitMB: 1234, prefetchAheadSec: 12.5,
+            networkActive: 2, networkLimit: 4, networkRescues: 3,
+            networkHost: 'upos-test.bilivideo.com',
+            ...window.__popupTest.assistStats,
             activeTracks: 2,
             hosts: { "upos-test.bilivideo.com": { ttfbP95: 940 } },
             slowRequests: 3,

@@ -11,7 +11,9 @@
     minWatchedSec: 0,
     minBufferAheadSec: 0,
     maxPrefetchMBPerTrack: 200,
-    maxConcurrency: 4,
+    maxConcurrency: 32,
+  cdnMode: "mainland",
+  networkPolicyVersion: 3,
     estimatorGuard: true,
     preheatColor: DEFAULT_PREHEAT_COLOR
   };
@@ -32,6 +34,10 @@
   function normalizedConfig(input) {
     const next = { ...DEFAULTS, ...(input || {}) };
     next.mode = ["off", "observe"].includes(next.mode) ? "off" : "always";
+    if (input?.networkPolicyVersion !== 3) next.maxConcurrency = 32;
+    next.networkPolicyVersion = 3;
+    next.maxConcurrency = Math.max(1, Math.min(32, Math.floor(Number(next.maxConcurrency)) || 32));
+    next.cdnMode = ["mainland", "auto", "original"].includes(next.cdnMode) ? next.cdnMode : "mainland";
     next.minWatchedSec = 0;
     next.minBufferAheadSec = 0;
     const color = String(next.preheatColor || "").trim().toLowerCase();

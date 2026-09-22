@@ -28,7 +28,7 @@ test("缓存页提供视频 + 音频与仅音频两种缓存内容", () => {
 test("播放页使用直接预览和明确的外观控制，不再嵌套折叠设置", () => {
   assert.match(html, /id="assist-toggle"[^>]*role="switch"/);
   assert.doesNotMatch(html, /data-assist-mode=/);
-  assert.doesNotMatch(html, /class="assist-metrics"/);
+  assert.match(html, /class="assist-metrics"/);
   assert.match(html, /id="assist-appearance"/);
   assert.match(html, /id="assist-timeline-preview"/);
   assert.match(html, /id="assist-appearance-reset"/);

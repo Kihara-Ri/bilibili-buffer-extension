@@ -105,6 +105,22 @@
               </button>
             </div>
             <p id="assist-status" class="assist-status" role="status" aria-live="polite">等待视频加载</p>
+            <div class="assist-network-settings">
+              <label for="assist-cdn-mode">CDN 路线<select id="assist-cdn-mode"><option value="mainland">大陆优先</option><option value="auto">原线路优先</option><option value="original" selected>仅原始节点</option></select></label>
+              <label for="assist-concurrency">最大并发<select id="assist-concurrency"><option value="4">4</option><option value="8">8</option><option value="16">16</option><option value="32" selected>32</option></select></label>
+            </div>
+            <dl class="assist-metrics" aria-label="播放加速统计">
+              <div><dt>加速网速</dt><dd id="assist-speed">—</dd></div>
+              <div><dt>已命中缓存</dt><dd id="assist-hit">—</dd></div>
+              <div><dt>播放器缓冲</dt><dd id="assist-buffer">—</dd></div>
+              <div><dt>预热就绪</dt><dd id="assist-ready">—</dd></div>
+              <div><dt>下载并发 / 当前上限</dt><dd id="assist-connections">—</dd></div>
+              <div><dt>备用节点救援</dt><dd id="assist-rescues">—</dd></div>
+              <div><dt>已加速请求</dt><dd id="assist-accelerated">—</dd></div>
+              <div><dt>原线路回退</dt><dd id="assist-fallbacks">—</dd></div>
+              <div class="assist-node"><dt>最近完成节点</dt><dd id="assist-node">等待连接</dd></div>
+            </dl>
+            <p class="assist-metrics-note">网速包含当前播放请求与预热；默认使用原清单节点，按片段大小分配并发，缺缓冲时增援。已命中仅统计复用缓存；预热就绪取音视频连续就绪的交集。</p>
             <section id="assist-appearance" class="assist-appearance" aria-labelledby="appearance-heading">
               <div class="appearance-heading"><h3 id="appearance-heading">进度条外观</h3><button id="assist-appearance-reset" type="button" class="appearance-reset">恢复默认</button></div>
               <div class="timeline-example">

@@ -16,7 +16,9 @@ export const ASSIST_DEFAULTS = Object.freeze({
   minWatchedSec: 0,
   minBufferAheadSec: 0,
   maxPrefetchMBPerTrack: 200,
-  maxConcurrency: 4,
+  maxConcurrency: 32,
+  cdnMode: "original",
+  networkPolicyVersion: 3,
   estimatorGuard: true,
   progressColor: "#00a1d6",
   showPreheatHighlight: true,
@@ -60,11 +62,15 @@ export function sanitizeAssistConfig(patch, current = ASSIST_DEFAULTS) {
     ["slowTtfbMs", 200, 10000],
     ["leadSeconds", 10, 120],
     ["maxPrefetchMBPerTrack", 16, 1024],
-    ["maxConcurrency", 1, 6]
+    ["maxConcurrency", 1, 32]
   ]) {
     if (!Object.hasOwn(patch || {}, key)) continue;
     const value = Number(patch[key]);
     if (Number.isFinite(value)) next[key] = Math.max(min, Math.min(max, value));
   }
+  // 旧策略升级为 8 路起步、最高 32 路；新策略保留用户主动选择的上限。
+  if (current?.networkPolicyVersion !== 3 && !Object.hasOwn(patch || {}, "maxConcurrency")) next.maxConcurrency = 32;
+  next.networkPolicyVersion = 3;
+  next.cdnMode = ["mainland", "auto", "original"].includes(patch?.cdnMode) ? patch.cdnMode : (["mainland", "auto", "original"].includes(next.cdnMode) ? next.cdnMode : "original");
   return next;
 }

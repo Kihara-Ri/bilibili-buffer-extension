@@ -34,3 +34,16 @@ test('Fetch 在排队命中后取消时不下载、不记命中', async () => {
   const pending = window.fetch(url, { headers: { Range: 'bytes=0-1' }, signal: controller.signal }); controller.abort();
   await assert.rejects(pending, { name: 'AbortError' }); assert.equal(cache.stats.hits, 0);
 });
+test('fetch 缓存未命中时直接使用并发下载器，而不是原单路 CDN', async () => {
+  let native=0,accelerated=0;
+  const window={fetch:async()=>{native++;return new Response();}};
+  const cache=loadCache({window});cache.install({loadRange:async()=>{accelerated++;return {body:new Uint8Array([3,4]),start:0,end:2,total:2,contentType:'video/mp4'};}});
+  const r=await window.fetch(url,{headers:{Range:'bytes=0-1'}});
+  assert.deepEqual([...new Uint8Array(await r.arrayBuffer())],[3,4]);assert.equal(accelerated,1);assert.equal(native,0);assert.equal(cache.stats.hits,0);
+});
+test('fetch 加速取消不回退原请求，也不交付旧视频数据',async()=>{
+  let native=0;const window={fetch:async()=>{native++;return new Response();}};
+  const cache=loadCache({window});cache.install({loadRange:async(_url,_range,signal)=>new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}))});
+  const c=new AbortController();const pending=window.fetch(url,{headers:{Range:'bytes=0-1'},signal:c.signal});
+  await Promise.resolve();c.abort();await assert.rejects(pending,{name:'AbortError'});assert.equal(native,0);
+});

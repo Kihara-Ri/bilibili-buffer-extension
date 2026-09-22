@@ -36,7 +36,7 @@ test("无效颜色不会覆盖用户已有颜色或其他合法配置", () => {
   const config = sanitizeAssistConfig({ preheatColor: "transparent", maxConcurrency: 99 }, current);
   assert.equal(config.preheatColor, "#20c997");
   assert.equal(config.mode, "always");
-  assert.equal(config.maxConcurrency, 6);
+  assert.equal(config.maxConcurrency, 32);
   assert.equal(normalizePreheatColor("white"), DEFAULT_PREHEAT_COLOR);
 });
 
@@ -51,4 +51,14 @@ test("显示开关独立于提前加载，旧配置默认保留高亮并验证�
   const invalid = sanitizeAssistConfig({ showPreheatHighlight: "true", progressColor: "red" }, hidden);
   assert.equal(invalid.showPreheatHighlight, false);
   assert.equal(invalid.progressColor, "#abcdef");
+});
+
+test('旧并发策略迁移为原清单优先 32 路上限，新策略保留用户选择', () => {
+  const migrated = sanitizeAssistConfig({}, {mode:'always',maxConcurrency:4});
+  assert.equal(migrated.maxConcurrency,32);
+  assert.equal(migrated.cdnMode,'original');
+  assert.equal(migrated.networkPolicyVersion,3);
+  const saved = sanitizeAssistConfig({maxConcurrency:8,cdnMode:'original'},migrated);
+  assert.equal(sanitizeAssistConfig({},saved).maxConcurrency,8);
+  assert.equal(sanitizeAssistConfig({},saved).cdnMode,'original');
 });

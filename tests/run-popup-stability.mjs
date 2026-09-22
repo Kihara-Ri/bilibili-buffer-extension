@@ -100,6 +100,33 @@ try {
   await page.locator('#assist-show-highlight').click();
   await page.locator('[data-assist-color][aria-checked="true"]').focus(); await page.keyboard.press('ArrowRight'); await page.waitForTimeout(30);
   assert.equal(await page.locator('[data-assist-color][aria-checked="true"]').count(),1);
+  const statsStable = await page.evaluate(async () => {
+    const nodes = [...document.querySelectorAll('.assist-metrics dd')];
+    const focused = document.activeElement;
+    window.__popupTest.assistStats = { networkSpeed: 1234567890, cacheHitMB: 99999999, networkHost: 'very-long-cdn-node-for-layout-test.bilivideo.com' };
+    await new Promise(resolve => setTimeout(resolve, 1400));
+    if (!document.querySelector('#assist-node').textContent.includes('very-long')) throw new Error('统计未刷新');
+    if (!nodes.every(node => getComputedStyle(node).whiteSpace === 'nowrap' && node.getBoundingClientRect().right <= document.querySelector('.app-shell').getBoundingClientRect().right)) throw new Error('统计数值溢出布局');
+    return nodes.every((node, index) => node === document.querySelectorAll('.assist-metrics dd')[index]) && document.activeElement === focused;
+  });
+  assert(statsStable, '统计持续更新必须保持节点与焦点');
+  const oldResponseBlocked = await page.evaluate(async () => {
+    const node = document.querySelector('#assist-node');
+    const seen = [];
+    const observer = new MutationObserver(() => seen.push(node.textContent));
+    observer.observe(node, {childList: true, subtree: true, characterData: true});
+    window.__popupTest.assistReadQueue = [{host:'old-node.bilivideo.com',delay:1800},{host:'new-node.bilivideo.com',delay:0}];
+    await new Promise(resolve => setTimeout(resolve, 3200));
+    observer.disconnect();
+    return seen.includes('new-node.bilivideo.com') && !seen.includes('old-node.bilivideo.com');
+  });
+  assert(oldResponseBlocked, '旧统计响应不得覆盖较新的统计');
+  await page.evaluate(() => { window.__popupTest.assistStats = { at:0 }; });
+  await page.waitForTimeout(1000);
+  assert.equal(await page.locator('#assist-speed').textContent(), '—', '过期统计不能继续显示网速');
+  await page.evaluate(() => { window.__popupTest.assistStats = {cacheHitMB:1}; });
+  await page.waitForTimeout(1000);
+  assert.equal(await page.locator('#assist-hit').textContent(), '1.00 MB', '统计归零或回滚不得被单调钳制');
   await page.locator('.app-shell').screenshot({path:path.join(shots,'playback.png')});
   const confirmedColor=await page.evaluate(()=>{window.__popupTest.failConfig=true; window.__popupTest.holdConfigRead=true; window.__popupTest.configDelay=80; return window.__popupTest.config.preheatColor;});
   await page.evaluate(()=>{const swatches=document.querySelectorAll('[data-assist-color]'); swatches[0].click(); swatches[3].click();});

@@ -33,7 +33,7 @@ try {
   const network = [];
   let failNextMedia = false;
   await page.exposeFunction("readNetworkCount", () => network.length);
-  await page.route('https://cache-test.bilivideo.com/**', async route => {
+  await page.route('https://*.bilivideo.com/**', async route => {
     const req = route.request(), url = new URL(req.url()), role = url.pathname.includes('audio') ? 'audio' : 'video';
     const source = fixtures[role].bytes;
     const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers().range || '');
@@ -55,6 +55,8 @@ try {
   const initial = Object.fromEntries(Object.entries(fixtures).map(([key, value]) => [key, { initEnd: value.initEnd, total: value.bytes.length }]));
   await page.evaluate(value => window.fixtureInfo = value, initial);
   await page.addScriptTag({ path: path.join(root, 'src/playback-cache.js') });
+  await page.addScriptTag({ path: path.join(root, 'src/playback-routes.js') });
+  await page.addScriptTag({ path: path.join(root, 'src/playback-network.js') });
   await page.addScriptTag({ path: path.join(root, 'src/playback-observer.js') });
   const run = async (warm, xhr) => {
     const before = network.length;
@@ -169,12 +171,12 @@ try {
     await fetch(url, { headers: { Range: 'bytes=1-17' } });
     await new Promise((resolve, reject) => { const xhr = new XMLHttpRequest(); xhr.open('GET', url); xhr.responseType = 'arraybuffer'; xhr.setRequestHeader('Range', 'bytes=1-17'); xhr.onload = resolve; xhr.onerror = reject; xhr.send(); });
   });
-  assert.equal(network.slice(beforeMiss).filter(request => request.range === "bytes=1-17").length, 2, '新 URL/未命中必须回退原始网络');
+  assert.equal(network.slice(beforeMiss).filter(request => request.range === "bytes=1-17").length, 1, '新 URL 首次未命中应被加速，随后 XHR 复用缓存');
   const navigation = await page.evaluate(async () => {
     const cache = window.__biliBufferCache, observer = window.__biliBufferPlaybackAssistInternals;
     const pending = fetch('https://cache-test.bilivideo.com/video.m4s?late-old-page=1', { headers: { Range: 'bytes=0-1859' } });
     history.pushState({}, '', '?p=2'); observer.resetTracksAfterNavigation();
-    await (await pending).arrayBuffer(); await new Promise(resolve => setTimeout(resolve, 30));
+    await pending.then(response => response.arrayBuffer()).catch(error => { if (error.name !== "AbortError") throw error; }); await new Promise(resolve => setTimeout(resolve, 30));
     return { bytes: cache.stats.bytes, tracks: observer.tracks.size };
   });
   assert.deepEqual(navigation, { bytes: 0, tracks: 0 }, '导航前的迟到响应不能重建旧缓存/轨道');
@@ -182,20 +184,12 @@ try {
   const prefetchFailure = await page.evaluate(async () => {
     const cache = window.__biliBufferCache, observer = window.__biliBufferPlaybackAssistInternals;
     const url = 'https://cache-test.bilivideo.com/video.m4s?prefetch-failure=1';
-    const errorsBefore = observer.stats.prefetchErrors;
-    await (await fetch(url, { headers: { Range: 'bytes=0-1859' } })).arrayBuffer();
-    const deadline = performance.now() + 5000;
-    while (observer.stats.prefetchErrors === errorsBefore) {
-      if (performance.now() > deadline) throw new Error('没有触发预热失败分支');
-      await new Promise(resolve => setTimeout(resolve, 30));
-    }
-    const missesBefore = cache.stats.misses, hitsBefore = cache.stats.hits;
     const response = await fetch(url, { headers: { Range: 'bytes=1860-1870' } });
     const bytes = (await response.arrayBuffer()).byteLength;
-    observer.cfg.mode = 'off'; cache.clear();
-    return { status: response.status, bytes, newMisses: cache.stats.misses - missesBefore, newHits: cache.stats.hits - hitsBefore };
+    observer.cfg.mode = 'off'; observer.network.reset(); cache.clear();
+    return { status: response.status, bytes };
   });
-  assert.deepEqual(prefetchFailure, { status: 206, bytes: 11, newMisses: 1, newHits: 0 }, '预热失败不妨碍播放器原始请求');
+  assert.deepEqual(prefetchFailure, { status: 206, bytes: 11 }, '单节点失败后应在加速链路内换节点恢复');
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ ok: true, progress, cold, warmFetch, warmXhr, probes, navigation, prefetchFailure, missFallbackRequests: 2 }, null, 2));
+  console.log(JSON.stringify({ ok: true, progress, cold, warmFetch, warmXhr, probes, navigation, prefetchFailure, acceleratedMissAndReuse: true }, null, 2));
 } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }

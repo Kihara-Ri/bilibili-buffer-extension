@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
+const routesSource = await readFile(new URL("../src/playback-routes.js", import.meta.url), "utf8");
+const networkSource = await readFile(new URL("../src/playback-network.js", import.meta.url), "utf8");
 const source = await readFile(new URL("../src/playback-observer.js", import.meta.url), "utf8");
 
 test("MAIN world 脚本可在 document_start 且尚无 documentElement 时启动", () => {
@@ -308,6 +310,9 @@ function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) 
       observe(target, options) { observedTargets.push({ target, options }); }
     }
   });
+  vm.runInContext(routesSource, context);
+  vm.runInContext(networkSource, context);
+  window.BiliPlaybackNetwork = context.BiliPlaybackNetwork;
   vm.runInContext(source, context, { filename: "playback-observer.js" });
   return {
     internals: window.__biliBufferPlaybackAssistInternals,
