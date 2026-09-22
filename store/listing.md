@@ -13,8 +13,8 @@
 
 ### 0.1 名称与商标（建议改名后再提审）
 
-当前名称 **Bili 缓冲站** 与图标（电视机造型 + 哔哩哔哩标志性的 `#fb7299` 粉）都和哔哩哔哩的商标高度接近。
-商店政策 [Impersonation & Intellectual Property](https://developer.chrome.com/docs/webstore/program-policies/impersonation-and-intellectual-property) 第 1、5 条禁止暗示“获得对方授权或由对方出品”，第 6 条说明可能因此降低曝光。这是**目前最可能被驳回的一项**。
+当前名称为 **Bili 缓冲站**；图标已改为原创「提前一格」蓝青色播放与缓冲分段造型，不再使用电视机与粉色组合。名称与详情页仍需清楚表达非官方身份。
+商店政策 [Impersonation & Intellectual Property](https://developer.chrome.com/docs/webstore/program-policies/impersonation-and-intellectual-property) 第 1、5 条禁止暗示“获得对方授权或由对方出品”，第 6 条说明可能因此降低曝光。最终是否通过由商店审核决定。
 
 三种处理方式，任选其一后同步 `manifest.json`、`popup.html`、`README.md` 与图标：
 

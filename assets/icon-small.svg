@@ -1,12 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-labelledby="title desc">
-  <title id="title">Bili 缓冲站小尺寸图标</title>
-  <desc id="desc">透明背景上的蓝色圆角电视，白色播放三角与粉色缓存进度条</desc>
-  <!--
-    16/32 像素下细描边会被抗锯齿抹平，所以这一版去掉天线、指示灯和进度槽，
-    只保留“蓝色机身 + 白色播放三角 + 粉色进度条”三个大色块，
-    与 128 版保持同一套识别特征。四周同样留透明边距，避免变成方块底。
-  -->
-  <rect x="3" y="4.5" width="26" height="23" rx="7" fill="#13a9df"/>
-  <path d="M12 10.5 22 15.5 12 20.5Z" fill="#f7fcff"/>
-  <rect x="6.5" y="21.5" width="19" height="3.5" rx="1.75" fill="#fb7299"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img" aria-labelledby="title desc">
+  <title id="title">Bili 缓冲站 · 提前一格小尺寸图标</title>
+  <desc id="desc">蓝色播放主体与两段青色缓冲块，针对 16 和 32 像素优化。</desc>
+  <!-- 小尺寸主体适当放大；两道 2 单位间隙在 16 像素下仍各占一整像素，避免三段粘连。 -->
+  <path fill="#159DCF" d="M2 4Q2 2 4 3.5L15 11Q16 11.7 16 13V19Q16 20.3 15 21L4 28.5Q2 30 2 28Z"/>
+  <path fill="#20B7D6" d="M18 10Q18 9 19 9.7L22 12Q23 12.7 23 14V18Q23 19.3 22 20L19 22.3Q18 23 18 22Z"/>
+  <path fill="#20B7D6" d="M25 13Q25 12 26 12.7L29 15Q30 16 29 17L26 19.3Q25 20 25 19Z"/>
 </svg>

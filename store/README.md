@@ -44,7 +44,7 @@ npm run store:assets
 前置：已注册 Chrome Web Store 开发者账号（一次性 5 美元注册费）。
 
 1. **先补两个决定**（见 `listing.md` 第 0 节）：
-   - 名称与商标：当前 `Bili 缓冲站` + 电视造型图标与哔哩哔哩商标接近，建议改名后再提审。
+   - 名称与商标：图标已采用原创「提前一格」造型；名称 `Bili 缓冲站` 的说明与非官方身份仍按 `listing.md` 第 0.1 节处理。
    - 隐私政策网址：把仓库 `main` 分支根目录发布为 GitHub Pages，得到
      `https://kihara-ri.github.io/bilibili-buffer-extension/privacy.html`。
 2. **跑通校验并出包**
@@ -91,7 +91,7 @@ npm run store:assets
 | 权限最小化（Minimum Permissions） | 8 个权限逐条写明用途；`npm run verify` 对权限白名单做硬校验，新增权限会直接失败 |
 | 数据使用与披露（Limited Use / Disclosure） | 无服务端、不上传数据；`privacy.html` 写明数据去向与 Limited Use 声明；弹窗页脚常驻隐私入口 |
 | 远程代码（Remote Code） | 发布包内无 `eval` / `new Function` / `importScripts` / 远程或内联脚本，`npm run verify` 逐文件扫描 |
-| 知识产权与假冒（Impersonation & IP） | **当前最大风险**：名称与图标需按 `listing.md` 第 0.1 节处理，截图与详情页均带“非官方”声明 |
+| 知识产权与假冒（Impersonation & IP） | 图标已更新为「提前一格」；名称与非官方身份说明按 `listing.md` 第 0.1 节处理，截图与详情页均带“非官方”声明 |
 | 关键词堆砌（Keyword Spam） | 摘要与详细描述只描述真实功能，不堆叠无关关键词 |
 | 图片规范 | 素材由脚本生成并强制校验尺寸；截图 1280×800 方角无内边距 |
 | 清单字段超限 | `npm run verify` 校验名称 ≤75 字、描述 ≤132 字、图标四尺寸齐全且带透明留白 |
