@@ -200,18 +200,33 @@ async function startDownload(video) {
   const running = activeDownloads.get(video.id);
   if (running) return { started: false, video: await getVideo(video.id) };
 
-  const existing = await getVideo(video.id);
-  if (existing?.status === "complete") {
-    return { started: false, alreadyComplete: true, video: existing };
-  }
-
-  // 创建順序只在首次加入任务时确定；续传/速度更新不能让片库重新排队。
-  video = { ...video, createdAt: existing?.createdAt || video.createdAt || Date.now(), runStartedAt: Date.now() };
+  // 必须同步占位再进入异步校验：连点「开始缓存」或看门狗恢复与用户启动竞态时，
+  // 两条 START_DOWNLOAD 会在 getVideo 的 IndexedDB 读窗口内交错。若占位晚于
+  // await，后到的一条会再建一个下载器并覆盖 Map 注册；先结束的一方还会把另一方的
+  // 注册删掉，产生不受删除/中止控制的孤儿下载器，甚至重建刚删除的数据。
   const job = { controller: new AbortController(), deleted: false };
   activeDownloads.set(video.id, job);
-  void downloadVideo(video, existing, job).finally(() => activeDownloads.delete(video.id));
-  const { auth: _auth, playurlData: _playurlData, ...publicVideo } = video;
-  return { started: true, video: existing || publicVideo };
+  try {
+    const existing = await getVideo(video.id);
+    if (existing?.status === "complete") {
+      releaseDownloadJob(video.id, job);
+      return { started: false, alreadyComplete: true, video: existing };
+    }
+
+    // 创建順序只在首次加入任务时确定；续传/速度更新不能让片库重新排队。
+    video = { ...video, createdAt: existing?.createdAt || video.createdAt || Date.now(), runStartedAt: Date.now() };
+    void downloadVideo(video, existing, job).finally(() => releaseDownloadJob(video.id, job));
+    const { auth: _auth, playurlData: _playurlData, ...publicVideo } = video;
+    return { started: true, video: existing || publicVideo };
+  } catch (error) {
+    releaseDownloadJob(video.id, job);
+    throw error;
+  }
+}
+
+/** 只撤销仍属于该任务的注册：任何交错路径都不能把别的 job 从 Map 里删掉。 */
+function releaseDownloadJob(videoId, job) {
+  if (activeDownloads.get(videoId) === job) activeDownloads.delete(videoId);
 }
 
 function toDashTrack(name, representation) {

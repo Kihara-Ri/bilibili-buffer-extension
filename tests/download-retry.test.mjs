@@ -27,6 +27,18 @@ test("数据库、编码和媒体身份冲突不会无限重试", () => {
   ]) assert.equal(isRecoverableDownloadError(new Error(message)), false, message);
 });
 
+test("预算与租约的暂时性协调错误按可恢复处理", () => {
+  for (const message of [
+    "共享下载预算不可用",
+    "请求预算通道繁忙",
+    "请求预算桥超时",
+    "等待共享下载预算超时",
+    "请求预算服务超时",
+    "下载租约已过期",
+    "下载租约到期"
+  ]) assert.equal(isRecoverableDownloadError(new Error(message)), true, message);
+});
+
 test("长时间断网仍持续续传，退避间隔最多五分钟", () => {
   const now = 1_000_000;
   const first = makeDownloadRetryState({}, new Error("Failed to fetch"), now);

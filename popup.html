@@ -105,41 +105,84 @@
               </button>
             </div>
             <p id="assist-status" class="assist-status" role="status" aria-live="polite">等待视频加载</p>
-            <div class="assist-network-settings">
-              <label for="assist-cdn-mode">CDN 路线<select id="assist-cdn-mode"><option value="mainland">大陆优先</option><option value="auto">原线路优先</option><option value="original" selected>仅原始节点</option></select></label>
-              <label for="assist-concurrency">最大并发<select id="assist-concurrency"><option value="4">4</option><option value="8">8</option><option value="16">16</option><option value="32" selected>32</option></select></label>
-            </div>
-            <dl class="assist-metrics" aria-label="播放加速统计">
+            <!--
+              概览只保留回答「有没有效果」的三个数字；其余诊断计数收进「详细统计」，
+              避免一屏堆满多数时间静止的 0 次读数。
+            -->
+            <dl class="assist-summary" aria-label="播放加速概览">
               <div><dt>加速网速</dt><dd id="assist-speed">—</dd></div>
               <div><dt>已命中缓存</dt><dd id="assist-hit">—</dd></div>
-              <div><dt>播放器缓冲</dt><dd id="assist-buffer">—</dd></div>
               <div><dt>预热就绪</dt><dd id="assist-ready">—</dd></div>
-              <div><dt>下载并发 / 当前上限</dt><dd id="assist-connections">—</dd></div>
-              <div><dt>备用节点救援</dt><dd id="assist-rescues">—</dd></div>
-              <div><dt>已加速请求</dt><dd id="assist-accelerated">—</dd></div>
-              <div><dt>原线路回退</dt><dd id="assist-fallbacks">—</dd></div>
-              <div class="assist-node"><dt>最近完成节点</dt><dd id="assist-node">等待连接</dd></div>
             </dl>
-            <p class="assist-metrics-note">网速包含当前播放请求与预热；默认使用原清单节点，按片段大小分配并发，缺缓冲时增援。已命中仅统计复用缓存；预热就绪取音视频连续就绪的交集。</p>
-            <section id="assist-appearance" class="assist-appearance" aria-labelledby="appearance-heading">
-              <div class="appearance-heading"><h3 id="appearance-heading">进度条外观</h3><button id="assist-appearance-reset" type="button" class="appearance-reset">恢复默认</button></div>
-              <div class="timeline-example">
-                <div id="assist-timeline-preview" class="timeline-preview" role="img" aria-label="配色示意：已播放、播放器缓冲、提前加载和未加载区域">
-                  <span class="preview-played"></span><span class="preview-native"></span><span class="preview-preheat"></span><span class="preview-empty"></span>
+            <!--
+              线路与并发是低频调节项：默认值适合大多数场景，标签与控件同行只占一行，
+              详细解释走悬停提示，不再占据独立分组。
+            -->
+            <div class="assist-network-settings">
+              <label class="network-field" for="assist-cdn-mode">
+                <span class="network-field-label">CDN 路线</span>
+                <select id="assist-cdn-mode" title="原线路 = B 站播放清单返回的节点。大陆备用节点可能改善海外的边缘命中，但签名不一定被所有节点接受，失败会自动回退原线路。">
+                  <option value="original" selected>仅原线路</option>
+                  <option value="auto">原线路 + 大陆备用</option>
+                  <option value="mainland">大陆优先</option>
+                </select>
+              </label>
+              <label class="network-field" for="assist-concurrency">
+                <span class="network-field-label">最大并发</span>
+                <select id="assist-concurrency" title="同时发起的媒体请求上限。更高不一定更快，可能触发 CDN 限流；调节立即生效，不影响已建立的连接。">
+                  <option value="4">4</option>
+                  <option value="8">8</option>
+                  <option value="16">16</option>
+                  <option value="32" selected>32</option>
+                </select>
+              </label>
+            </div>
+            <!--
+              进度条外观默认折叠：摘要行本身就是实时配色预览，一眼看到当前颜色，
+              展开后才是完整编辑器。这样配色入口不再沉在面板底部。
+            -->
+            <details id="assist-appearance" class="assist-appearance">
+              <summary class="appearance-summary">
+                <span class="appearance-summary-label">进度条外观</span>
+                <span class="appearance-summary-preview timeline-preview" aria-hidden="true"><span class="preview-played"></span><span class="preview-native"></span><span class="preview-preheat"></span><span class="preview-empty"></span></span>
+                <svg class="disclosure-caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </summary>
+              <div class="appearance-body">
+                <div class="appearance-heading"><h3 id="appearance-heading">进度条外观</h3><button id="assist-appearance-reset" type="button" class="appearance-reset">恢复默认</button></div>
+                <div class="timeline-example">
+                  <div id="assist-timeline-preview" class="timeline-preview" role="img" aria-label="配色示意：已播放、播放器缓冲、提前加载和未加载区域">
+                    <span class="preview-played"></span><span class="preview-native"></span><span class="preview-preheat"></span><span class="preview-empty"></span>
+                  </div>
+                  <div class="timeline-legend" aria-hidden="true"><span><i class="legend-played"></i>已播放</span><span><i class="legend-native"></i>播放器缓冲</span><span><i id="assist-color-preview" class="assist-color-preview"></i>提前加载</span></div>
+                  <p class="appearance-caption">配色示意，不代表当前视频进度</p>
                 </div>
-                <div class="timeline-legend" aria-hidden="true"><span><i class="legend-played"></i>已播放</span><span><i class="legend-native"></i>播放器缓冲</span><span><i id="assist-color-preview" class="assist-color-preview"></i>提前加载</span></div>
-                <p class="appearance-caption">配色示意，不代表当前视频进度</p>
+                <label class="appearance-control" for="assist-progress-color"><span>已播放颜色</span><input id="assist-progress-color" class="appearance-color-input" type="color" value="#00a1d6" aria-label="已播放颜色"></label>
+                <label class="appearance-control" for="assist-show-highlight"><span>单独标出提前加载</span><input id="assist-show-highlight" class="appearance-switch" type="checkbox" role="switch" checked aria-describedby="appearance-note"></label>
+                <fieldset id="assist-preheat-controls" class="preheat-controls">
+                  <legend>提前加载颜色</legend>
+                  <div class="assist-color-row"><div id="assist-colors" class="assist-color-palette" role="radiogroup" aria-label="提前加载颜色"></div>
+                    <label id="assist-custom-color-shell" class="assist-custom-color" title="自定义提前加载颜色"><input id="assist-custom-color" type="color" value="#ff8a1f" aria-label="自定义提前加载颜色"><span>自定义</span></label>
+                  </div>
+                </fieldset>
+                <p id="appearance-note" class="assist-appearance-note">只改变颜色，不影响提前加载。关闭区分后，缓冲区域统一显示为灰色。</p>
               </div>
-              <label class="appearance-control" for="assist-progress-color"><span>已播放颜色</span><input id="assist-progress-color" class="appearance-color-input" type="color" value="#00a1d6" aria-label="已播放颜色"></label>
-              <label class="appearance-control" for="assist-show-highlight"><span>单独标出提前加载</span><input id="assist-show-highlight" class="appearance-switch" type="checkbox" role="switch" checked aria-describedby="appearance-note"></label>
-              <fieldset id="assist-preheat-controls" class="preheat-controls">
-                <legend>提前加载颜色</legend>
-                <div class="assist-color-row"><div id="assist-colors" class="assist-color-palette" role="radiogroup" aria-label="提前加载颜色"></div>
-                  <label id="assist-custom-color-shell" class="assist-custom-color" title="自定义提前加载颜色"><input id="assist-custom-color" type="color" value="#ff8a1f" aria-label="自定义提前加载颜色"><span>自定义</span></label>
-                </div>
-              </fieldset>
-              <p id="appearance-note" class="assist-appearance-note">只改变颜色，不影响提前加载。关闭区分后，缓冲区域统一显示为灰色。</p>
-            </section>
+            </details>
+            <!-- 诊断计数默认折叠：关心排队、救援与节点归属时再展开。 -->
+            <details class="assist-diagnostics">
+              <summary class="diagnostics-summary">
+                <span>详细统计</span>
+                <svg class="disclosure-caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </summary>
+              <dl class="assist-metrics" aria-label="播放加速统计">
+                <div><dt>播放器缓冲</dt><dd id="assist-buffer">—</dd></div>
+                <div><dt>当前并发 / 上限</dt><dd id="assist-connections">—</dd></div>
+                <div><dt>已加速请求</dt><dd id="assist-accelerated">—</dd></div>
+                <div><dt>备用节点救援</dt><dd id="assist-rescues">—</dd></div>
+                <div><dt>原线路回退</dt><dd id="assist-fallbacks">—</dd></div>
+                <div class="assist-node"><dt>最近完成节点</dt><dd id="assist-node">等待连接</dd></div>
+              </dl>
+              <p class="assist-metrics-note">网速包含当前播放请求与预热；线路默认只用原清单节点，按片段大小分配并发，缺缓冲时增援。已命中仅统计复用缓存；预热就绪取音视频连续就绪的交集；播放器缓冲是 B 站播放器自身的余量。</p>
+            </details>
           </section>
         </section>
 

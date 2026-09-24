@@ -92,6 +92,9 @@ try {
   });
   assert(unitLabels[0].includes(' B/s')&&unitLabels[1].includes(' KB/s')&&unitLabels[2].includes(' MB/s')&&unitLabels[3].includes(' GB/s'));
   await page.locator('#assist-tab').click();
+  // 外观编辑器默认折叠：先验证折叠态，再展开做控件交互。
+  assert(await page.evaluate(() => !document.querySelector('#assist-appearance').open && !document.querySelector('.assist-diagnostics').open), '外观与详细统计默认折叠');
+  await page.evaluate(() => { document.querySelector('#assist-appearance').open = true; document.querySelector('.assist-diagnostics').open = true; });
   await page.locator('#assist-appearance-reset').click();
   await page.waitForTimeout(50);
   const reset=await page.evaluate(()=>({config:window.__popupTest.config,disabled:document.querySelector('#assist-preheat-controls').disabled,preview:getComputedStyle(document.querySelector('.preview-preheat')).backgroundColor}));
@@ -129,6 +132,7 @@ try {
   await page.evaluate(() => { window.__popupTest.assistStats = {cacheHitMB:1}; });
   await page.waitForTimeout(1000);
   assert.equal(await page.locator('#assist-hit').textContent(), '1.00 MB', '统计归零或回滚不得被单调钳制');
+  await page.evaluate(() => { document.querySelector('#assist-appearance').open = false; document.querySelector('.assist-diagnostics').open = false; });
   await page.locator('.app-shell').screenshot({path:path.join(shots,'playback.png')});
   const confirmedColor=await page.evaluate(()=>{window.__popupTest.failConfig=true; window.__popupTest.holdConfigRead=true; window.__popupTest.configDelay=80; return window.__popupTest.config.preheatColor;});
   await page.evaluate(()=>{const swatches=document.querySelectorAll('[data-assist-color]'); swatches[0].click(); swatches[3].click();});

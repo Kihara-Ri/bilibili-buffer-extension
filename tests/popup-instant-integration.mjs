@@ -254,6 +254,9 @@ await delay(20);
 const disabledAssist = document.querySelector("#assist-toggle").getAttribute("aria-checked") === "false";
 document.querySelector("#assist-toggle").click();
 await delay(20);
+// 外观编辑器默认折叠（摘要行仍显示实时配色），交互前手动展开。
+const appearanceCollapsedByDefault = document.querySelector("#assist-appearance").open === false;
+document.querySelector("#assist-appearance").open = true;
 document.querySelector("[data-assist-color='#20c997']").click();
 await delay(20);
 document.querySelector("#cache-tab").click();
@@ -281,6 +284,8 @@ const appearanceSaved = assistConfig.progressColor === "#2f80ed" && assistConfig
 const selectedAssistMode = assistConfig.mode;
 const assistEnabled = document.querySelector("#assist-toggle").getAttribute("aria-checked") === "true";
 const selectedAssistColor = document.querySelector("[data-assist-color][aria-checked='true']")?.dataset.assistColor;
+// 复位折叠状态，让后续在同页运行的稳定性检查观察到的仍是默认收起态。
+document.querySelector("#assist-appearance").open = false;
 
 // 画质阶梯：B 站声明但与当前账号返回不一致时，界面要说明差在哪一档。
 const ladderNote = document.querySelector("#auth-note").textContent;
@@ -332,6 +337,7 @@ const result = {
     calls.includes("SET_ASSIST_CONFIG") &&
     appearanceSaved &&
     disabledAssist &&
+    appearanceCollapsedByDefault &&
     assistEnabled &&
     selectedAssistMode === "always" &&
     selectedAssistColor === "#20c997" &&

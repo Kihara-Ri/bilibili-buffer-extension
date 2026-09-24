@@ -721,41 +721,127 @@ h2 {
   background: var(--danger);
 }
 
-.assist-settings {
-  border-bottom: 1px solid var(--line);
+/* 概览条：三个常驻数字回答“有没有效果”；固定网格与不换行数码避免心跳刷新挤动布局。 */
+.assist-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2xs) var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
 }
 
-.assist-settings summary {
+.assist-summary dt {
+  margin-bottom: 3px;
+  color: var(--ink-soft);
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+
+.assist-summary dd {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-family: "DIN Alternate", "Avenir Next Condensed", sans-serif;
+  font-size: 0.95rem;
+  font-weight: 680;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 线路与并发：低频调节项压成一行，标签与控件同行。 */
+.assist-network-settings {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.network-field {
+  flex: 1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  min-height: 42px;
-  color: var(--ink);
-  cursor: pointer;
-  font-size: 0.74rem;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+.network-field-label {
+  flex: none;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
   font-weight: 680;
-  list-style: none;
+  white-space: nowrap;
 }
 
-.assist-settings summary::-webkit-details-marker {
-  display: none;
+.network-field select {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--ink-strong);
+  font-size: 0.74rem;
+  cursor: pointer;
+  transition: border-color 140ms ease;
 }
 
-.settings-summary-trailing {
+.network-field select:hover {
+  border-color: oklch(0.72 0.08 222);
+}
+
+/* 折叠区（外观 / 详细统计）：摘要行是可点的整行，外观摘要内嵌实时配色预览。 */
+.assist-appearance,
+.assist-diagnostics {
+  border-top: 1px solid var(--line);
+  padding-top: 2px;
+}
+
+.appearance-summary,
+.diagnostics-summary {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
+  min-height: 38px;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 680;
+  list-style: none;
+  user-select: none;
 }
 
-.settings-summary-trailing svg {
-  width: 16px;
-  height: 16px;
+.appearance-summary::-webkit-details-marker,
+.diagnostics-summary::-webkit-details-marker {
+  display: none;
+}
+
+.appearance-summary-label,
+.diagnostics-summary > span {
+  flex: none;
+}
+
+.appearance-summary .timeline-preview {
+  flex: 1;
+  min-width: 0;
+}
+
+.disclosure-caret {
+  flex: none;
+  width: 15px;
+  height: 15px;
   color: var(--ink-soft);
   transition: transform 150ms ease;
 }
 
-.assist-settings[open] .settings-summary-trailing svg {
+.assist-appearance[open] > .appearance-summary .disclosure-caret,
+.assist-diagnostics[open] > .diagnostics-summary .disclosure-caret {
   transform: rotate(180deg);
+}
+
+.appearance-body {
+  padding-top: var(--space-2xs);
 }
 
 .assist-color-preview {
@@ -1093,7 +1179,6 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
-.assist-appearance { border-top: 1px solid var(--line); padding-top: 16px; }
 .appearance-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .appearance-heading h3 { margin: 0; font-size: .82rem; font-weight: 720; }
 .appearance-reset { border: 0; padding: 4px 0 4px 8px; color: var(--ink-soft); background: transparent; font-size: .7rem; cursor: pointer; }
@@ -1131,13 +1216,13 @@ h2 {
 }
 
 /* 高频统计只更新文本，固定网格与不换行数码避免心跳刷新挤动控件。 */
-.assist-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 16px; margin:16px 0 8px; }
+.assist-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 16px; margin:10px 0 8px; }
 .assist-metrics div { min-width:0; }
 .assist-metrics dt { font-size:11px; color:var(--text-muted, #777); margin-bottom:4px; }
 .assist-metrics dd { margin:0; font-size:14px; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .assist-metrics .assist-node { grid-column:1 / -1; }
 .assist-metrics .assist-node dd { font-size:11px; }
-.assist-metrics-note { margin:8px 0 16px; font-size:11px; line-height:1.5; color:var(--text-muted, #777); }
+.assist-metrics-note { margin:8px 0 4px; font-size:11px; line-height:1.5; color:var(--text-muted, #777); }
 
 /* 浏览器自检：只在发现能力缺失时出现，样式刻意低调，避免与主流程争注意力。 */
 .browser-health { margin:0 0 12px; padding:10px 12px; border:1px solid var(--line); border-left:3px solid var(--danger); border-radius:10px; background:var(--surface-soft); }
@@ -1152,7 +1237,3 @@ h2 {
 .browser-health-list strong { margin-right:6px; color:var(--ink-strong); }
 .browser-health-note { margin:8px 0 0; font-size:11px; line-height:1.5; color:var(--text-muted, #777); }
 .browser-health-note code { padding:1px 4px; border-radius:4px; background:var(--surface-raised); font-size:11px; }
-
-.assist-network-settings { display:flex; gap:12px; margin:12px 0; }
-.assist-network-settings label { flex:1; min-width:0; font-size:11px; }
-.assist-network-settings select { width:100%; display:block; margin-top:6px; padding:7px; border:1px solid #bdd9e6; border-radius:8px; background:transparent; color:inherit; font:inherit; }

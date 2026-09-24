@@ -118,6 +118,36 @@ try {
   const watermark = new Map();
   for (const { video } of progress) { const run = video.runStartedAt || 0; assert(video.committedBytes >= (watermark.get(run) || 0), "同次下载的确认落盘量不能随网络回滚减少"); watermark.set(run, video.committedBytes); }
 
+  // 复现 2.8.9 修复的竞态：两条 START_DOWNLOAD 在 startDownload 的 getVideo
+  // await 窗口内交错时，第二条必须看到占位并返回 started:false，
+  // 否则会产生同任务双下载器、先结束的一方还会删掉另一方的注册。
+  const raceId = `BV1integration:101:q80:${Date.now()}`;
+  const makeRaceVideo = () => ({
+    id: raceId,
+    pageId: "BV1integration:101",
+    bvid: "BV1integration",
+    cid: 101,
+    title: "并发启动竞态测试",
+    owner: "测试",
+    duration: 60,
+    requestedQuality: 80,
+    requestedQualityExplicit: true,
+    requestedCodec: "auto",
+    playurlData: makePlayurlData(),
+    auth: { hasSessionCookie: false },
+    url: "https://www.bilibili.com/video/BV1integration/",
+    updatedAt: Date.now()
+  });
+  const firstStart = send({ target: "offscreen", type: "START_DOWNLOAD", video: makeRaceVideo() });
+  const secondStart = send({ target: "offscreen", type: "START_DOWNLOAD", video: makeRaceVideo() });
+  const [firstRace, secondRace] = await Promise.all([firstStart, secondStart]);
+  if (!firstRace.ok || !secondRace.ok) throw new Error(`并发启动失败：${JSON.stringify([firstRace, secondRace])}`);
+  if (firstRace.started === secondRace.started) {
+    throw new Error(`并发 START_DOWNLOAD 必须恰好启动一个下载器：${JSON.stringify([firstRace.started, secondRace.started])}`);
+  }
+  await send({ target: "offscreen", type: "DELETE_VIDEO", videoId: raceId });
+  await deleteVideoData(raceId).catch(() => {});
+
   document.querySelector("#result").textContent = JSON.stringify({
     ok: true,
     downloadedBytes: completed.downloadedBytes,

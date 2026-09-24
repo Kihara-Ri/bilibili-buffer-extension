@@ -25,14 +25,34 @@ test("缓存页提供视频 + 音频与仅音频两种缓存内容", () => {
   assert.match(html, /缓存内容/);
 });
 
-test("播放页使用直接预览和明确的外观控制，不再嵌套折叠设置", () => {
+test("播放页概览紧凑，外观与详细统计分区折叠", () => {
   assert.match(html, /id="assist-toggle"[^>]*role="switch"/);
   assert.doesNotMatch(html, /data-assist-mode=/);
-  assert.match(html, /class="assist-metrics"/);
-  assert.match(html, /id="assist-appearance"/);
+  // 概览条只保留三个常驻数字，其余诊断计数必须留在折叠的详细统计里。
+  assert.match(html, /class="assist-summary"/);
+  for (const id of ["assist-speed", "assist-hit", "assist-ready"]) {
+    const metric = html.match(new RegExp(`<dd id="${id}"[^>]*>—</dd>`));
+    assert.ok(metric, `概览缺少 ${id}`);
+    assert.ok(html.indexOf('class="assist-summary"') < html.indexOf(`id="${id}"`), `${id} 应位于概览条内`);
+  }
+  const summaryStart = html.indexOf('class="assist-summary"');
+  const summaryEnd = html.indexOf("</dl>", summaryStart);
+  for (const id of ["assist-buffer", "assist-connections", "assist-node"]) {
+    assert.ok(!(html.indexOf(`id="${id}"`) > summaryStart && html.indexOf(`id="${id}"`) < summaryEnd), `诊断指标 ${id} 不应出现在概览条`);
+  }
+  // 网络设置压成一行，两个下拉都在。
+  assert.match(html, /id="assist-cdn-mode"/);
+  assert.match(html, /id="assist-concurrency"/);
+  assert.match(html, /<option value="original" selected>仅原线路<\/option>/);
+  // 外观是折叠区：摘要行自带实时预览，展开后才有完整编辑器与恢复默认。
+  assert.match(html, /<details id="assist-appearance"/);
+  assert.match(html, /<summary class="appearance-summary">/);
   assert.match(html, /id="assist-timeline-preview"/);
   assert.match(html, /id="assist-appearance-reset"/);
-  assert.doesNotMatch(html, /<details class="assist-settings">/);
+  // 详细统计独立折叠，包含剩余指标与说明。
+  assert.match(html, /class="assist-diagnostics"/);
+  assert.match(html, /class="assist-metrics"/);
+  assert.match(html, /class="assist-metrics-note"/);
   assert.match(html, /id="assist-tab-indicator"/);
   assert.match(html, /id="library-count"/);
 });
