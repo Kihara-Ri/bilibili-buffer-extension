@@ -1,6 +1,6 @@
 {
   "name": "bili-buffer-extension",
-  "version": "2.8.7",
+  "version": "2.8.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,7 +14,8 @@
     "test:network": "node tests/run-playback-network.mjs && node tests/run-playback-demand.mjs",
     "test:playback": "node tests/run-playback-cache-integration.mjs",
     "test:extension": "npm run build && node tests/run-playback-extension-smoke.mjs",
+    "test:chrome": "node scripts/test-chrome.mjs",
     "bench:real": "node scripts/benchmark-real-playback.mjs",
-    "check": "node scripts/check-syntax.mjs"
+    "check": "node scripts/check-syntax.mjs && node scripts/check-browser-compat.mjs"
   }
 }

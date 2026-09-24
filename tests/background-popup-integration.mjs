@@ -1,6 +1,7 @@
 import { deleteVideoData, putVideo } from "../src/db.js";
 
 let messageListener;
+let installedListener;
 let cookieChangeListener;
 let viewRequests = 0;
 let playurlRequests = 0;
@@ -18,6 +19,9 @@ const localStorage = {};
 globalThis.chrome = {
   runtime: {
     onMessage: { addListener(listener) { messageListener = listener; } },
+    // 后台在 onInstalled 时会跑一次浏览器侧自检；夹具只记录注册，不模拟触发。
+    onInstalled: { addListener(listener) { installedListener = listener; } },
+    getManifest() { return { minimum_chrome_version: "116" }; },
     async getPlatformInfo() { return {}; },
     reload() {},
     getURL(path) { return `chrome-extension://test/${path}`; },

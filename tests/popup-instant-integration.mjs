@@ -210,6 +210,23 @@ globalThis.chrome = {
         cacheMode = message.mode;
         return { ok: true, mode: cacheMode };
       }
+      // 浏览器自检：默认返回全绿；置 __popupTest.healthFailure 可模拟能力缺失。
+      if (message.type === "GET_HEALTH") {
+        const failure = window.__popupTest?.healthFailure;
+        return {
+          ok: true,
+          report: {
+            ok: !failure,
+            browserVersion: "153.0.8010.12",
+            checkedAt: Date.now(),
+            checks: [
+              { id: "storage-local", label: "本地存储", ok: true, detail: "" },
+              { id: "indexeddb", label: "本地缓存数据库", ok: true, detail: "" },
+              { id: "offscreen", label: "后台下载文档", ok: !failure, detail: failure ? String(failure) : "" }
+            ]
+          }
+        };
+      }
       throw new Error(`未预期的请求：${message.type}`);
     }
   }

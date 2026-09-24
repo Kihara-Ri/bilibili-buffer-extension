@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const browser = await chromium.launch({ channel: 'chromium', headless: true });
+import { chromiumLaunchOptions } from '../scripts/lib/browser-launch.mjs';
+
+const browser = await chromium.launch(chromiumLaunchOptions({ headless: true }));
 try {
   const page = await browser.newPage();
   const errors = [], requests = [];

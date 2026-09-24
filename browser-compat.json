@@ -1,0 +1,23 @@
+{
+  "note": "扩展已被人工验收过的 Chrome 主版本。Chrome 更新后本机版本若不在此列表中，`npm run check` 会失败并指向 `npm run test:chrome`——这是刻意的：2026-09-23 Chrome 升到 154 时，仓库的浏览器验收还只跑在 153 上，版本差一档导致插件不可用没人发现。",
+  "suites": [
+    "test:playback",
+    "test:network",
+    "test:popup",
+    "test:extension"
+  ],
+  "verified": [
+    {
+      "major": 153,
+      "build": "153.0.8010.12",
+      "verifiedAt": "2026-09-23",
+      "evidence": "Playwright 自带 Chrome for Testing（chromium-1243）。test:playback / test:network / test:popup / test:extension 全部通过。"
+    },
+    {
+      "major": 154,
+      "build": "154.0.8037.57",
+      "verifiedAt": "2026-09-23",
+      "evidence": "与本机用户 Chrome 同构建，由 npm run test:chrome 自动获取并重跑：四个套件全部通过。另用真实扩展 + 本地假 CDN 在 154 上验证了 Offscreen 离线下载（11,534,546 字节）、共享下载预算租约与 DNR 规则集。"
+    }
+  ]
+}

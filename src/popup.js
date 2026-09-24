@@ -63,6 +63,10 @@ const elements = {
   assistColorPreview: document.querySelector("#assist-color-preview"),
   assistCustomColor: document.querySelector("#assist-custom-color"),
   assistCustomColorShell: document.querySelector("#assist-custom-color-shell"),
+  browserHealth: document.querySelector("#browser-health"),
+  browserHealthStatus: document.querySelector("#browser-health-status"),
+  browserHealthList: document.querySelector("#browser-health-list"),
+  browserHealthRefresh: document.querySelector("#browser-health-refresh"),
   videoList: document.querySelector("#video-list"),
   librarySummary: document.querySelector("#library-summary"),
   toast: document.querySelector("#toast")
@@ -133,6 +137,7 @@ elements.qualityMenu.addEventListener("keydown", navigateQualityMenu);
 elements.qualityMenu.addEventListener("toggle", handleQualityMenuToggle);
 elements.qualityTrigger.addEventListener("keydown", openQualityMenuFromKeyboard);
 elements.assistToggle.addEventListener("click", toggleAssist);
+elements.browserHealthRefresh.addEventListener("click", () => refreshHealth({ refresh: true }));
 elements.cdnMode.addEventListener("change", () => persistProgressAppearance({cdnMode:elements.cdnMode.value,networkPolicyVersion:3}));
 elements.concurrency.addEventListener("change", () => persistProgressAppearance({maxConcurrency:Number(elements.concurrency.value),networkPolicyVersion:3}));
 elements.assistColors.addEventListener("click", selectAssistColor);
@@ -226,6 +231,8 @@ async function initialize() {
   state.tab = tabs[0] || null;
   await loadCacheModePreference();
   void refreshAssistState();
+  // 自检只在打开弹窗时读一次（后台缓存 6 小时），不参与 700 ms/1 s 轮询。
+  void refreshHealth();
   const libraryPromise = refreshLibrary();
   const restored = await restorePopupSnapshot();
   if (!restored) {
@@ -704,6 +711,54 @@ function renderAssist() {
   elements.assistStatus.dataset.state = statusState;
   elements.assistTab.title = status;
   elements.assistTabIndicator.dataset.tone = enabled ? "active" : "off";
+}
+
+/**
+ * 读取浏览器侧自检结论（见 src/health-check.js）。
+ * 正常时不显示任何东西：只有发现能力缺失或读不到结论时才展开，避免制造焦虑。
+ */
+async function refreshHealth({ refresh = false } = {}) {
+  elements.browserHealthRefresh.disabled = true;
+  try {
+    const result = await send("GET_HEALTH", { refresh });
+    state.healthReport = result.report || null;
+    state.healthError = "";
+  } catch (error) {
+    state.healthReport = null;
+    state.healthError = error?.message || "无法读取自检结果";
+  } finally {
+    elements.browserHealthRefresh.disabled = false;
+  }
+  renderHealth();
+}
+
+function renderHealth() {
+  const report = state.healthReport;
+  const failed = (report?.checks || []).filter((check) => !check.ok);
+  const visible = Boolean(state.healthError) || failed.length > 0;
+  elements.browserHealth.hidden = !visible;
+  if (!visible) {
+    state.healthSignature = "";
+    return;
+  }
+  // 自检结论是低频数据；只有内容变化才重建列表，保持节点身份与键盘焦点。
+  const signature = state.healthError || `${report.browserVersion}|${failed.map((check) => `${check.id}:${check.detail}`).join("|")}`;
+  if (signature === state.healthSignature) return;
+  state.healthSignature = signature;
+  // 不写「N 项」这类数字加量词：中文可断行，窄宽度下会把数字与量词拆到两行。
+  setText(elements.browserHealthStatus, state.healthError
+    ? `自检未完成：${state.healthError}`
+    : `浏览器自检未通过（Chrome ${report.browserVersion || "版本未知"}），下面列出的能力当前不可用`);
+  elements.browserHealthList.replaceChildren(...failed.map((check) => {
+    const item = document.createElement("li");
+    item.dataset.healthCheck = check.id;
+    const label = document.createElement("strong");
+    label.textContent = check.label;
+    const detail = document.createElement("span");
+    detail.textContent = check.detail;
+    item.append(label, detail);
+    return item;
+  }));
 }
 
 async function toggleAssist() {

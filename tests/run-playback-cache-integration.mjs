@@ -4,6 +4,8 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { chromiumLaunchOptions } from '../scripts/lib/browser-launch.mjs';
+
 const root = fileURLToPath(new URL('../', import.meta.url));
 const server = createServer(async (req, res) => {
   try {
@@ -15,7 +17,7 @@ const server = createServer(async (req, res) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
-const browser = await chromium.launch({ channel: 'chromium', headless: true });
+const browser = await chromium.launch(chromiumLaunchOptions({ headless: true }));
 try {
   const page = await browser.newPage();
   const errors = []; page.on('pageerror', error => errors.push(error.message));

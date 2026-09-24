@@ -4,6 +4,8 @@ import { readFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { chromiumLaunchOptions } from '../scripts/lib/browser-launch.mjs';
+
 const root = fileURLToPath(new URL('../', import.meta.url));
 const server = createServer(async (req, res) => {
   try {
@@ -15,7 +17,7 @@ const server = createServer(async (req, res) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
-const browser = await chromium.launch({ channel:'chromium', headless:true });
+const browser = await chromium.launch(chromiumLaunchOptions({ headless: true }));
 const shots = path.join(root, '.pi/verification/popup-stability');
 await mkdir(shots, { recursive: true });
 try {
@@ -142,6 +144,30 @@ try {
   assert.equal(await page.locator('[data-video-id="popup-live-b"]').count(),0,'已删除任务不能被旧消息或旧查询复活');
   await page.emulateMedia({reducedMotion:'reduce'}); await page.locator('#library-tab').click(); await save.hover();
   assert.equal(await save.locator('.download-arrow').evaluate(node=>getComputedStyle(node).animationName),'none');
+  // 浏览器自检区块：只在发现能力缺失时出现，重复检测不重建节点，恢复后收起。
+  const health = await page.evaluate(async()=>{
+    const panel=document.querySelector('#browser-health');
+    if(!panel.hidden) throw new Error('健康状态下不应显示自检区块');
+    window.__popupTest.healthFailure='offscreen 不可用';
+    document.querySelector('#browser-health-refresh').click();
+    await new Promise(resolve=>setTimeout(resolve,120));
+    const first=document.querySelector('#browser-health-list li');
+    const firstSignature=first?.dataset.healthCheck;
+    const status=document.querySelector('#browser-health-status').textContent;
+    document.querySelector('#browser-health-refresh').click();
+    await new Promise(resolve=>setTimeout(resolve,120));
+    const sameNode=first===document.querySelector('#browser-health-list li');
+    const items=document.querySelectorAll('#browser-health-list li').length;
+    window.__popupTest.healthFailure='';
+    document.querySelector('#browser-health-refresh').click();
+    await new Promise(resolve=>setTimeout(resolve,120));
+    return {hidden:panel.hidden,firstSignature,status,sameNode,items,focus:document.activeElement?.id};
+  });
+  assert.equal(health.firstSignature,'offscreen',JSON.stringify(health));
+  assert(health.status.includes('浏览器自检未通过')&&health.status.includes('153.0.8010.12'),JSON.stringify(health));
+  assert.equal(health.items,1);
+  assert(health.sameNode,'自检结论未变化时不能重建列表节点');
+  assert(health.hidden,'能力恢复后自检区块必须收起');
   for(const fixture of ['background-popup-integration','offscreen-integration','offscreen-merge-integration']){
     await page.goto(`${origin}/tests/${fixture}.html`);
     await page.waitForFunction(()=>document.querySelector('#result').textContent !== 'running',{},{timeout:45000});

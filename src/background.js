@@ -40,6 +40,7 @@ import {
 import { ASSIST_DEFAULTS, sanitizeAssistConfig } from "./assist-config.js";
 import { createBudgetService, budgetOwner } from "./request-budget.js";
 import { createSourceRepository, createSourceService, sourceRangeScope } from "./source-range-store.js";
+import { collectHealthChecks } from "./health-check.js";
 
 const requestBudget = createBudgetService(chrome.storage.session, async () => (await getAssistConfig()).maxConcurrency);
 // 离线已下载的源范围镜像：只接收逐字节校验过的 CDN 范围，供播放侧按「路径 + 总长」复用。
@@ -63,15 +64,45 @@ const OFFSCREEN_PATH = "offscreen.html";
 const POPUP_SNAPSHOTS_KEY = "popupPageSnapshotsV1";
 const ASSIST_CONFIG_KEY = "playbackAssistConfigV1";
 const CACHE_MODE_KEY = "cacheModeV1";
+const HEALTH_REPORT_KEY = "browserHealthV1";
+const HEALTH_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 let creatingOffscreen;
 let restoringDownloads;
 let popupSnapshotQueue = Promise.resolve();
 let badgeQueue = Promise.resolve();
 const popupSnapshotMemory = new Map();
+let healthReportQueue = null;
+
+/**
+ * 浏览器侧能力自检结论。Chrome 更新（onInstalled 的 chrome_update）会强制刷新，
+ * 其余情况 6 小时内复用，避免每次打开弹窗都重跑一遍探测。
+ * @param {{refresh?:boolean}} [options] @returns {Promise<object>}
+ */
+function readHealthReport({ refresh = false } = {}) {
+  const load = async () => {
+    const saved = await chrome.storage.local.get(HEALTH_REPORT_KEY).then((values) => values?.[HEALTH_REPORT_KEY]).catch(() => null);
+    const fresh = saved && Date.now() - Number(saved.checkedAt || 0) < HEALTH_MAX_AGE_MS;
+    if (!refresh && fresh) return saved;
+    const report = await collectHealthChecks();
+    await chrome.storage.local.set({ [HEALTH_REPORT_KEY]: report }).catch(() => {});
+    return report;
+  };
+  // 并发合并：弹窗轮询与 onInstalled 可能同时触发，只跑一次探测。
+  healthReportQueue = healthReportQueue ? healthReportQueue.then(load, load) : load();
+  const pending = healthReportQueue;
+  healthReportQueue = pending.catch(() => {});
+  return pending;
+}
 
 if (chrome.runtime.id) startDevReloadBackground(ensureOffscreenDocument);
 void restoreActiveDownloads();
 void restoreTaskBadges();
+chrome.runtime.onInstalled.addListener((details) => {
+  // Chrome 自更新（chrome_update）与扩展更新是浏览器侧能力最容易变的时刻，
+  // 立刻记一份结论，用户下次打开弹窗就能看到哪里失效，而不是只看到「没反应」。
+  void readHealthReport({ refresh: true }).catch(() => {});
+  if (details?.reason === "update" || details?.reason === "chrome_update") void invalidatePopupSnapshots();
+});
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm?.name === DOWNLOAD_WATCHDOG_ALARM) void restoreActiveDownloads();
 });
@@ -119,6 +150,8 @@ async function handleMessage(message, sender) {
       return { saved: await savePopupSelection(message.tabId, message.url, message.quality, message.codec) };
     case "GET_ASSIST_STATE":
       return getAssistState(message.tabId);
+    case "GET_HEALTH":
+      return { report: await readHealthReport({ refresh: message.refresh === true }) };
     case "GET_CACHE_MODE":
       return { mode: await getCacheModePreference() };
     case "SET_CACHE_MODE":

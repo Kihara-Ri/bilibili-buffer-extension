@@ -2,11 +2,13 @@
 // 分块下载 → 重封装合并 → 用合并结果播放 → 仅缓存音频（Hi-Res 无损优先）。
 import { deleteVideoData, getChunks, putChunk, putVideo } from "../src/db.js";
 import { listBoxes, parseFragment, readBoxHeader, verifyMergedHeader } from "../src/mp4-merge.js";
+import { createFakeBudget } from "./fixtures/fake-budget.mjs";
 
 const VIDEO = new Uint8Array(await (await fetch("./fixtures/dash-video-2frag.mp4")).arrayBuffer());
 const AUDIO = new Uint8Array(await (await fetch("./fixtures/dash-audio-2frag.mp4")).arrayBuffer());
 const PROGRESSIVE = new Uint8Array(await (await fetch("./fixtures/progressive-avc-aac.mp4")).arrayBuffer());
 const broadcasts = [];
+const budget = createFakeBudget();
 let messageListener;
 const stepElement = () => document.querySelector("#step");
 function mark(label) {
@@ -27,6 +29,9 @@ globalThis.chrome = {
       }
     },
     async sendMessage(message) {
+      // 与离线下载共用同一套租约状态机；缺少租约会让下载器一直等待预算。
+      const budgetReply = budget.handle(message);
+      if (budgetReply) return budgetReply;
       broadcasts.push(message);
       return { ok: true };
     }
@@ -96,6 +101,7 @@ try {
     return record?.status === "complete" ? record : null;
   }, 30000);
 
+  assert(budget.acquireCount > 0, "离线下载没有申请共享下载预算");
   assert(!mergedRecord.mergeError, `合并失败：${mergedRecord.mergeError}`);
   assert(mergedRecord.merged?.totalBytes > 0, "没有生成合并文件元数据");
   assert(mergedRecord.merged.totalBytes === mergedRecord.totalBytes, "合并记录总字节数不一致");
@@ -324,7 +330,8 @@ try {
       label: audioRecord.audioLabel,
       bytes: audioOnlyBytes.length
     },
-    mergeBroadcasts: broadcasts.filter((message) => String(message.video?.stage || "").includes("merg")).length
+    mergeBroadcasts: broadcasts.filter((message) => String(message.video?.stage || "").includes("merg")).length,
+    budget: { acquires: budget.acquireCount, releases: budget.releaseCount }
   }, null, 2);
 } catch (error) {
   document.querySelector("#result").textContent = JSON.stringify({ ok: false, error: error.stack || error.message }, null, 2);

@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { chromiumLaunchOptions } from '../scripts/lib/browser-launch.mjs';
+
 const extension = fileURLToPath(new URL('../dist/unpacked/', import.meta.url));
 const bundlePath = extension + "src/playback-cache.js";
 const originalBundle = await readFile(bundlePath, "utf8");
@@ -12,7 +14,7 @@ window.__biliCacheReloadProbe = ${JSON.stringify(String(Date.now()))};
 `;
 const profile = await mkdtemp(tmpdir() + '/bili-cache-smoke-');
 const context = await chromium.launchPersistentContext(profile, {
-  channel: 'chromium', headless: true,
+  ...chromiumLaunchOptions({ headless: true }),
   args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]
 });
 try {

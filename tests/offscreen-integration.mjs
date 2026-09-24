@@ -1,9 +1,11 @@
 import { deleteVideoData, getChunks } from "../src/db.js";
+import { createFakeBudget } from "./fixtures/fake-budget.mjs";
 
 const MiB = 1024 * 1024;
 const videoBytes = makeBytes(9 * MiB + 137, 17);
 const audioBytes = makeBytes(2 * MiB + 73, 91);
 const broadcasts = [];
+const budget = createFakeBudget();
 let messageListener;
 let sourceRefreshRequests = 0;
 
@@ -20,6 +22,10 @@ globalThis.chrome = {
       }
     },
     async sendMessage(message) {
+      // 租约必须真的授予：真实链路里由后台 request-budget 服务应答，
+      // 这里复用同一状态机，缺了它下载器只会空等到超时。
+      const budgetReply = budget.handle(message);
+      if (budgetReply) return budgetReply;
       if (message.type === "REFRESH_DOWNLOAD_SOURCE") {
         sourceRefreshRequests += 1;
         return {
@@ -104,6 +110,9 @@ try {
   assert(completed.tracks.video.metrics.cdnHost === "renewed.test", "刷新后没有切换到新视频 CDN");
   assert(completed.tracks.audio.metrics.cdnHost === "renewed.test", "刷新后没有切换到新音频 CDN");
   assert(sourceRefreshRequests >= 1, "签名地址失效后没有刷新播放地址");
+  // 2.8.2 起在线与离线共用租约：下载必须经过预算，且在正文结束后归还。
+  assert(budget.acquireCount > 0, "离线下载没有申请共享下载预算");
+  assert(budget.releaseCount > 0, "下载正文结束后没有归还租约");
   const progress = broadcasts.filter(message => message.type === "CACHE_PROGRESS" && message.video?.status === "downloading");
   assert(progress.length > 0 && progress.every(({video}) => Number.isFinite(video.committedBytes) && video.committedBytes <= video.resumeBytes), "所有下载快照都必须区分确认落盘与在途水位");
   const watermark = new Map();
@@ -118,6 +127,7 @@ try {
     audioMetrics: completed.tracks.audio.metrics,
     progressEvents: broadcasts.filter((message) => message.type === "CACHE_PROGRESS").length,
     sourceRefreshRequests,
+    budget: { acquires: budget.acquireCount, releases: budget.releaseCount },
     committedWatermarkVerified: true
   }, null, 2);
 } catch (error) {

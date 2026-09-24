@@ -1,6 +1,8 @@
 # Bili 缓冲站
 
-当前版本：**2.8.7**。
+当前版本：**2.8.8**。
+
+2.8.8：修掉 2026-09-23「Chrome 更新后插件不可用」暴露的两个问题。一，浏览器验收夹具自 2.8.2 引入共享下载预算后就一直静默超时（夹具只回 `{ok:true}`，下载器拿不到租约），弹窗与离线下载这条链路实际上没有覆盖；夹具改为复用 `transitionBudget` 生产状态机，并断言租约的申请与归还。二，验收只跑在比用户低一档的 Chrome 上，版本漂移无人发现；新增 `browser-compat.json` 已验收版本记录、`npm run check` 里的 Chrome 版本兼容门禁，以及 `npm run test:chrome`（自动取与本机 Chrome 同版本的 Chrome for Testing 并跑全部浏览器套件）。另新增运行期浏览器自检（`src/health-check.js`）：Chrome 更新后若某项能力失效，弹窗会列出具体失败项与排查入口，而不是只表现成「没反应」。详见 [浏览器版本兼容与自检](docs/browser-compat.md)。
 
 2.8.7：补齐兼容与回退承诺：缺少 IndexedDB、base64、消息通道、randomUUID 或 MutationObserver 时相关能力整体降级为原生路径；镜像写入器按任务配额串行写入、连续失败即停写；复用读取超时 1.5 秒、迟到回包丢弃、连续 3 次失败暂停 60 秒；重复 install 与重复写入幂等；默认配置与权限保持不变。详见 docs/compat-fallback.md。
 
@@ -38,12 +40,13 @@ npm run test:playback
 npm run test:network    # 受控 CDN：播放清单捕获、慢节点救援和缓存复用
 npm run test:popup      # 真实 Popup 的持续刷新、悬停/焦点、数值、失败回退及多任务链路
 npm run test:extension  # 构建、真实加载、修改标记后自动重载并校验哈希
+npm run test:chrome     # 取与本机 Chrome 同版本的 Chrome for Testing，跑上面全部浏览器套件
 ```
 
 ### 发布与上架
 
 ```bash
-npm run check            # 遍历仓库的语法检查
+npm run check            # 语法检查 + Chrome 版本兼容门禁（本机 Chrome 未验收时直接失败）
 npm test                 # 单元测试 + 上架合规测试（清单字段、权限、图标、隐私声明、商店素材）
 npm run build            # 生成 dist/unpacked 与 dist/bili-buffer-extension-<version>.zip
                          # 末尾自动执行 npm run verify，逐项检查上架要求并打印 SHA-256
@@ -65,8 +68,12 @@ npm run store:assets     # 重新生成商店截图与促销图（需要 Playwri
 
 1. 打开 `chrome://extensions/`。
 2. 开启右上角“开发者模式”。
-3. 选择“加载已解压的扩展程序”，选择本项目文件夹。
+3. 选择“加载已解压的扩展程序”，选择本项目文件夹。（发布包 `dist/bili-buffer-extension-<version>.zip` 也可以直接拖进 `chrome://extensions` 安装。）
 4. 打开标准 B 站视频页（`https://www.bilibili.com/video/BV...`）或带 `bvid` 的稍后再看页面，点击工具栏中的插件图标。
+
+> **解包安装属于 Chrome 可以停用的形态**：升级 Chrome 或重启后若插件「没反应」，先到
+> `chrome://extensions` 确认「Bili 缓冲站」没有被停用（停用后内容脚本、DNR 规则和后台全部不运行）。
+> 弹窗的「浏览器自检」也会在浏览器侧能力失效时列出具体项。详见 [浏览器版本兼容与自检](docs/browser-compat.md)。
 
 ## 使用
 

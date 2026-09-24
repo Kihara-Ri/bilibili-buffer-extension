@@ -158,6 +158,20 @@
       </div>
 
       <!--
+        浏览器自检只在发现能力缺失时出现；它属于扩展整体的状态，
+        因此放在三个面板之外，页面识别失败时也能看到。
+      -->
+      <section id="browser-health" class="browser-health" aria-labelledby="browser-health-heading" hidden>
+        <div class="browser-health-head">
+          <h3 id="browser-health-heading">浏览器自检</h3>
+          <button id="browser-health-refresh" class="browser-health-refresh" type="button">重新检测</button>
+        </div>
+        <p id="browser-health-status" class="browser-health-status" role="status" aria-live="polite"></p>
+        <ul id="browser-health-list" class="browser-health-list"></ul>
+        <p class="browser-health-note">如果插件图标点不动或弹窗打不开，请到 <code>chrome://extensions</code> 确认「Bili 缓冲站」没有被停用。</p>
+      </section>
+
+      <!--
         常驻的隐私入口。Chrome Web Store 2026 年的政策更新要求“安装后也要显著披露
         数据处理方式”，所以这里给出一句常驻说明加一个本地隐私页面链接；页面随扩展
         一起打包，离线可用，不需要联网。

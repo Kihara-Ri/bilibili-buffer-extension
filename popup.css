@@ -1139,6 +1139,20 @@ h2 {
 .assist-metrics .assist-node dd { font-size:11px; }
 .assist-metrics-note { margin:8px 0 16px; font-size:11px; line-height:1.5; color:var(--text-muted, #777); }
 
+/* 浏览器自检：只在发现能力缺失时出现，样式刻意低调，避免与主流程争注意力。 */
+.browser-health { margin:0 0 12px; padding:10px 12px; border:1px solid var(--line); border-left:3px solid var(--danger); border-radius:10px; background:var(--surface-soft); }
+.browser-health-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.browser-health-head h3 { margin:0; font-size:12px; color:var(--ink-strong); }
+.browser-health-refresh { padding:4px 10px; border:1px solid var(--line); border-radius:999px; background:var(--surface-raised); color:var(--ink); font:inherit; font-size:11px; cursor:pointer; }
+.browser-health-refresh:hover { border-color:var(--blue); color:var(--blue-deep); }
+.browser-health-refresh:disabled { cursor:progress; color:var(--ink-soft); }
+.browser-health-status { margin:8px 0 0; font-size:11px; line-height:1.5; color:var(--danger); }
+.browser-health-list { margin:6px 0 0; padding-left:16px; font-size:11px; line-height:1.5; color:var(--ink); }
+.browser-health-list li + li { margin-top:4px; }
+.browser-health-list strong { margin-right:6px; color:var(--ink-strong); }
+.browser-health-note { margin:8px 0 0; font-size:11px; line-height:1.5; color:var(--text-muted, #777); }
+.browser-health-note code { padding:1px 4px; border-radius:4px; background:var(--surface-raised); font-size:11px; }
+
 .assist-network-settings { display:flex; gap:12px; margin:12px 0; }
 .assist-network-settings label { flex:1; min-width:0; font-size:11px; }
 .assist-network-settings select { width:100%; display:block; margin-top:6px; padding:7px; border:1px solid #bdd9e6; border-radius:8px; background:transparent; color:inherit; font:inherit; }
