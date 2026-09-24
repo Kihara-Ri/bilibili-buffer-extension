@@ -44,7 +44,7 @@ npm run store:assets
 前置：已注册 Chrome Web Store 开发者账号（一次性 5 美元注册费）。
 
 1. **先补两个决定**（见 `listing.md` 第 0 节）：
-   - 名称与商标：图标已采用原创「提前一格」造型；名称 `Bili 缓冲站` 的说明与非官方身份仍按 `listing.md` 第 0.1 节处理。
+   - 名称与商标：图标已采用原创「提前一格」造型；名称 `影哨` 的说明与非官方身份仍按 `listing.md` 第 0.1 节处理。
    - 隐私政策网址：把仓库 `main` 分支根目录发布为 GitHub Pages，得到
      `https://kihara-ri.github.io/bilibili-buffer-extension/privacy.html`。
 2. **跑通校验并出包**

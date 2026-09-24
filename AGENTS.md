@@ -6,7 +6,7 @@
 ## 作用域
 
 - 适用对象：本目录下所有 Chrome 扩展（Manifest V3）。
-- `bilibili缓冲插件/`：仓库根即扩展根。
+- `影哨/`：仓库根即扩展根（2026-09-24 由 `bilibili缓冲插件` 更名；旧路径是指向新路径的兼容符号链接）。
 - `b站延拓/extension/`：仅扩展部分适用本文件；`b站延拓/` 根目录是 Python 项目，遵循它自己的约定。
 - 提交发生在各子仓库内（本目录本身不是 git 仓库）。修改本文件后需 `/reload` 或重启 pi 才会重新加载。
 - 本文件是**权威副本**：`node tools/sync-agents.mjs` 生成各仓库内的副本（带「勿手改」头部标记），`node tools/sync-agents.mjs --check` 校验是否漂移。改完本文件务必同步一次。
@@ -15,7 +15,7 @@
 
 | 项目 | 扩展根 | 构建 | 热重载 | 测试 | 提交前校验 |
 | --- | --- | --- | --- | --- | --- |
-| bilibili缓冲插件 | 仓库根 | `npm run build` | `npm run dev` | `npm test` | `npm run check` |
+| 影哨 | 仓库根 | `npm run build` | `npm run dev` | `npm test` | `npm run check` |
 | b站延拓 | `extension/` | `npm run build`（在 `extension/` 内执行） | `npm run dev`（`-- --once` 单次、`-- --smoke` 自检） | `npm test` | `npm run verify` |
 
 ---
@@ -48,7 +48,7 @@
 
 - 每个扩展项目都必须提供 `npm run dev`：watch 源码 → 重新构建 → **自动重载已加载的扩展**，不需要手动点 `chrome://extensions` 的“重新加载”。
 - 优先复用本目录已有的两套参考实现（去品牌化的通用版本见 `templates/hot-reload/`，含选型对照、接入清单与验收方式），不要另造轮子：
-  - `bilibili缓冲插件/scripts/dev-reload-server.mjs` + `src/dev-reload.js`：本地 HTTP `/health` 暴露 `revision`，扩展侧轮询到变化后调用 `chrome.runtime.reload()`。
+  - `影哨/scripts/dev-reload-server.mjs` + `src/dev-reload.js`：本地 HTTP `/health` 暴露 `revision`，扩展侧轮询到变化后调用 `chrome.runtime.reload()`。
   - `b站延拓/extension/scripts/dev.mjs`：Playwright 专用 dev profile（`.tmp/dev-profile`）+ CDP，重建后从扩展页面触发 `chrome.runtime.reload()`，并用 bundle 哈希**校验重载真的生效**。
 - 硬性要求：
   - **重载后必须验证生效**（哈希对比或等效证据）；静默失败视为未完成，不能只打印“已重载”。
@@ -74,7 +74,7 @@
 
 - 版本号单一来源：`manifest.json` 与 `package.json` 保持一致，改版本要同步 README / 变更记录。
 - 每次发布前更新变更记录（`开发日志.md` / `README.md` 中的对应章节），让别人知道这一版改了什么。
-- 发布产物命名带版本号（沿用 `bili-buffer-extension-<version>.zip` 的做法），并保证 `dist/unpacked/` 与 zip 内容一致。
+- 发布产物命名带版本号（沿用 `yingsao-<version>.zip` 的做法），并保证 `dist/unpacked/` 与 zip 内容一致。
 - Store 就绪清单：16/32/48/128 图标齐全、描述长度符合限制、`minimum_chrome_version` 合理、隐私说明与实际数据行为一致、无未使用的权限。
 
 ## 6. 测试分层

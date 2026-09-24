@@ -63,7 +63,7 @@ for (const entry of new Set(referenced)) {
 // 统一时间戳后，同一份源码重复构建得到完全相同的 zip（SOURCE_DATE_EPOCH 可覆盖）。
 await normalizeTimestamps(unpacked);
 
-const archive = path.join(dist, `bili-buffer-extension-${manifest.version}.zip`);
+const archive = path.join(dist, `yingsao-${manifest.version}.zip`);
 await rm(archive, { force: true });
 // 用排序后的文件列表打包，而不是 zip -r .：目录遍历顺序取决于文件系统，
 // 在开发目录与解包目录里会不一样，压缩包字节也就跟着变。

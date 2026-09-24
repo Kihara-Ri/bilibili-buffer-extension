@@ -183,7 +183,7 @@ async function composeFrame(browser, scene, popup, iconUrl, panelHeight, file) {
     .panel-caption { margin-top: 16px; text-align: center; font-size: 13px; color: #7b929e; }
   </style></head><body>
     <div class="copy">
-      <div class="brand"><img src="${iconUrl}" alt=""><span>Bili 缓冲站</span></div>
+      <div class="brand"><img src="${iconUrl}" alt=""><span>影哨</span></div>
       <p class="kicker">${scene.kicker}</p>
       <h1>${scene.headline}</h1>
       <ul>${scene.bullets.map((item) => `<li>${item}</li>`).join("")}</ul>
@@ -231,7 +231,7 @@ async function composePromo(browser, iconUrl, file) {
     p { font-size: 14px; color: rgba(255,255,255,0.86); }
   </style></head><body>
     <img src="${iconUrl}" alt="">
-    <h1>Bili 缓冲站</h1>
+    <h1>影哨</h1>
     <p>提前加载 · 缓存到本机 · 离线播放</p>
   </body></html>`);
   await page.screenshot({ path: file });

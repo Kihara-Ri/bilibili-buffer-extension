@@ -43,7 +43,7 @@ server.on("error", (error) => {
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  process.stdout.write(`Bili 缓冲站热更新服务已启动：http://127.0.0.1:${PORT}\n`);
+  process.stdout.write(`影哨热更新服务已启动：http://127.0.0.1:${PORT}\n`);
   process.stdout.write("修改扩展的 JS、JSON、HTML、CSS 或图标后，Chrome 会在约 1 秒内原位重载。\n");
 });
 

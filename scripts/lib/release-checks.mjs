@@ -147,7 +147,7 @@ export function checkZipEntries(entries) {
     if (/\.DS_Store|__MACOSX|_metadata|dev-reload/.test(entry)) {
       failures.push(`压缩包含有不该发布的文件：${entry}`);
     }
-    if (/^bili-buffer-extension-\d/.test(entry)) failures.push(`压缩包内多了一层目录：${entry}`);
+    if (/^yingsao-\d/.test(entry)) failures.push(`压缩包内多了一层目录：${entry}`);
   }
   return failures;
 }

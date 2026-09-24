@@ -1,6 +1,8 @@
-# Bili 缓冲站
+# 影哨
 
-当前版本：**2.8.10**。
+当前版本：**2.8.11**。
+
+2.8.11：应用更名为**影哨**——影（影片/放映）＋哨（在播放位置前方守望），对应「提前一格」的图标与提前加载的核心行为。manifest 名称、工具栏悬停、弹窗标题、隐私页、商店资料、控制台日志前缀、工具栏徽标与图标内嵌文案全部同步；仓库目录更名为 `影哨`，npm 包名与发布产物更名为 `yingsao-<version>.zip`。内部标识（IndexedDB 库名、消息通道、storage 键、页面注入的 CSS 变量）保持不变，片库与用户配置原地保留。GitHub 远端 slug 仍为 `bilibili-buffer-extension`（改名后旧链接自动重定向）。
 
 2.8.10：播放页去冗余、网络策略改为系统自决。「CDN 路线」「最大并发」两个下拉移除：线路固定原清单优先、全局上限固定 32 路，实际并发由收益自适应策略在限内自行调整，历史保存的自定义值随读取即失效。「进度条外观」展开区移除重复的标题与第二条进度条：摘要行的示意条是唯一预览，展开后只有图例与配色控件，「恢复默认」移到底部。
 
@@ -52,7 +54,7 @@ npm run test:chrome     # 取与本机 Chrome 同版本的 Chrome for Testing，
 ```bash
 npm run check            # 语法检查 + Chrome 版本兼容门禁（本机 Chrome 未验收时直接失败）
 npm test                 # 单元测试 + 上架合规测试（清单字段、权限、图标、隐私声明、商店素材）
-npm run build            # 生成 dist/unpacked 与 dist/bili-buffer-extension-<version>.zip
+npm run build            # 生成 dist/unpacked 与 dist/yingsao-<version>.zip
                          # 末尾自动执行 npm run verify，逐项检查上架要求并打印 SHA-256
 npm run icons            # 从 assets/*.svg 母版重导出 16/32/48/128 图标（需要 Playwright）
 npm run bench:real -- <Chrome进程ID> <视频标签ID> # macOS：只连接已打开的真实 Chrome，不启动 dev 浏览器
@@ -72,11 +74,11 @@ npm run store:assets     # 重新生成商店截图与促销图（需要 Playwri
 
 1. 打开 `chrome://extensions/`。
 2. 开启右上角“开发者模式”。
-3. 选择“加载已解压的扩展程序”，选择本项目文件夹。（发布包 `dist/bili-buffer-extension-<version>.zip` 也可以直接拖进 `chrome://extensions` 安装。）
+3. 选择“加载已解压的扩展程序”，选择本项目文件夹。（发布包 `dist/yingsao-<version>.zip` 也可以直接拖进 `chrome://extensions` 安装。）
 4. 打开标准 B 站视频页（`https://www.bilibili.com/video/BV...`）或带 `bvid` 的稍后再看页面，点击工具栏中的插件图标。
 
 > **解包安装属于 Chrome 可以停用的形态**：升级 Chrome 或重启后若插件「没反应」，先到
-> `chrome://extensions` 确认「Bili 缓冲站」没有被停用（停用后内容脚本、DNR 规则和后台全部不运行）。
+> `chrome://extensions` 确认「影哨」没有被停用（停用后内容脚本、DNR 规则和后台全部不运行）。
 > 弹窗的「浏览器自检」也会在浏览器侧能力失效时列出具体项。详见 [浏览器版本兼容与自检](docs/browser-compat.md)。
 
 ## 使用
@@ -124,7 +126,7 @@ npm run dev
 npm run build
 ```
 
-命令会生成 `dist/unpacked` 与 `dist/bili-buffer-extension-<version>.zip`，并自动移除开发态热更新入口及 `127.0.0.1` 权限；开发目录本身仍保留热更新能力。
+命令会生成 `dist/unpacked` 与 `dist/yingsao-<version>.zip`，并自动移除开发态热更新入口及 `127.0.0.1` 权限；开发目录本身仍保留热更新能力。
 
 ## 当前边界
 

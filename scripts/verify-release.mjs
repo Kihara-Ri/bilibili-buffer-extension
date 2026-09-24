@@ -106,7 +106,7 @@ if (manifest.key) {
   }
 }
 
-const archive = path.join(dist, `bili-buffer-extension-${manifest.version}.zip`);
+const archive = path.join(dist, `yingsao-${manifest.version}.zip`);
 const archiveStats = await stat(archive).then((value) => value, () => null);
 if (!archiveStats) {
   failures.push(`未找到发布压缩包 ${path.basename(archive)}`);

@@ -73,7 +73,7 @@
       if (activePlayback?.videoId === response.video.id) return;
       await startCachedPlayback(response.video);
     } catch (error) {
-      console.warn("[Bili 缓冲站] 查询本地缓存失败", error);
+      console.warn("[影哨] 查询本地缓存失败", error);
     }
   }
 
@@ -105,7 +105,7 @@
       applyPlaybackUrl(video, cache, URL.createObjectURL(blob));
     } catch (error) {
       document.documentElement.dataset.biliBufferPlayback = "error";
-      console.warn("[Bili 缓冲站] 本地缓存无法播放：", error);
+      console.warn("[影哨] 本地缓存无法播放：", error);
     }
   }
 
@@ -200,13 +200,13 @@
       video.playbackRate = previous.rate;
       if (!previous.paused) video.play().catch(() => {});
       chrome.runtime.sendMessage({ target: "background", type: "PLAYBACK_ACTIVE" }).catch(() => {});
-      console.info(`[Bili 缓冲站] 已切换为本地缓存播放：${cache.title}`);
+      console.info(`[影哨] 已切换为本地缓存播放：${cache.title}`);
     }, { once: true });
 
     video.addEventListener("error", () => {
       document.documentElement.dataset.biliBufferPlayback = "error";
       delete video.dataset.biliCachePlayback;
-      console.warn("[Bili 缓冲站] 本地缓存播放失败，页面刷新后将恢复网络播放");
+      console.warn("[影哨] 本地缓存播放失败，页面刷新后将恢复网络播放");
     }, { once: true });
 
     activePlayback = { videoId: cache.id, objectUrl: playbackUrl, video };

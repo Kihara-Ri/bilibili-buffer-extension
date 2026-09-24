@@ -48,5 +48,5 @@ export function taskBadge(videos, tabId) {
   if (active.length === 1) return { text: String(Math.min(99, Math.floor(taskProgress(active[0]) * 100))), color: '#fb7299', title: `正在缓存：${active[0].partTitle || active[0].title || '视频'}` };
   if (tasks.some(video => video.status === 'error')) return { text: '!', color: '#8b5b64', title: '有缓存任务需要处理' };
   if (tasks.some(video => video.status === 'complete')) return { text: '✓', color: '#1682a7', title: '缓存已完成' };
-  return { text: '', color: '#1682a7', title: 'Bili 缓冲站' };
+  return { text: '', color: '#1682a7', title: '影哨' };
 }

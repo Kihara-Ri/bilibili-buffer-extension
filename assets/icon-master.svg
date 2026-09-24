@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
-  <title id="title">Bili 缓冲站 · 提前一格</title>
+  <title id="title">影哨 · 提前一格</title>
   <desc id="desc">蓝色播放主体与前方两段青色缓冲块，表示提前加载、连续播放。</desc>
   <!-- 三段轮廓沿播放方向收拢；纯填充保证缩放稳定。画布四周至少留 16 像素透明边距。 -->
   <path fill="#159DCF" d="M16 24Q16 12 26 19L62 45Q66 48 66 53V75Q66 80 62 83L26 109Q16 116 16 104Z"/>

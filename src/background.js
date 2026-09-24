@@ -752,19 +752,19 @@ async function restoreActiveDownloadsNow() {
             playurlData: playurl.data
           }
         });
-        if (!result?.ok) console.warn("[Bili 缓冲站] 自动续传失败：", result?.error);
+        if (!result?.ok) console.warn("[影哨] 自动续传失败：", result?.error);
       } catch (error) {
         const fallback = await sendToOffscreen({ type: "START_DOWNLOAD", video }).catch((fallbackError) => ({
           ok: false,
           error: toPublicError(fallbackError)
         }));
         if (!fallback?.ok) {
-          console.warn("[Bili 缓冲站] 无法从已保存的播放地址恢复任务：", fallback?.error || error);
+          console.warn("[影哨] 无法从已保存的播放地址恢复任务：", fallback?.error || error);
         }
       }
     }
     await syncDownloadWatchdog();
   } catch (error) {
-    console.warn("[Bili 缓冲站] 无法恢复上次的缓存任务：", error);
+    console.warn("[影哨] 无法恢复上次的缓存任务：", error);
   }
 }

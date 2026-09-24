@@ -107,7 +107,7 @@ test("压缩包结构检查：根目录清单、无垃圾文件、无多余目�
   assert.ok(checkZipEntries(["manifest.json", "_metadata/verified.json"]).length);
   assert.ok(checkZipEntries(["manifest.json", "assets/.DS_Store"]).length);
   assert.ok(checkZipEntries(["manifest.json", "src/dev-reload.js"]).length);
-  assert.ok(checkZipEntries(["manifest.json", "bili-buffer-extension-2.6.3/manifest.json"]).length);
+  assert.ok(checkZipEntries(["manifest.json", "yingsao-2.6.3/manifest.json"]).length);
 });
 
 test("隐私页面包含 Limited Use 声明、全部权限说明与联系方式", async () => {
