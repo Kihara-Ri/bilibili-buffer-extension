@@ -70,6 +70,8 @@ summary:focus-visible {
 .masthead {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
   min-height: 48px;
   padding: var(--space-sm) var(--space-md) var(--space-xs);
 }
@@ -78,11 +80,53 @@ summary:focus-visible {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .brand-icon {
   width: 30px;
   height: 30px;
+}
+
+/* 主名 + 用途副标题同行基线对齐；副标题不可换行，避免页眉高度跳动。 */
+.brand-title {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.brand-subtitle {
+  margin-bottom: 0;
+  color: var(--ink-soft);
+  font-family: "DIN Alternate", "Avenir Next Condensed", sans-serif;
+  font-size: 0.66rem;
+  font-weight: 680;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.github-link {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+
+.github-link:hover {
+  color: var(--ink-strong);
+  background: var(--surface-soft);
+}
+
+.github-link svg {
+  width: 17px;
+  height: 17px;
 }
 
 h1,

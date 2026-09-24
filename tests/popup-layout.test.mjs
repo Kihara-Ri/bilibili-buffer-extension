@@ -4,6 +4,16 @@ import { readFile } from "node:fs/promises";
 
 const html = await readFile(new URL("../popup.html", import.meta.url), "utf8");
 
+test("页眉主名带用途副标题，右侧提供 GitHub 入口", () => {
+  assert.match(html, /<h1>影哨<\/h1>/);
+  // 副标题只做指名性用途说明，不进入扩展名称本身。
+  assert.match(html, /class="brand-subtitle">bilibili buffer<\/p>/);
+  const link = html.match(/<a class="github-link"[^>]*>/)?.[0] || "";
+  assert.match(link, /href="https:\/\/github\.com\/Kihara-Ri\/bilibili-buffer-extension"/);
+  assert.match(link, /aria-label="GitHub 项目页面"/);
+  assert.match(link, /rel="noopener noreferrer"/);
+});
+
 test("Popup 使用缓存、播放和片库三个互斥一级视图", () => {
   const tabs = [...html.matchAll(/data-panel-view="(cache|assist|library)"/g)].map((match) => match[1]);
   assert.deepEqual(tabs, ["cache", "assist", "library"]);
