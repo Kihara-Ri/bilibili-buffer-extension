@@ -51,8 +51,6 @@ const elements = {
   assistToggle: document.querySelector("#assist-toggle"),
   assistToggleLabel: document.querySelector("#assist-toggle-label"),
   assistStatus: document.querySelector("#assist-status"),
-  cdnMode: document.querySelector("#assist-cdn-mode"),
-  concurrency: document.querySelector("#assist-concurrency"),
   assistMetrics: Object.fromEntries(["speed", "hit", "buffer", "ready", "connections", "rescues", "node", "accelerated", "fallbacks"].map(key => [key, document.querySelector(`#assist-${key}`)])),
   appearance: document.querySelector("#assist-appearance"),
   appearanceReset: document.querySelector("#assist-appearance-reset"),
@@ -138,8 +136,6 @@ elements.qualityMenu.addEventListener("toggle", handleQualityMenuToggle);
 elements.qualityTrigger.addEventListener("keydown", openQualityMenuFromKeyboard);
 elements.assistToggle.addEventListener("click", toggleAssist);
 elements.browserHealthRefresh.addEventListener("click", () => refreshHealth({ refresh: true }));
-elements.cdnMode.addEventListener("change", () => persistProgressAppearance({cdnMode:elements.cdnMode.value,networkPolicyVersion:3}));
-elements.concurrency.addEventListener("change", () => persistProgressAppearance({maxConcurrency:Number(elements.concurrency.value),networkPolicyVersion:3}));
 elements.assistColors.addEventListener("click", selectAssistColor);
 elements.appearanceReset.addEventListener('click', () => persistProgressAppearance({ progressColor: '#00a1d6', preheatColor: DEFAULT_PREHEAT_COLOR, showPreheatHighlight: true }));
 elements.assistColors.addEventListener('keydown', event => {
@@ -662,8 +658,6 @@ function renderAssist() {
   const config = state.assistConfig || { mode: "always", preheatColor: DEFAULT_PREHEAT_COLOR };
   const stats = state.assistStats;
   const enabled = config.mode !== "off";
-  if (document.activeElement !== elements.cdnMode) elements.cdnMode.value = config.cdnMode || "original";
-  if (document.activeElement !== elements.concurrency) elements.concurrency.value = String(config.maxConcurrency || 32);
   const live = enabled && stats && Date.now() - stats.at < 5000;
   const finite = value => Math.max(0, Number(value) || 0);
   const metrics = {

@@ -53,12 +53,12 @@ test("显示开关独立于提前加载，旧配置默认保留高亮并验证�
   assert.equal(invalid.progressColor, "#abcdef");
 });
 
-test('旧并发策略迁移为原清单优先 32 路上限，新策略保留用户选择', () => {
-  const migrated = sanitizeAssistConfig({}, {mode:'always',maxConcurrency:4});
+test('CDN 路线与并发上限由系统决定，历史保存值一律失效', () => {
+  const migrated = sanitizeAssistConfig({}, {mode:'always',maxConcurrency:4,cdnMode:'mainland'});
   assert.equal(migrated.maxConcurrency,32);
   assert.equal(migrated.cdnMode,'original');
   assert.equal(migrated.networkPolicyVersion,3);
-  const saved = sanitizeAssistConfig({maxConcurrency:8,cdnMode:'original'},migrated);
-  assert.equal(sanitizeAssistConfig({},saved).maxConcurrency,8);
-  assert.equal(sanitizeAssistConfig({},saved).cdnMode,'original');
+  const forced = sanitizeAssistConfig({maxConcurrency:8,cdnMode:'auto'},migrated);
+  assert.equal(forced.maxConcurrency,32);
+  assert.equal(forced.cdnMode,'original');
 });

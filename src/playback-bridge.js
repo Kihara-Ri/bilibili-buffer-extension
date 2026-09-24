@@ -12,8 +12,8 @@
     minBufferAheadSec: 0,
     maxPrefetchMBPerTrack: 200,
     maxConcurrency: 32,
-  cdnMode: "mainland",
-  networkPolicyVersion: 3,
+    cdnMode: "original",
+    networkPolicyVersion: 3,
     estimatorGuard: true,
     preheatColor: DEFAULT_PREHEAT_COLOR
   };
@@ -34,10 +34,11 @@
   function normalizedConfig(input) {
     const next = { ...DEFAULTS, ...(input || {}) };
     next.mode = ["off", "observe"].includes(next.mode) ? "off" : "always";
-    if (input?.networkPolicyVersion !== 3) next.maxConcurrency = 32;
+    // 2.8.10：CDN 路线与并发上限不再可配置，钉死系统默认；桥直读 storage，
+    // 必须在这里挡掉历史存储里的用户选择，否则旧值会在页面侧继续生效。
+    next.maxConcurrency = 32;
+    next.cdnMode = "original";
     next.networkPolicyVersion = 3;
-    next.maxConcurrency = Math.max(1, Math.min(32, Math.floor(Number(next.maxConcurrency)) || 32));
-    next.cdnMode = ["mainland", "auto", "original"].includes(next.cdnMode) ? next.cdnMode : "mainland";
     next.minWatchedSec = 0;
     next.minBufferAheadSec = 0;
     const color = String(next.preheatColor || "").trim().toLowerCase();

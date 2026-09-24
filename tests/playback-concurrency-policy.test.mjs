@@ -31,13 +31,13 @@ test('8 MiB 大范围仍可利用 32 路；用户低上限优先', async () => {
   assert.equal((await measure(2 * MiB, 4)).peak, 4);
   assert.equal((await measure(64 * 1024)).peak, 1);
 });
-test('新配置优先原清单 CDN，不覆盖已明确保存的大陆或自动模式', () => {
+test('CDN 路线固定原清单模式，保存过的大陆/自动模式与自定义上限一并失效', () => {
   assert.equal(ASSIST_DEFAULTS.cdnMode, 'original');
   assert.equal(sanitizeAssistConfig({}, { mode: 'always' }).cdnMode, 'original');
   for (const cdnMode of ['mainland', 'auto', 'original']) {
     const saved = { ...ASSIST_DEFAULTS, cdnMode, maxConcurrency: 16 };
-    assert.equal(sanitizeAssistConfig({}, saved).cdnMode, cdnMode);
-    assert.equal(sanitizeAssistConfig({}, saved).maxConcurrency, 16);
+    assert.equal(sanitizeAssistConfig({}, saved).cdnMode, 'original');
+    assert.equal(sanitizeAssistConfig({}, saved).maxConcurrency, 32);
   }
 });
 test('独立下载器默认不合成大陆主机，显式大陆模式仍可用', async () => {

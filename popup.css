@@ -751,46 +751,6 @@ h2 {
   text-overflow: ellipsis;
 }
 
-/* 线路与并发：低频调节项压成一行，标签与控件同行。 */
-.assist-network-settings {
-  display: flex;
-  gap: var(--space-sm);
-}
-
-.network-field {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2xs);
-  min-width: 0;
-}
-
-.network-field-label {
-  flex: none;
-  color: var(--ink-soft);
-  font-size: 0.72rem;
-  font-weight: 680;
-  white-space: nowrap;
-}
-
-.network-field select {
-  flex: 1;
-  min-width: 0;
-  height: 30px;
-  padding: 0 6px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-raised);
-  color: var(--ink-strong);
-  font-size: 0.74rem;
-  cursor: pointer;
-  transition: border-color 140ms ease;
-}
-
-.network-field select:hover {
-  border-color: oklch(0.72 0.08 222);
-}
-
 /* 折叠区（外观 / 详细统计）：摘要行是可点的整行，外观摘要内嵌实时配色预览。 */
 .assist-appearance,
 .assist-diagnostics {
@@ -1179,8 +1139,7 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
-.appearance-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
-.appearance-heading h3 { margin: 0; font-size: .82rem; font-weight: 720; }
+/* 摘要行的示意条是唯一预览；展开区只留图例与控件，恢复默认收尾。 */
 .appearance-reset { border: 0; padding: 4px 0 4px 8px; color: var(--ink-soft); background: transparent; font-size: .7rem; cursor: pointer; }
 .appearance-reset:hover { color: var(--blue-deep); }
 .timeline-preview { display: flex; height: 6px; overflow: hidden; border-radius: 3px; }
@@ -1188,14 +1147,13 @@ h2 {
 .preview-native { width: 18%; background: #aeb8c1; }
 .preview-preheat { width: 34%; background: var(--preheat-color, #ff8a1f); }
 .preview-empty { width: 20%; background: #e0e5ea; }
-.timeline-legend { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; font-size: .66rem; color: var(--ink-soft); }
+.timeline-legend { display: flex; justify-content: space-between; gap: 8px; margin: 4px 0 10px; font-size: .66rem; color: var(--ink-soft); }
 .timeline-legend span { display: inline-flex; gap: 5px; align-items: center; white-space: nowrap; }
 .timeline-legend i { display: inline-block; width: 6px; height: 6px; border: 0; border-radius: 50%; }
 .legend-played { background: var(--played-color, #00a1d6); }
 .legend-native { background: #aeb8c1; }
 .timeline-legend .assist-color-preview { background: var(--preheat-color, #ff8a1f); }
 .assist-appearance[data-highlight="false"] :is(.preview-preheat, .assist-color-preview) { background: #aeb8c1; }
-.appearance-caption { margin: 8px 0 12px; color: var(--ink-soft); font-size: .64rem; }
 .appearance-control { display: flex; align-items: center; justify-content: space-between; min-height: 42px; font-size: .76rem; gap: 12px; }
 .appearance-color-input { width: 34px; height: 26px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-raised); cursor: pointer; }
 .appearance-switch { appearance: none; position: relative; width: 32px; height: 20px; margin: 0; border: 0; border-radius: 10px; background: #aeb8c1; cursor: pointer; transition: background-color 160ms ease; }
@@ -1208,6 +1166,7 @@ h2 {
 .preheat-controls:disabled { opacity: .45; }
 .preheat-controls:disabled :is(button,input,label) { cursor: default; }
 .assist-appearance-note { font-size: .68rem; line-height: 1.5; color: var(--ink-soft); margin: 8px 0 0; }
+.appearance-footer { display: flex; justify-content: flex-end; margin-top: var(--space-2xs); }
 @media (prefers-reduced-motion: reduce) {
   .download-arrow { animation: none !important; }
   .trash-lid, .button-progress, .appearance-switch::after { transition: none !important; transform: none; }
