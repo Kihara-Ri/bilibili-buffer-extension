@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkIconPadding } from "./lib/png-alpha.mjs";
@@ -12,6 +11,7 @@ import {
   checkZipEntries,
   extensionIdFromKey
 } from "./lib/release-checks.mjs";
+import { readZip } from "./lib/zip.mjs";
 
 /**
  * 发布包上架前的自动化体检。
@@ -111,19 +111,31 @@ const archiveStats = await stat(archive).then((value) => value, () => null);
 if (!archiveStats) {
   failures.push(`未找到发布压缩包 ${path.basename(archive)}`);
 } else {
-  const listing = spawnSync("unzip", ["-Z1", archive], { encoding: "utf8" });
-  if (listing.status !== 0) {
-    notes.push("系统缺少 unzip，跳过压缩包内容检查");
-  } else {
-    const entries = listing.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
-    failures.push(...checkZipEntries(entries));
-    const zipManifest = spawnSync("unzip", ["-p", archive, "manifest.json"], { encoding: "utf8" });
-    if (zipManifest.status === 0) {
-      expect(
-        JSON.parse(zipManifest.stdout).version === manifest.version,
-        "压缩包里的 manifest 版本与 dist/unpacked 不一致"
-      );
+  // 用内置读取器检查压缩包（不依赖系统 unzip）：条目结构、与 dist/unpacked 逐字节一致、manifest 版本。
+  let zipped = null;
+  try {
+    zipped = readZip(await readFile(archive));
+  } catch (error) {
+    failures.push(`压缩包无法读取：${error.message}`);
+  }
+  if (zipped) {
+    failures.push(...checkZipEntries([...zipped.keys()]));
+    // ZIP 条目统一用 / 分隔；Windows 上 path.relative 给的是反斜杠。
+    const unpackedFiles = packagedFiles.map((file) => path.relative(unpacked, file).split(path.sep).join("/")).sort();
+    expect(
+      unpackedFiles.length === zipped.size && unpackedFiles.every((name) => zipped.has(name)),
+      "压缩包的文件列表与 dist/unpacked 不一致"
+    );
+    for (const name of unpackedFiles) {
+      if (zipped.has(name) && !zipped.get(name).equals(await readFile(path.join(unpacked, ...name.split("/"))))) {
+        failures.push(`压缩包里的 ${name} 与 dist/unpacked 不一致`);
+      }
     }
+    const zipManifest = zipped.get("manifest.json");
+    expect(
+      zipManifest && JSON.parse(zipManifest.toString("utf8")).version === manifest.version,
+      "压缩包里的 manifest 版本与 dist/unpacked 不一致"
+    );
   }
   const digest = createHash("sha256").update(await readFile(archive)).digest("hex");
   notes.push(`压缩包 ${path.basename(archive)}  ${(archiveStats.size / 1024).toFixed(1)} KiB  sha256=${digest}`);

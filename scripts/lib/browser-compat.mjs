@@ -29,14 +29,37 @@ export async function readVerifiedVersions(root) {
   return { path: file, note: parsed.note || "", suites, entries };
 }
 
+const VERSION_RE = /(\d+\.\d+\.\d+\.\d+)/;
+const byVersion = (left, right) => {
+  const a = left.split(".").map(Number), b = right.split(".").map(Number);
+  return a.reduce((diff, value, i) => diff || value - b[i], 0);
+};
+
+/**
+ * Windows 版 Chrome 是 GUI 程序，`chrome.exe --version` 不往标准输出打印任何东西；
+ * 版本号只体现在安装目录里：正式版有 `154.0.8037.57/` 子目录，Chrome for Testing 有
+ * `154.0.8037.57.manifest`。取其中最大的版本。 @param {string} directory @returns {string|null}
+ */
+export function versionFromDirectory(directory) {
+  try {
+    const versions = readdirSync(directory)
+      .map((name) => /^(\d+\.\d+\.\d+\.\d+)(?:\.manifest)?$/.exec(name)?.[1])
+      .filter(Boolean)
+      .sort(byVersion);
+    return versions.at(-1) || null;
+  } catch {
+    return null;
+  }
+}
+
 /** 从可执行文件读版本；用于确认某个 chrome 二进制到底是谁。 @returns {string|null} */
 export function versionOfExecutable(executable) {
   try {
     const output = execFileSync(executable, ["--version"], { encoding: "utf8", timeout: 20000 }).trim();
-    return /(\d+\.\d+\.\d+\.\d+)/.exec(output)?.[1] || null;
-  } catch {
-    return null;
-  }
+    const version = VERSION_RE.exec(output)?.[1];
+    if (version) return version;
+  } catch { /* 读不到时退到安装目录 */ }
+  return versionFromDirectory(path.dirname(executable));
 }
 
 /**
@@ -47,7 +70,8 @@ export function detectInstalledChrome(platform = process.platform) {
   const candidates = platform === "darwin"
     ? ["/Applications/Google Chrome.app"]
     : platform === "win32"
-      ? [path.join(process.env["PROGRAMFILES"] || "C:\\Program Files", "Google", "Chrome", "Application")]
+      ? [process.env.PROGRAMFILES || "C:\\Program Files", process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)", process.env.LOCALAPPDATA]
+        .filter(Boolean).map((base) => path.join(base, "Google", "Chrome", "Application"))
       : ["/opt/google/chrome", "/usr/bin/google-chrome"];
   for (const candidate of candidates) {
     if (!existsSync(candidate)) continue;
@@ -62,7 +86,13 @@ export function detectInstalledChrome(platform = process.platform) {
         continue;
       }
     }
-    return { version: versionOfExecutable(candidate) || "0.0.0.0", executable: candidate, source: "本机已安装的 Google Chrome" };
+    if (platform === "win32") {
+      const executable = path.join(candidate, "chrome.exe");
+      if (existsSync(executable)) return { version: versionFromDirectory(candidate), executable, source: "本机已安装的 Google Chrome" };
+      continue;
+    }
+    // 读不到版本时返回 null 版本，由门禁明确报错，而不是伪造成 0.0.0.0 再报「未验收」。
+    return { version: versionOfExecutable(candidate), executable: candidate, source: "本机已安装的 Google Chrome" };
   }
   return null;
 }
@@ -73,7 +103,9 @@ export function detectInstalledChrome(platform = process.platform) {
  * @returns {{version:string, executable:string, source:string}|null}
  */
 export function detectPlaywrightChromium({ platform = process.platform, arch = process.arch, home = os.homedir(), env = process.env } = {}) {
-  const cacheRoots = [env.PLAYWRIGHT_BROWSERS_PATH, path.join(home, "Library", "Caches", "ms-playwright"), path.join(home, ".cache", "ms-playwright")].filter(Boolean);
+  // Playwright 默认缓存：macOS ~/Library/Caches、Linux ~/.cache、Windows %LOCALAPPDATA%。
+  const cacheRoots = [env.PLAYWRIGHT_BROWSERS_PATH, path.join(home, "Library", "Caches", "ms-playwright"), path.join(home, ".cache", "ms-playwright"),
+    env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "ms-playwright")].filter(Boolean);
   // 同一个 chromium-<build> 目录下按平台/架构分文件夹；两种 Mac 架构都要试，否则 Intel 机器会静默探测不到。
   const layouts = {
     darwin: [["chrome-mac-arm64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing"],

@@ -28,6 +28,11 @@ function report(label, browser) {
     console.log(`· ${label}：未探测到（跳过）`);
     return;
   }
+  if (!browser.version) {
+    console.log(`· ${label}：已找到 ${browser.executable}，但读不到版本号`);
+    problems.push({ label, browser, major: 0, unreadable: true });
+    return;
+  }
   const major = majorOf(browser.version);
   const verified = isVerified(entries, major);
   console.log(`· ${label}：${browser.version}（${browser.source}）—— ${verified ? "已验收" : "未验收"}`);
@@ -42,8 +47,10 @@ report("验收浏览器", acceptance);
 if (problems.length) {
   const highest = highestVerifiedMajor(entries);
   console.error("\nChrome 兼容门禁未通过：");
-  for (const { label, browser, major } of problems) {
-    console.error(`  ${label} ${browser.version}（主版本 ${major}）不在已验收列表中，最高已验收主版本为 ${highest}。`);
+  for (const { label, browser, major, unreadable } of problems) {
+    console.error(unreadable
+      ? `  ${label}（${browser.executable}）读不到版本号，无法判断是否已验收。`
+      : `  ${label} ${browser.version}（主版本 ${major}）不在已验收列表中，最高已验收主版本为 ${highest}。`);
   }
   console.error(`
 Chrome 更新后必须先在新版本上重跑浏览器验收，再提交：

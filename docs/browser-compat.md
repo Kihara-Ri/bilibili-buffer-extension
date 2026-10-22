@@ -37,7 +37,11 @@
 - `npm run test:chrome`：读取本机 Chrome 版本，从 Chrome for Testing 取**同构建/同主版本**的
   浏览器（缓存在 `.tmp/cft-cache/`），再依次跑 `browser-compat.json` 里列出的全部浏览器套件，
   通过 Playwright 的 `executablePath` 覆盖（见 `scripts/lib/browser-launch.mjs`）。
-  这套流程就是本次故障后人工执行的排查动作，现在是一条命令。
+  这套流程就是本次故障后人工执行的排查动作，现在是一条命令。套件脚本里的 `node …` 步骤由
+  它直接执行、不经过 npm，避免 Windows 下 `cmd.exe` 不支持 WSL 的 UNC 工作目录。
+- **Windows 上读版本**：`chrome.exe --version` 在 Windows 不输出任何内容，旧实现因此把本机
+  Chrome 记成 `0.0.0.0`。现在从安装目录读取：正式版的版本号子目录（如 `155.0.8059.85/`）、
+  Chrome for Testing 的 `<版本>.manifest`；仍读不到时门禁明确报「读不到版本号」，不伪造版本。
 - **为什么不是把 `minimum_chrome_version` 调高**：该字段表达的是「API 下限」
   （`runtime.getContexts` 需要 116），把它写成当前浏览器版本会挡住本来可用的旧版本用户。
   版本漂移是**上限**问题，用验收门禁解决更准确。

@@ -54,7 +54,10 @@ npm run dev        # 热更新：修改代码约 1 秒内自动重载已加载�
 npm test           # 单元与上架合规测试
 npm run check      # 语法检查 + Chrome 版本兼容门禁
 npm run build      # 生成 dist/unpacked 与 dist/yingsao-<version>.zip（含上架体检）
+npm run test:chrome  # 下载与本机 Chrome 同版本的 Chrome for Testing，跑全部浏览器套件
 ```
+
+> 在 WSL 里开发时请安装 **Linux 版 Node（≥ 22.2）** 再用 npm。Windows 版 npm 通过 `cmd.exe` 执行脚本，而 `cmd.exe` 不支持 `\\wsl.localhost\...` 作为工作目录，会静默退回 `C:\Windows`；`npm test` 因此会直接报「找不到 scripts/run-tests.mjs」。暂时只有 Windows 版 Node 时，可以绕过 npm 直接运行脚本，例如 `node.exe scripts/run-tests.mjs`。
 
 ## 文档
 

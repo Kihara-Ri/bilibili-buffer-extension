@@ -4,15 +4,19 @@
 // 用户实际使用的 Chrome 落后一档。2026-09-23 用户升到 154、仓库还在 153 上验收，
 // 于是「套件全绿」和「插件不可用」同时成立。这里把本机 Chrome 的版本对齐到
 // 一个可自动化的构建（Chrome for Testing 与本机 Chrome 同构建号），再跑套件。
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectInstalledChrome, majorOf, readVerifiedVersions } from "./lib/browser-compat.mjs";
+import { detectInstalledChrome, majorOf, readVerifiedVersions, versionOfExecutable } from "./lib/browser-compat.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const cacheRoot = path.join(root, ".tmp", "cft-cache");
+// Windows 无法从 WSL 的 UNC 路径（\\wsl.localhost\...）启动可执行文件（spawn UNKNOWN），
+// 此时把测试浏览器放到本机磁盘的 %LOCALAPPDATA%；其他情况仍缓存在仓库的 .tmp/ 下。
+const cacheRoot = process.platform === "win32" && root.startsWith("\\\\") && process.env.LOCALAPPDATA
+  ? path.join(process.env.LOCALAPPDATA, "yingsao", "cft-cache")
+  : path.join(root, ".tmp", "cft-cache");
 const indexPath = path.join(cacheRoot, "known-good-versions.json");
 const INDEX_URL = "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json";
 const INDEX_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -37,7 +41,7 @@ if (!platformKey) {
 }
 
 const installed = detectInstalledChrome();
-if (!installed) {
+if (!installed?.version) {
   console.error("没有探测到本机安装的 Google Chrome；请直接使用 npm run test:playback / test:network / test:popup / test:extension");
   process.exit(1);
 }
@@ -139,7 +143,8 @@ async function ensureBrowser() {
 }
 
 const browser = await ensureBrowser();
-const actual = /(\d+\.\d+\.\d+\.\d+)/.exec(execFileSync(browser.executable, ["--version"], { encoding: "utf8" }))?.[1];
+// Windows 的 chrome.exe --version 不输出，versionOfExecutable 会退到安装目录读取。
+const actual = versionOfExecutable(browser.executable);
 if (!actual || majorOf(actual) !== targetMajor) {
   throw new Error(`测试浏览器版本与预期不一致：期望主版本 ${targetMajor}，实际 ${actual}`);
 }
@@ -149,15 +154,29 @@ if (browser.version !== installed.version) {
 }
 console.log(`验收浏览器：${actual}\n`);
 
+/**
+ * 直接执行 package.json 里套件脚本的各个 node 步骤，不经过 npm。
+ * Windows 的 npm 用 cmd.exe 跑脚本：cmd 找不到 npm 可执行文件（需 npm.cmd），
+ * 也不支持 WSL 仓库的 UNC 工作目录——会静默退回 C:\Windows 去找测试脚本。
+ * 套件脚本只由 `node <文件>` 与 `npm run <脚本>` 用 && 串起，这里按同样语义展开。
+ */
+const scripts = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).scripts;
+function runScript(name, env) {
+  const command = scripts[name];
+  if (!command) throw new Error(`package.json 没有脚本 ${name}`);
+  for (const step of command.split("&&").map((part) => part.trim().split(/\s+/))) {
+    const status = step[0] === "node" ? spawnSync(process.execPath, step.slice(1), { cwd: root, stdio: "inherit", env }).status
+      : step[0] === "npm" && step[1] === "run" ? runScript(step[2], env)
+        : (() => { throw new Error(`不支持的脚本步骤：${step.join(" ")}`); })();
+    if (status !== 0) return status ?? 1;
+  }
+  return 0;
+}
+
 const failures = [];
 for (const suite of suites) {
-  console.log(`=== npm run ${suite}（Chrome ${actual}）===`);
-  const result = spawnSync("npm", ["run", suite], {
-    cwd: root,
-    stdio: "inherit",
-    env: { ...process.env, PLAYWRIGHT_CHROMIUM_EXECUTABLE: browser.executable }
-  });
-  if (result.status !== 0) failures.push(suite);
+  console.log(`=== ${suite}（Chrome ${actual}）===`);
+  if (runScript(suite, { ...process.env, PLAYWRIGHT_CHROMIUM_EXECUTABLE: browser.executable }) !== 0) failures.push(suite);
   console.log("");
 }
 

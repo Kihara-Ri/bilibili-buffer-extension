@@ -177,8 +177,8 @@ test("发布构建剥离开发态入口：源仓库保留，脚本负责移除",
   assert.ok(build.includes("无法从发布构建中剥离开发态热更新入口"));
   assert.ok(build.includes("toReleaseManifest"), "发布构建必须走共享的发布态清单变换");
   const checks = await readText("scripts/lib/release-checks.mjs");
-  // 可复现构建：zip 会写入文件 mtime，必须在打包前统一，否则记录的哈希无法核对。
-  assert.ok(build.includes("normalizeTimestamps"), "发布构建必须统一 mtime 与权限位以保证 zip 可复现");
+  // 可复现构建：由内置 ZIP 写入器固定时间戳、不写权限位（行为见 tests/release-zip.test.mjs）。
+  assert.ok(build.includes("createZip"), "发布构建必须使用内置的可复现 ZIP 写入器");
   assert.ok(build.includes(".sort()"), "发布构建必须按排序后的文件列表打包，否则 zip 字节随文件系统变化");
   assert.ok(checks.includes("http://127.0.0.1/"));
   // 直接验证行为，而不是匹配源码字符串——字符串检查在重构后会失效。

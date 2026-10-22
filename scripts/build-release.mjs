@@ -1,8 +1,8 @@
-import { chmod, cp, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { toReleaseManifest } from "./lib/release-checks.mjs";
+import { createZip } from "./lib/zip.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dist = path.join(root, "dist");
@@ -58,18 +58,13 @@ for (const entry of new Set(referenced)) {
   await stat(path.join(unpacked, entry));
 }
 
-// zip 会把每个文件的 mtime 写进压缩包，导致同样的源码每次构建出不同的字节、
-// 也就无法用 SHA-256 校验“商店里发布的包 = 这个源码构建出来的包”。
-// 统一时间戳后，同一份源码重复构建得到完全相同的 zip（SOURCE_DATE_EPOCH 可覆盖）。
-await normalizeTimestamps(unpacked);
-
+// 用 Node 内置 zlib 打包（Windows 没有 zip 命令）。条目按路径排序、时间戳固定，
+// 同一份源码重复构建得到完全相同的 zip，商店包的 SHA-256 可复核（SOURCE_DATE_EPOCH 可覆盖时间戳）。
 const archive = path.join(dist, `yingsao-${manifest.version}.zip`);
-await rm(archive, { force: true });
-// 用排序后的文件列表打包，而不是 zip -r .：目录遍历顺序取决于文件系统，
-// 在开发目录与解包目录里会不一样，压缩包字节也就跟着变。
 const files = (await listFiles(unpacked)).sort();
-const zipped = spawnSync("zip", ["-q", "-X", archive, ...files], { cwd: unpacked, encoding: "utf8" });
-if (zipped.status !== 0) throw new Error(zipped.stderr || "zip 构建失败");
+const date = new Date((Number(process.env.SOURCE_DATE_EPOCH) || 1767225600) * 1000); // 2026-01-01T00:00:00Z
+const entries = await Promise.all(files.map(async (name) => ({ name, data: await readFile(path.join(unpacked, ...name.split("/"))) })));
+await writeFile(archive, createZip(entries, { date }));
 
 console.log(`发布目录：${unpacked}`);
 console.log(`发布压缩包：${archive}`);
@@ -83,26 +78,4 @@ async function listFiles(directory, prefix = "") {
     else files.push(relative);
   }
   return files;
-}
-
-/**
- * 把目录内所有条目的 mtime 与权限位固定下来，保证 zip 可复现。
- *
- * zip 会把 mtime 和 Unix 权限写进压缩包，两者都随构建环境变化，
- * 于是同一份源码在不同机器上构建出的字节不同，记录 SHA-256 就没有意义。
- * 权限位统一成 644 / 755，与 git 跟踪的形态一致。
- */
-async function normalizeTimestamps(directory) {
-  const seconds = Number(process.env.SOURCE_DATE_EPOCH) || 1767225600; // 2026-01-01T00:00:00Z
-  const stamp = new Date(seconds * 1000);
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const full = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      await normalizeTimestamps(full);
-      await chmod(full, 0o755);
-    } else {
-      await chmod(full, 0o644);
-    }
-    await utimes(full, stamp, stamp);
-  }
 }
