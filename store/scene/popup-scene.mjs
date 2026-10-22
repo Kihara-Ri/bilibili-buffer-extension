@@ -35,9 +35,10 @@ const QUALITIES = [
 const CACHE_SIZE_INFO = {
   duration: 312,
   video: [
-    { quality: 120, mimeType: "video/mp4", codecs: "av01.0.12M.08", bandwidth: 8_200_000 },
-    { quality: 116, mimeType: "video/mp4", codecs: "avc1.640033", bandwidth: 4_100_000 },
-    { quality: 80, mimeType: "video/mp4", codecs: "avc1.640032", bandwidth: 2_300_000 }
+    { id: 120, mimeType: "video/mp4", codecs: "av01.0.12M.08", bandwidth: 8_200_000, hasSource: true },
+    { id: 116, mimeType: "video/mp4", codecs: "avc1.640033", bandwidth: 4_100_000, hasSource: true },
+    { id: 80, mimeType: "video/mp4", codecs: "avc1.640032", bandwidth: 2_300_000, hasSource: true },
+    { id: 64, mimeType: "video/mp4", codecs: "avc1.64001F", bandwidth: 1_200_000, hasSource: true }
   ],
   audio: [
     { id: 30280, mimeType: "audio/mp4", codecs: "mp4a.40.2", bandwidth: 192_000, hasSource: true },

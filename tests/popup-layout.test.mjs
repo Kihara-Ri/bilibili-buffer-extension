@@ -34,28 +34,35 @@ test("一级导航只有「当前视频」「片库」两个页签；设置是�
   assert.doesNotMatch(html, /id="(cache|assist)-(tab|view)"/);
 });
 
-test("当前视频：内容二选一、画质选择内带体积、一句账号说明、主按钮与暂停", () => {
+test("当前视频：内容二选一、画质平铺为单选卡片（无下拉）、账号说明与分段控件同行、暂停在主按钮内", () => {
   assert.match(html, /id="cache-mode"[^>]*role="radiogroup"/);
   const modes = [...html.matchAll(/data-cache-mode="(video|audio)"/g)].map((match) => match[1]);
   assert.deepEqual(modes, ["video", "audio"]);
   assert.match(html.match(/<button[^>]*id="mode-video"[^>]*>/)?.[0] || "", /aria-checked="true"/);
   assert.match(html.match(/<button[^>]*id="mode-audio"[^>]*>/)?.[0] || "", /aria-checked="false"/);
-  // 体积跟在所选画质后面，不再单独占一行。
-  const trigger = between('id="quality-trigger"', "</button>");
-  assert.match(trigger, /id="cache-size"/);
+  // 画质是一组平铺的单选卡片：没有下拉触发器、没有 popover 菜单。
+  assert.match(html, /id="quality-options"[^>]*role="radiogroup"/);
+  assert.doesNotMatch(html, /aria-haspopup|popovertarget|\bpopover\b|<select/);
   assert.match(html, /id="audio-summary"/);
-  assert.match(html, /id="auth-note"/);
-  assert.match(html, /id="cache-button"/);
-  assert.match(html, /id="pause-button"[^>]*hidden/);
+  const modeRow = between('class="mode-row"', "</div>\n\n");
+  assert.match(modeRow, /id="cache-mode"/);
+  assert.match(modeRow, /id="auth-note"/);
+  // 暂停是主按钮所在容器里的图标按钮，不再占一行文字链接。
+  const control = between('class="cache-control"', 'id="action-hint"');
+  assert.match(control, /id="cache-button"/);
+  assert.match(control, /id="pause-button"[^>]*hidden/);
+  assert.match(control, /id="pause-button"[^>]*aria-label="暂停缓存"/);
 });
 
-test("提前加载并入当前视频：开关、三个概览数字，其余诊断折叠在「详细数据」", () => {
+test("提前加载并入当前视频：开关、三个概览数字，其余诊断折叠在标题行「详情」之后", () => {
   const preload = between('id="assist-panel"', "</section>");
   assert.match(preload, /id="assist-toggle"[^>]*role="switch"/);
   const summary = between('class="assist-summary"', "</dl>");
   for (const id of ["assist-speed", "assist-ready", "assist-hit"]) assert.match(summary, new RegExp(`<dd id="${id}"[^>]*>—</dd>`), `概览缺少 ${id}`);
   for (const id of ["assist-buffer", "assist-connections", "assist-node"]) assert.doesNotMatch(summary, new RegExp(`id="${id}"`), `诊断 ${id} 不应出现在概览`);
-  const diagnostics = between('<details class="assist-diagnostics">', "</details>");
+  assert.match(preload, /id="assist-details-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="assist-metrics-panel"/);
+  const diagnostics = between('id="assist-metrics-panel"', "</dl>");
+  assert.match(diagnostics, /^[^>]*hidden/, "详细数据默认折叠");
   for (const id of ["assist-buffer", "assist-connections", "assist-accelerated", "assist-rescues", "assist-fallbacks", "assist-node"]) {
     assert.match(diagnostics, new RegExp(`id="${id}"`), `详细数据缺少 ${id}`);
   }

@@ -66,4 +66,4 @@ npm run test:chrome  # 下载与本机 Chrome 同版本的 Chrome for Testing，
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — 参考项目与许可声明
 - [store/](store/) — Chrome Web Store 提审资料
 
-当前版本 2.11.1。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。
+当前版本 2.12.0。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。

@@ -244,10 +244,12 @@ const visible = (selector) => !document.querySelector(selector).hidden;
 
 // 一级结构：「当前视频」「片库」两个页签，设置是齿轮打开的二级视图。
 const defaultCurrentVisible = visible("#current-view") && !visible("#library-view") && !visible("#settings-view");
-document.querySelector("#quality-trigger").click();
-const qualityOpened = document.querySelector("#quality-menu").matches(":popover-open");
+// 画质是平铺的单选卡片：始终恰有一项选中，且整页没有 popover / 下拉。
+const qualityRadios = [...document.querySelectorAll("#quality-options [role='radio']")];
+const qualityOpened = qualityRadios.length >= 1 && qualityRadios.filter((option) => option.getAttribute("aria-checked") === "true").length === 1
+  && !document.querySelector("[popover]");
 document.querySelector("#library-tab").click();
-const qualityClosedOnViewChange = !document.querySelector("#quality-menu").matches(":popover-open");
+const qualityClosedOnViewChange = true;
 const libraryOnlyVisible = !visible("#current-view") && visible("#library-view");
 document.querySelector("#library-tab").focus();
 document.querySelector("#library-tab").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
@@ -259,7 +261,7 @@ await delay(20);
 const disabledAssist = document.querySelector("#assist-toggle").getAttribute("aria-checked") === "false";
 document.querySelector("#assist-toggle").click();
 await delay(20);
-const diagnosticsCollapsedByDefault = document.querySelector(".assist-diagnostics").open === false;
+const diagnosticsCollapsedByDefault = document.querySelector("#assist-details-toggle").getAttribute("aria-expanded") === "false" && document.querySelector("#assist-metrics-panel").hidden;
 
 // 设置：覆盖页签与面板，Esc 返回并把焦点还给齿轮。
 document.querySelector("#settings-button").click();
@@ -281,7 +283,7 @@ const audioSizeText = document.querySelector("#audio-summary").textContent;
 const qualityHiddenInAudioMode = document.querySelector("#quality-row").hidden === true;
 document.querySelector("[data-cache-mode='video']").click();
 await delay(40);
-const videoSizeText = document.querySelector("#cache-size").textContent;
+const videoSizeText = document.querySelector("#quality-options [aria-checked='true'] .quality-option-size")?.textContent;
 const videoModeRestored = cacheMode === "video" && document.querySelector("[data-cache-mode='video']").getAttribute("aria-checked") === "true";
 
 document.querySelector("#settings-button").click();

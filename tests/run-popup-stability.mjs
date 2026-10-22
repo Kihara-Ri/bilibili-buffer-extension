@@ -70,8 +70,17 @@ try {
   await page.locator('#current-tab').click();
   const layout=await page.evaluate(()=>{
     const button=document.querySelector('#cache-button').getBoundingClientRect(),label=document.querySelector('#button-label').getBoundingClientRect(),speed=document.querySelector('#button-speed').getBoundingClientRect();
-    return {label:document.querySelector('#button-label').textContent,speed:document.querySelector('#button-speed').textContent,hint:document.querySelector('#action-hint').textContent,nowrap:getComputedStyle(document.querySelector('#button-speed')).whiteSpace,noOverlap:label.right+4<=speed.left,inside:speed.right<=button.right&&speed.bottom<=button.bottom,progress:document.querySelector('#cache-button').style.getPropertyValue('--progress-ratio')};
-  }); assert(layout.noOverlap&&layout.inside,JSON.stringify(layout)); assert.equal(layout.nowrap,'nowrap'); assert.equal(layout.progress,'0.5'); assert(layout.hint.startsWith('已缓存 8'),JSON.stringify(layout));
+    return {label:document.querySelector('#button-label').textContent,speed:document.querySelector('#button-speed').textContent,hint:document.querySelector('#action-hint').textContent,sub:document.querySelector('#button-sub').textContent,nowrap:getComputedStyle(document.querySelector('#button-speed')).whiteSpace,noOverlap:label.right+4<=speed.left,inside:speed.right<=button.right&&speed.bottom<=button.bottom,progress:document.querySelector('#cache-button').style.getPropertyValue('--progress-ratio')};
+  }); assert(layout.noOverlap&&layout.inside,JSON.stringify(layout)); assert.equal(layout.nowrap,'nowrap'); assert.equal(layout.progress,'0.5'); assert(/^8(\.\d+)? MB \/ /.test(layout.sub)&&layout.hint==='',JSON.stringify(layout));
+  // 暂停在主按钮内部右侧：不得盖住速度文字，也不得超出按钮；画质卡片在进度刷新中保持节点身份。
+  const inButton=await page.evaluate(async()=>{
+    const button=document.querySelector('#cache-button').getBoundingClientRect(),pause=document.querySelector('#pause-button'),pr=pause.getBoundingClientRect(),speed=document.querySelector('#button-speed').getBoundingClientRect();
+    const before=[...document.querySelectorAll('#quality-options .quality-option')];
+    window.__popupTest.emit({type:'CACHE_PROGRESS',video:{...window.taskA,updatedAt:Date.now()+50000}});
+    await new Promise(resolve=>setTimeout(resolve,80));
+    const after=[...document.querySelectorAll('#quality-options .quality-option')];
+    return {visible:!pause.hidden,inside:pr.left>=button.left&&pr.right<=button.right&&pr.top>=button.top&&pr.bottom<=button.bottom,clear:speed.right<=pr.left,locked:before.every(node=>node.disabled),stable:before.length>0&&before.length===after.length&&before.every((node,index)=>node===after[index])};
+  }); assert(inButton.visible&&inButton.inside&&inButton.clear&&inButton.locked&&inButton.stable,JSON.stringify(inButton));
   await page.locator('.app-shell').screenshot({path:path.join(shots,'cache.png')});
   const motion=await page.evaluate(async()=>{
     window.__popupTest.emit({type:'CACHE_PROGRESS',video:{...window.taskA,updatedAt:Date.now()+90000,committedBytes:12*1024*1024,downloadedBytes:12*1024*1024,resumeBytes:12*1024*1024,progress:.75}});
@@ -92,7 +101,7 @@ try {
   });
   assert(unitLabels[0].includes(' B/s')&&unitLabels[1].includes(' KB/s')&&unitLabels[2].includes(' MB/s')&&unitLabels[3].includes(' GB/s'));
   // 详细数据默认折叠、设置默认关闭；外观控件在设置里。
-  assert(await page.evaluate(() => !document.querySelector('.assist-diagnostics').open && document.querySelector('#settings-view').hidden), '详细数据默认折叠，设置默认关闭');
+  assert(await page.evaluate(() => document.querySelector('#assist-details-toggle').getAttribute('aria-expanded') === 'false' && document.querySelector('#assist-metrics-panel').hidden && document.querySelector('#settings-view').hidden), '详细数据默认折叠，设置默认关闭');
   await page.locator('#settings-button').click();
   await page.locator('#assist-appearance-reset').click();
   await page.waitForTimeout(50);
@@ -106,7 +115,7 @@ try {
   assert.equal(await page.locator('[data-assist-color][aria-checked="true"]').count(),1);
   // 统计检查必须在主视图可见时做，否则隐藏节点的尺寸为 0，溢出检查会被空过。
   await page.locator('#settings-back').click();
-  await page.evaluate(() => { document.querySelector('.assist-diagnostics').open = true; });
+  await page.locator('#assist-details-toggle').click();
   const statsStable = await page.evaluate(async () => {
     const nodes = [...document.querySelectorAll('.assist-metrics dd')];
     const focused = document.activeElement;
@@ -114,6 +123,8 @@ try {
     await new Promise(resolve => setTimeout(resolve, 1400));
     if (!document.querySelector('#assist-node').textContent.includes('very-long')) throw new Error('统计未刷新');
     if (!nodes.every(node => getComputedStyle(node).whiteSpace === 'nowrap' && node.getBoundingClientRect().right <= document.querySelector('.app-shell').getBoundingClientRect().right)) throw new Error('统计数值溢出布局');
+    // 详细数据展开后整页仍须放进 Chrome 弹窗的 600px 上限，否则会出现滚动条。
+    if (document.querySelector('.app-shell').scrollHeight > 600) throw new Error('展开详细数据后弹窗超过 600px：' + document.querySelector('.app-shell').scrollHeight);
     return nodes.every((node, index) => node === document.querySelectorAll('.assist-metrics dd')[index]) && document.activeElement === focused;
   });
   assert(statsStable, '统计持续更新必须保持节点与焦点');
@@ -134,7 +145,7 @@ try {
   await page.evaluate(() => { window.__popupTest.assistStats = {cacheHitMB:1}; });
   await page.waitForTimeout(1000);
   assert.equal(await page.locator('#assist-hit').textContent(), '1.00 MB', '统计归零或回滚不得被单调钳制');
-  await page.evaluate(() => { document.querySelector('.assist-diagnostics').open = false; });
+  await page.locator('#assist-details-toggle').click();
   await page.locator('.app-shell').screenshot({path:path.join(shots,'playback.png')});
   const confirmedColor=await page.evaluate(()=>{window.__popupTest.failConfig=true; window.__popupTest.holdConfigRead=true; window.__popupTest.configDelay=80; return window.__popupTest.config.preheatColor;});
   await page.evaluate(()=>{const swatches=document.querySelectorAll('[data-assist-color]'); swatches[0].click(); swatches[3].click();});

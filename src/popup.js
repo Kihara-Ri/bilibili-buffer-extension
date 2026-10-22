@@ -45,20 +45,20 @@ const elements = {
   formatControls: $("#format-controls"),
   cacheMode: $("#cache-mode"),
   qualityRow: $("#quality-row"),
-  qualityTrigger: $("#quality-trigger"),
-  qualityTriggerLabel: $("#quality-trigger-label"),
-  qualityMenu: $("#quality-menu"),
-  cacheSize: $("#cache-size"),
+  qualityOptions: $("#quality-options"),
   audioRow: $("#audio-row"),
   audioSummary: $("#audio-summary"),
   authNote: $("#auth-note"),
   cacheButton: $("#cache-button"),
   buttonLabel: $("#button-label"),
   buttonSpeed: $("#button-speed"),
+  buttonSub: $("#button-sub"),
   actionHint: $("#action-hint"),
   pauseButton: $("#pause-button"),
   assistPanel: $("#assist-panel"),
   assistToggle: $("#assist-toggle"),
+  assistDetailsToggle: $("#assist-details-toggle"),
+  assistMetricsPanel: $("#assist-metrics-panel"),
   assistStatus: $("#assist-status"),
   assistMetrics: Object.fromEntries(["speed", "hit", "buffer", "ready", "connections", "rescues", "node", "accelerated", "fallbacks"].map(key => [key, $(`#assist-${key}`)])),
   appearance: $("#assist-appearance"),
@@ -105,8 +105,7 @@ const state = {
   qualityError: "",
   auth: null,
   videos: [],
-  qualityMenuSignature: "",
-  focusQualityOptionOnOpen: false,
+  qualityOptionsSignature: "",
   assistConfig: null,
   assistStats: null,
   assistReadSequence: 0,
@@ -131,7 +130,7 @@ elements.settingsButton.addEventListener("click", (event) => setSettingsOpen(!st
 elements.settingsBack.addEventListener("click", (event) => setSettingsOpen(false, { restoreFocus: event.detail === 0 }));
 elements.healthBannerOpen.addEventListener("click", () => setSettingsOpen(true, { focus: elements.browserHealthRefresh }));
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && state.settingsOpen && !isQualityMenuOpen()) setSettingsOpen(false);
+  if (event.key === "Escape" && state.settingsOpen) setSettingsOpen(false);
 });
 elements.cacheButton.addEventListener("click", startCache);
 elements.pauseButton.addEventListener("click", pauseCurrentTask);
@@ -146,10 +145,13 @@ elements.cacheMode.addEventListener("click", (event) => {
   if (button && button.getAttribute("aria-checked") !== "true") void persistCacheMode(button.dataset.cacheMode);
 });
 elements.cacheMode.addEventListener("keydown", navigateCacheModes);
-elements.qualityMenu.addEventListener("click", selectQualityFromMenu);
-elements.qualityMenu.addEventListener("keydown", navigateQualityMenu);
-elements.qualityMenu.addEventListener("toggle", handleQualityMenuToggle);
-elements.qualityTrigger.addEventListener("keydown", openQualityMenuFromKeyboard);
+elements.qualityOptions.addEventListener("click", selectQuality);
+elements.qualityOptions.addEventListener("keydown", navigateQualityOptions);
+elements.assistDetailsToggle.addEventListener("click", () => {
+  const open = elements.assistDetailsToggle.getAttribute("aria-expanded") !== "true";
+  elements.assistDetailsToggle.setAttribute("aria-expanded", String(open));
+  elements.assistMetricsPanel.hidden = !open;
+});
 elements.assistToggle.addEventListener("click", () => {
   if (state.tab?.id) void persistProgressAppearance({ mode: state.assistConfig?.mode === "off" ? "always" : "off" });
 });
@@ -175,7 +177,6 @@ elements.toastAction.addEventListener("click", () => {
   hideToast();
   action?.();
 });
-window.addEventListener("resize", () => { if (isQualityMenuOpen()) positionQualityMenu(); });
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.target !== "popup" || !TASK_EVENTS.includes(message.type)) return;
@@ -220,7 +221,6 @@ function navigatePanelViews(event) {
 function setPanelView(view, { focus = false } = {}) {
   const tab = elements.tabs.find((candidate) => candidate.dataset.panelView === view);
   if (!tab) return;
-  if (view !== "current") closeQualityMenu();
   if (state.settingsOpen) setSettingsOpen(false, { restoreFocus: false });
   state.activeView = view;
   for (const candidate of elements.tabs) {
@@ -235,7 +235,6 @@ function setPanelView(view, { focus = false } = {}) {
 /** 设置是覆盖在页签之上的二级视图：打开时隐藏页签与当前面板，返回时回到原页签。 */
 function setSettingsOpen(open, { focus = null, restoreFocus = true, moveFocus = true } = {}) {
   state.settingsOpen = open;
-  closeQualityMenu();
   elements.settingsView.hidden = !open;
   elements.panelTabs.hidden = open;
   // 设置的「关于」里已有隐私说明链接；隐藏重复的页脚，让设置页落在 Chrome 弹窗 600px 的高度上限内。
@@ -401,7 +400,6 @@ function renderUnsupported(title, detail) {
   elements.formatControls.hidden = true;
   elements.assistPanel.hidden = true;
   elements.pauseButton.hidden = true;
-  closeQualityMenu();
   setButtonState("disabled", "当前页面无法缓存", "", 0, true);
   setHint("打开一个 B 站视频页即可缓存；已缓存的视频在「片库」里", false);
 }
@@ -473,9 +471,11 @@ function renderCacheAction(cached) {
       : merging ? `正在合并 ${percent}%` : cached.error ? `正在恢复 ${percent}%` : `正在缓存 ${percent}%`;
     const speed = retrySeconds > 0 ? `${retrySeconds}s` : merging || extracting ? "处理中"
       : speedSample.value > 0 ? formatSpeed(speedSample.value) : "连接中";
-    setButtonState("downloading", label, speed, progress, true);
-    setHint(extracting ? "正在无损提取音轨（不转码）" : merging ? "音视频已下载完，正在合并为单个 MP4"
-      : cached.error || `已缓存 ${formatBytes(committedBytes(cached))} / ${formatBytes(cached.totalBytes)} · 可以关闭这个页面`, false);
+    // 已缓存字节数放进按钮第二行；只有需要解释的状态（提取 / 合并 / 出错）才占独立提示行，省出一行高度。
+    const special = extracting ? "正在无损提取音轨（不转码）" : merging ? "音视频已下载完，正在合并为单个 MP4" : cached.error || "";
+    setButtonState("downloading", label, speed, progress, true, special ? "" : `${formatBytes(committedBytes(cached))} / ${formatBytes(cached.totalBytes)}`);
+    setHint(special, false);
+    elements.cacheButton.title = special ? "" : "缓存在后台独立进行，可以关闭这个页面";
     return;
   }
   if (cached.status === "complete") {
@@ -516,22 +516,20 @@ function renderFormatControls(cached) {
 
   let ladder = null;
   if (audioMode) {
-    closeQualityMenu();
     const size = getAudioCacheSize(state.cacheSizeInfo, cached);
     setText(elements.audioSummary, size ? [size.label, `${size.estimated ? "约 " : ""}${formatBytes(size.bytes)}`].filter(Boolean).join(" · ") : "暂时无法估算");
     elements.audioSummary.title = size?.mode === "extract"
       ? "该视频只有单文件 MP4：会先下载整段 MP4，再无损提取音轨；保存时保留原始音频格式"
       : "优先 Hi-Res 无损，其次杜比全景声，最后 AAC；保存时保留 B 站原始格式";
   } else if (state.qualitiesLoading) {
-    setQualityTrigger("正在读取可用画质…", "", true);
+    renderQualityOptions([], cached, "正在读取可用画质…");
   } else {
     const options = getQualityDisplayOptions(cached);
     if (!options.some((option) => option.quality === state.selectedQuality)) state.selectedQuality = options[0]?.quality || 0;
-    renderQualityMenu(options, cached);
-    const selected = options.find((option) => option.quality === state.selectedQuality);
+    renderQualityOptions(options, cached, "没有可缓存画质");
     ladder = describeQualityLadder(options);
-    setQualityTrigger(selected ? qualityLabel(selected, options.indexOf(selected)) : "没有可缓存画质", sizeText(selected?.quality, cached), !options.length || cached?.status === "downloading", ladder.title);
-    updateQualitySelection();
+    elements.qualityOptions.title = ladder.title;
+    updateQualitySelection(cached?.status === "downloading");
   }
   renderAuthNote(ladder);
 }
@@ -581,41 +579,47 @@ function getQualityDisplayOptions(cached) {
   return options;
 }
 
-function qualityLabel(quality, index) {
-  return `${quality.label}${index === 0 && state.qualityOptions.length > 1 ? "（最高）" : ""}`;
+/** 选项上的短名：「4K 超高清」→「4K」。短名在同一排里重名时（如两个 1080P 档）才退回完整名，保证选项互相可区分。 */
+function qualityShortLabels(options) {
+  const short = options.map((quality) => String(quality.label || "").trim().split(/\s+/)[0] || String(quality.quality));
+  return options.map((quality, index) => short.indexOf(short[index]) === short.lastIndexOf(short[index]) ? short[index] : quality.label);
 }
 
 function qualityAccess(quality) {
   return quality.requiresVip ? "大会员" : quality.requiresLogin ? "登录可用" : "";
 }
 
-function renderQualityMenu(options, cached) {
-  const rows = options.map((quality, index) => [quality.quality, qualityLabel(quality, index), sizeText(quality.quality, cached), qualityAccess(quality)]);
-  const signature = JSON.stringify(rows);
-  if (signature === state.qualityMenuSignature) return;
-  state.qualityMenuSignature = signature;
+/**
+ * 画质选项：一组单选按钮，每项「短名 + 体积」。只在内容签名变化时重建（选中态与禁用态单独更新），
+ * 这样心跳刷新不会打断悬停与键盘焦点。
+ */
+function renderQualityOptions(options, cached, placeholder) {
+  const short = qualityShortLabels(options);
+  const rows = options.map((quality, index) => [quality.quality, short[index], quality.label, sizeText(quality.quality, cached), qualityAccess(quality), index === 0 && options.length > 1]);
+  const signature = JSON.stringify([rows, rows.length ? "" : placeholder]);
+  if (signature === state.qualityOptionsSignature) return;
+  state.qualityOptionsSignature = signature;
   const fragment = document.createDocumentFragment();
-  for (const [value, label, size, access] of rows) {
+  if (!rows.length) {
+    const empty = document.createElement("span");
+    empty.className = "quality-empty";
+    empty.textContent = placeholder;
+    fragment.append(empty);
+  }
+  for (const [value, name, fullName, size, access, best] of rows) {
     const option = document.createElement("button");
     option.className = "quality-option";
     option.type = "button";
-    option.setAttribute("role", "option");
+    option.setAttribute("role", "radio");
     option.dataset.quality = String(value);
-    const name = document.createElement("span"); name.className = "quality-option-label"; name.textContent = label;
-    const bytes = document.createElement("span"); bytes.className = "quality-option-size"; bytes.textContent = size;
-    option.append(name, bytes);
-    if (access) { const note = document.createElement("span"); note.className = "quality-option-note"; note.textContent = access; option.append(note); }
+    option.title = [fullName + (best ? "（最高）" : ""), size, access].filter(Boolean).join(" · ");
+    const label = document.createElement("span"); label.className = "quality-option-label"; label.textContent = name;
+    const bytes = document.createElement("span"); bytes.className = "quality-option-size"; bytes.textContent = size || "—";
+    option.append(label, bytes);
+    if (access) { const tag = document.createElement("span"); tag.className = "quality-option-tag"; tag.textContent = access === "大会员" ? "VIP" : "登录"; option.append(tag); }
     fragment.append(option);
   }
-  elements.qualityMenu.replaceChildren(fragment);
-}
-
-function setQualityTrigger(label, size, disabled, extraTitle = "") {
-  setText(elements.qualityTriggerLabel, label);
-  setText(elements.cacheSize, size);
-  elements.qualityTrigger.disabled = disabled;
-  elements.qualityTrigger.title = [label, size, extraTitle].filter(Boolean).join("\n");
-  if (disabled) closeQualityMenu();
+  elements.qualityOptions.replaceChildren(fragment);
 }
 
 /** 对比 B 站声明的档位与当前账号实际返回的轨道，让「是不是最高规格」有答案。 */
@@ -631,98 +635,54 @@ function describeQualityLadder(options) {
   };
 }
 
-function updateQualitySelection() {
-  for (const option of elements.qualityMenu.querySelectorAll(".quality-option")) {
-    const selected = Number(option.dataset.quality) === state.selectedQuality;
-    option.setAttribute("aria-selected", String(selected));
-    option.tabIndex = selected ? 0 : -1;
-  }
-}
-
-function selectQualityFromMenu(event) {
-  const option = event.target.closest(".quality-option");
-  if (!option) return;
-  state.selectedQuality = Number(option.dataset.quality) || 0;
-  state.selectedCodec = "auto";
-  if (state.tab?.url && state.selectedQuality) {
-    void send("SET_POPUP_SELECTION", { tabId: state.tab.id, url: state.tab.url, quality: state.selectedQuality, codec: state.selectedCodec }).catch(() => {});
-  }
-  closeQualityMenu();
-  renderCurrent();
-  elements.qualityTrigger.focus();
-}
-
-function openQualityMenuFromKeyboard(event) {
-  if (!["ArrowDown", "ArrowUp"].includes(event.key) || elements.qualityTrigger.disabled) return;
-  event.preventDefault();
-  state.focusQualityOptionOnOpen = true;
-  if (isQualityMenuOpen()) focusSelectedQualityOption();
-  else elements.qualityMenu.showPopover();
-}
-
-function navigateQualityMenu(event) {
-  const options = [...elements.qualityMenu.querySelectorAll(".quality-option")];
-  if (!options.length) return;
-  if (event.key === "Escape") {
-    event.preventDefault();
-    closeQualityMenu();
-    elements.qualityTrigger.focus();
-    return;
-  }
-  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-  event.preventDefault();
-  const current = Math.max(0, options.indexOf(document.activeElement));
-  const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1
-    : event.key === "ArrowDown" ? (current + 1) % options.length : (current - 1 + options.length) % options.length;
-  options[next].focus();
-}
-
-function handleQualityMenuToggle(event) {
-  const open = event.newState === "open";
-  elements.qualityTrigger.setAttribute("aria-expanded", String(open));
-  elements.qualityTrigger.classList.toggle("is-open", open);
-  if (!open) return;
-  requestAnimationFrame(() => {
-    positionQualityMenu();
-    if (state.focusQualityOptionOnOpen) focusSelectedQualityOption();
-    state.focusQualityOptionOnOpen = false;
+/** 选中态走 aria-checked + roving tabindex；下载中不允许换档，整组置灰。 */
+function updateQualitySelection(locked) {
+  const options = [...elements.qualityOptions.querySelectorAll(".quality-option")];
+  const selectedIndex = Math.max(0, options.findIndex((option) => Number(option.dataset.quality) === state.selectedQuality));
+  options.forEach((option, index) => {
+    const selected = index === selectedIndex && Number(option.dataset.quality) === state.selectedQuality;
+    option.setAttribute("aria-checked", String(selected));
+    option.tabIndex = index === selectedIndex ? 0 : -1;
+    option.disabled = Boolean(locked);
   });
 }
 
-function focusSelectedQualityOption() {
-  elements.qualityMenu.querySelector('[aria-selected="true"]')?.focus();
+function selectQuality(event) {
+  const option = event.target.closest(".quality-option");
+  if (!option || option.disabled) return;
+  const quality = Number(option.dataset.quality) || 0;
+  if (!quality || quality === state.selectedQuality) return;
+  state.selectedQuality = quality;
+  state.selectedCodec = "auto";
+  if (state.tab?.url) {
+    void send("SET_POPUP_SELECTION", { tabId: state.tab.id, url: state.tab.url, quality: state.selectedQuality, codec: state.selectedCodec }).catch(() => {});
+  }
+  renderCurrent();
+  elements.qualityOptions.querySelector('[aria-checked="true"]')?.focus();
 }
 
-function positionQualityMenu() {
-  if (!isQualityMenuOpen()) return;
-  const rect = elements.qualityTrigger.getBoundingClientRect();
-  const menu = elements.qualityMenu;
-  const padding = 12;
-  menu.style.minWidth = `${Math.round(rect.width)}px`;
-  menu.style.maxWidth = `${Math.max(180, window.innerWidth - padding * 2)}px`;
-  const menuRect = menu.getBoundingClientRect();
-  const left = Math.max(padding, Math.min(rect.right - menuRect.width, window.innerWidth - menuRect.width - padding));
-  let top = rect.bottom + 4;
-  if (top + menuRect.height > window.innerHeight - padding) top = Math.max(padding, rect.top - menuRect.height - 4);
-  menu.style.left = `${Math.round(left)}px`;
-  menu.style.top = `${Math.round(top)}px`;
+/** 单选组的键盘约定：方向键移动并选中，Home / End 到两端。 */
+function navigateQualityOptions(event) {
+  const options = [...elements.qualityOptions.querySelectorAll(".quality-option:not(:disabled)")];
+  if (!options.length || !["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const current = Math.max(0, options.indexOf(document.activeElement));
+  const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
+  const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1
+    : (current + (forward ? 1 : -1) + options.length) % options.length;
+  options[next].click();
+  elements.qualityOptions.querySelector('[aria-checked="true"]')?.focus();
 }
 
-function closeQualityMenu() {
-  if (isQualityMenuOpen()) elements.qualityMenu.hidePopover();
-}
-
-function isQualityMenuOpen() {
-  return elements.qualityMenu.matches(":popover-open");
-}
-
-function setButtonState(mode, label, speed, progress, disabled) {
+function setButtonState(mode, label, speed, progress, disabled, sub = "") {
   elements.cacheButton.dataset.state = mode;
   elements.cacheButton.disabled = disabled;
   elements.cacheButton.style.setProperty("--progress-ratio", String(Math.max(0, Math.min(1, progress))));
   setText(elements.buttonLabel, label);
   setText(elements.buttonSpeed, speed);
-  setAttr(elements.cacheButton, "aria-label", speed ? `${label}，${speed}` : label);
+  setText(elements.buttonSub, sub);
+  elements.cacheButton.title = "";
+  setAttr(elements.cacheButton, "aria-label", [label, sub, speed].filter(Boolean).join("，"));
 }
 
 function setHint(message, isError) {
@@ -823,6 +783,11 @@ function renderAssist() {
     node: live ? (stats.networkHost || "等待连接") : (enabled ? "等待数据" : "已关闭")
   };
   for (const [key, value] of Object.entries(metrics)) setText(elements.assistMetrics[key], value);
+  // 「交还原生」是失败指标：为 0 时只是噪音，不占一行；出现过才显示并用警示色。
+  const fallbackRow = elements.assistMetrics.fallbacks.parentElement;
+  const hasFallbacks = live && finite(stats.nativeFallbacks) > 0;
+  fallbackRow.hidden = !hasFallbacks;
+  fallbackRow.classList.toggle("is-warning", hasFallbacks);
   setAttr(elements.assistMetrics.node, "title", metrics.node);
   elements.assistToggle.setAttribute("aria-checked", String(enabled));
 

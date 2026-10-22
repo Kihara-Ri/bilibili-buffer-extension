@@ -48,52 +48,54 @@
             </p>
 
             <div id="format-controls" class="format-controls" hidden>
-              <div class="field-row">
-                <span class="field-label" id="cache-mode-label">内容</span>
+              <!-- 内容二选一的分段控件与账号说明同占一行：说明是一句短话，放在控件右侧最省高度。 -->
+              <div class="mode-row">
+                <span class="visually-hidden" id="cache-mode-label">缓存内容</span>
                 <div id="cache-mode" class="segmented" role="radiogroup" aria-labelledby="cache-mode-label">
                   <button id="mode-video" type="button" role="radio" aria-checked="true" data-cache-mode="video">视频</button>
                   <button id="mode-audio" type="button" role="radio" aria-checked="false" tabindex="-1" data-cache-mode="audio">仅音频</button>
                 </div>
+                <p id="auth-note" class="field-note" hidden></p>
               </div>
 
-              <div id="quality-row" class="field-row">
-                <span class="field-label">画质</span>
-                <div class="quality-picker">
-                  <button id="quality-trigger" class="quality-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-describedby="auth-note" popovertarget="quality-menu" disabled>
-                    <span id="quality-trigger-label" class="quality-trigger-label">读取中…</span>
-                    <span id="cache-size" class="quality-trigger-size" aria-live="polite"></span>
-                    <svg class="caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg>
-                  </button>
-                  <div id="quality-menu" class="quality-menu" popover role="listbox" aria-label="缓存画质"></div>
-                </div>
+              <!-- 画质直接铺成一排选项（单选），不再藏进下拉：一眼看到所有档位和体积。 -->
+              <div id="quality-row" class="quality-row">
+                <span class="visually-hidden" id="quality-label">画质</span>
+                <div id="quality-options" class="quality-options" role="radiogroup" aria-labelledby="quality-label" aria-describedby="auth-note"></div>
               </div>
 
-              <div id="audio-row" class="field-row" hidden>
-                <span class="field-label">音质</span>
+              <div id="audio-row" class="audio-row" hidden>
+                <span class="audio-row-label">音质</span>
                 <span id="audio-summary" class="audio-summary"></span>
               </div>
-
-              <p id="auth-note" class="field-note" hidden></p>
             </div>
 
-            <!-- 圆角主按钮是缓存状态的唯一载体：空闲时是动作，下载时是进度条，完成时是结果。 -->
-            <button id="cache-button" class="cache-button" type="button" disabled aria-describedby="action-hint">
-              <span id="button-progress" class="button-progress" aria-hidden="true"></span>
-              <span class="button-content">
-                <span id="button-label" class="button-label">读取页面</span>
-                <span id="button-speed" class="button-speed"></span>
-              </span>
-            </button>
-            <div class="action-row">
-              <p id="action-hint" class="action-hint" role="status" aria-live="polite" hidden></p>
-              <button id="pause-button" class="text-button" type="button" hidden>暂停</button>
+            <!-- 主按钮是缓存状态的唯一载体：空闲时是动作，下载时是进度条，完成时是结果。
+                 暂停是它内部右侧的图标按钮（不能嵌套 <button>，所以与主按钮并排放在同一容器里）。 -->
+            <div class="cache-control">
+              <button id="cache-button" class="cache-button" type="button" disabled aria-describedby="action-hint">
+                <span id="button-progress" class="button-progress" aria-hidden="true"></span>
+                <span class="button-content">
+                  <span class="button-text">
+                    <span id="button-label" class="button-label">读取页面</span>
+                    <span id="button-sub" class="button-sub"></span>
+                  </span>
+                  <span id="button-speed" class="button-speed"></span>
+                </span>
+              </button>
+              <button id="pause-button" class="pause-button" type="button" hidden aria-label="暂停缓存" title="暂停缓存">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 5.5v9M12.5 5.5v9"/></svg>
+              </button>
             </div>
+            <p id="action-hint" class="action-hint" role="status" aria-live="polite" hidden></p>
           </section>
 
           <section id="assist-panel" class="preload" aria-labelledby="preload-heading" hidden>
             <div class="preload-head">
               <h3 id="preload-heading">提前加载</h3>
               <span id="assist-status" class="status-pill" role="status" aria-live="polite" data-state="waiting">等待视频播放</span>
+              <!-- 详细数据的开关放在标题行：展开后少占一行，整页才放得进 Chrome 弹窗的 600px。 -->
+              <button id="assist-details-toggle" class="details-toggle" type="button" aria-expanded="false" aria-controls="assist-metrics-panel">详情<svg class="caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></button>
               <button id="assist-toggle" class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="preload-heading" aria-describedby="assist-status"><span aria-hidden="true"></span></button>
             </div>
             <!-- 只保留回答「有没有效果」的三个数字；其余诊断收进「详细数据」。 -->
@@ -102,20 +104,14 @@
               <div><dt>已就绪</dt><dd id="assist-ready">—</dd></div>
               <div><dt>已命中</dt><dd id="assist-hit">—</dd></div>
             </dl>
-            <details class="assist-diagnostics">
-              <summary>
-                <span>详细数据</span>
-                <svg class="caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg>
-              </summary>
-              <dl class="assist-metrics" aria-label="提前加载详细数据">
-                <div><dt title="B 站播放器自身已缓冲、可直接播放的秒数">播放器缓冲</dt><dd id="assist-buffer">—</dd></div>
-                <div><dt title="最近 10 秒内同时进行的分片请求峰值 / 页面内并发上限；空闲时为 0">近 10 秒峰值 / 上限</dt><dd id="assist-connections">—</dd></div>
-                <div><dt title="由插件加速完成的播放器请求">加速请求</dt><dd id="assist-accelerated">—</dd></div>
-                <div><dt title="节点卡住时，备用节点上的副本先完成的次数">备用节点救援</dt><dd id="assist-rescues">—</dd></div>
-                <div><dt title="加速失败、交还 B 站播放器自己下载的次数">交还原生</dt><dd id="assist-fallbacks">—</dd></div>
-                <div class="assist-node"><dt title="最近一次完成下载的 CDN 节点">最近节点</dt><dd id="assist-node">等待连接</dd></div>
-              </dl>
-            </details>
+            <dl id="assist-metrics-panel" class="assist-metrics" aria-label="提前加载详细数据" hidden>
+              <div><dt title="B 站播放器自身已缓冲、可直接播放的秒数">播放器缓冲</dt><dd id="assist-buffer">—</dd></div>
+              <div><dt title="最近 10 秒内同时进行的分片请求峰值 / 页面内并发上限；空闲时为 0">并发峰值</dt><dd id="assist-connections">—</dd></div>
+              <div><dt title="由插件加速完成的播放器请求">加速请求</dt><dd id="assist-accelerated">—</dd></div>
+              <div><dt title="节点卡住时，备用节点上的副本先完成的次数">备用节点救援</dt><dd id="assist-rescues">—</dd></div>
+              <div><dt title="加速失败、交还 B 站播放器自己下载的次数">交还原生</dt><dd id="assist-fallbacks">—</dd></div>
+              <div class="assist-node"><dt title="最近一次完成下载的 CDN 节点">最近节点</dt><dd id="assist-node">等待连接</dd></div>
+            </dl>
           </section>
         </section>
 
