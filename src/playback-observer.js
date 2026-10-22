@@ -67,7 +67,8 @@
     onPiece(url, start, bytes, total, contentType) {
       const track = tracks.get(trackKey(url));
       if (track) { track.size = total; track.failures = 0; track.retryAt = 0; }
-      playbackCache?.put(url, start, bytes, total, { contentType });
+      // 分片字节归缓存所有（引擎不会再改写），直接保存不复制。
+      playbackCache?.put(url, start, bytes, total, { contentType, owned: true });
       queuePump();
     },
     onPieceError(url, urgent) {
@@ -456,27 +457,31 @@
    * @returns {Promise<{body: Uint8Array, start: number, end: number, total: number, contentType: string, reused: number}>}
    */
   async function assembleRange(url, start, end, signal, total) {
-    const resident = [];
+    // 已取消的信号不会再派发 abort 事件（例如在复用查询的 await 期间被取消）；
+    // 不先检查，就会为一个已没人要的请求发出整段急需分片，白占槽位。
+    if (signal.aborted) throw signal.reason || new DOMException("已取消", "AbortError");
+    const body = new Uint8Array(end - start);
+    // 驻留部分立即复制进 body：下载缺口期间缓存可能回收这些块。
+    const covered = [];
+    let reused = 0, size = 0, contentType = "";
     for (const [left, right] of playbackCache?.ranges(url) || []) {
       const from = Math.max(left, start), to = Math.min(right, end);
-      const hit = to > from ? playbackCache.match(url, `bytes=${from}-${to - 1}`) : null;
-      if (hit) resident.push(hit);
+      const meta = to > from ? playbackCache.copy(url, from, to, body, from - start) : null;
+      if (!meta) continue;
+      covered.push([from, to]); reused += to - from; size = meta.total; contentType = meta.contentType;
     }
-    const gaps = missingRanges(resident.map(hit => [hit.start, hit.end]), start, end);
+    const gaps = missingRanges(covered, start, end);
     const controller = new AbortController();
     const stop = () => controller.abort(signal.reason);
     signal.addEventListener("abort", stop, { once: true });
     try {
-      const fetched = await Promise.all(gaps.map(([from, to]) => network.get(url, from, to, { signal: controller.signal, total })));
-      const body = new Uint8Array(end - start);
-      let reused = 0, size = total || resident[0]?.total || 0, contentType = resident[0]?.contentType;
-      for (const hit of resident) { body.set(hit.body, hit.start - start); reused += hit.body.length; }
-      fetched.forEach((result, index) => {
+      // 缺口字节由分片引擎直接写进 body 的对应位置，不再经过中间缓冲。
+      const fetched = await Promise.all(gaps.map(([from, to]) => network.get(url, from, to, { signal: controller.signal, total, into: body, at: from - start })));
+      for (const result of fetched) {
         if (size && result.total !== size) throw new Error("缓存与网络的文件总长不一致");
-        body.set(result.bytes, gaps[index][0] - start);
         size = result.total; contentType = result.contentType;
-      });
-      return { body, start, end, total: size, contentType: contentType || "application/octet-stream", reused };
+      }
+      return { body, start, end, total: size || total, contentType: contentType || "application/octet-stream", reused };
     } catch (error) {
       controller.abort(error);
       throw error;
@@ -484,6 +489,7 @@
       signal.removeEventListener("abort", stop);
     }
   }
+
 
   // 只接管播放器实际请求的媒体范围，不依赖先成功收到原节点响应头。
   async function loadPlayerRange(url, range, signal) {

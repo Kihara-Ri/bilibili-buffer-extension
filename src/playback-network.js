@@ -41,7 +41,7 @@
    * @returns {object} register/get/prefetch/… 见文件末尾的返回值。
    */
   function createNetwork({ fetch: fetcher, onPiece = () => {}, onPieceError = () => {}, maxSlots = 32, backgroundSlots = 12, hedgeMs = 800, firstByteMs = 8000, stallMs = 4000 } = {}) {
-    const groups = new Map(), roles = new Map(), totals = new Map(), health = new Map();
+    const groups = new Map(), totals = new Map(), health = new Map();
     /** @type {Map<string, object[]>} url → 在途分片（按起点有序、互不重叠） */
     const inflight = new Map();
     const waiting = [];
@@ -89,6 +89,14 @@
       pool.sort((a, b) => score(a) - score(b) || all.indexOf(a) - all.indexOf(b));
       const shift = round % pool.length;
       return [...pool.slice(shift), ...pool.slice(0, shift)];
+    }
+    /** 输给对冲副本的节点：在阈值内没出任何字节，说明它此刻卡住了。
+     * 像失败一样短暂隔离（1→16 秒），并把卡住的时长计入首字节均值；否则它会凭旧成绩一直排第一，
+     * 每个分片都要先白等一个对冲阈值。 */
+    function demote(url, stalledMs) {
+      const old = health.get(url), slow = (old?.slow || 0) + 1;
+      health.set(url, { ...old, slow, ttfb: old?.ttfb ? old.ttfb * .7 + stalledMs * .3 : stalledMs,
+        until: performance.now() + Math.min(16000, 1000 * 2 ** (slow - 1)) });
     }
     // 对冲阈值随节点常态首字节伸缩：常态 1 秒首字节的冷节点不该每片都被判慢。
     const hedgeDelay = url => Math.min(3000, Math.max(hedgeMs, 2 * (health.get(url)?.ttfb || 0)));
@@ -168,13 +176,18 @@
           fn(value);
         };
         const onAbort = () => finish(reject, signal.reason);
-        const launch = () => {
+        const launch = (hedge = false) => {
           const url = urls[tries.length % urls.length];
-          const t = { url, controller: new AbortController(), progress: { started: false, at: 0 } };
+          const t = { url, hedge, controller: new AbortController(), progress: { started: false, at: 0 } };
           tries.push(t);
           // 分片取消经 onAbort → finish 统一中止全部尝试，尝试只需监听自己的控制器。
           attempt(piece, url, t.controller.signal, t.progress).then(result => {
-            if (tries.indexOf(t) > 0) counters.hedgeWins++;
+            // 只有对冲副本胜出才算「救援」；先前尝试已失败后的换节点不算。
+            if (t.hedge) {
+              counters.hedgeWins++;
+              const loser = tries[0];
+              if (loser !== t && loser.progress.started) demote(loser.url, performance.now() - loser.progress.at);
+            }
             finish(resolve, result);
           }, error => {
             failed++; lastError = error;
@@ -188,7 +201,7 @@
           if (settled) return;
           const first = tries[0];
           // 每轮最多一个对冲副本；尝试还在排队等槽位时不对冲（此时多发一份只会更挤）。
-          if (tries.length === 1 && !failed && first.progress.started && performance.now() - first.progress.at >= hedgeDelay(first.url)) launch();
+          if (tries.length === 1 && !failed && first.progress.started && performance.now() - first.progress.at >= hedgeDelay(first.url)) launch(true);
           timer = setTimeout(watch, 200);
         };
         signal.addEventListener('abort', onAbort, { once: true });
@@ -197,16 +210,21 @@
       });
     }
 
+    /** 后台分片最多 3 轮；急需分片只给 2 轮——播放器在等，再失败就该尽快交还原生请求。
+     * 最后一轮失败后立即抛出，轮间退避可被取消打断。 */
     async function runPiece(piece) {
-      let lastError;
-      for (let round = 0; round < 3; round++) {
+      const signal = piece.controller.signal;
+      for (let round = 0; ; round++) {
         try { return await race(piece, round); } catch (error) {
-          lastError = error;
-          if (piece.controller.signal.aborted) throw piece.controller.signal.reason;
-          await new Promise(resolve => setTimeout(resolve, 250 * 2 ** round));
+          if (signal.aborted) throw signal.reason;
+          if (round + 1 >= (piece.urgent ? 2 : 3)) throw error;
+          await new Promise(resolve => {
+            const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
+            const timer = setTimeout(done, 250 * 2 ** round);
+            signal.addEventListener('abort', done, { once: true });
+          });
         }
       }
-      throw lastError;
     }
 
     function startPiece(url, start, end, { urgent, keep, order = 0, total = 0 }) {
@@ -260,10 +278,12 @@
     /**
      * 取 [start,end) 的完整字节，播放器请求专用（急需优先级）。
      * @param {string} url @param {number} start @param {number} end
-     * @param {{signal: AbortSignal, total?: number}} options
+     * into/at：调用方预先分配的目标缓冲与偏移，分片字节直接写进去，返回的 bytes 是它的视图；
+     * 拼装播放器响应时省掉一整份中间拷贝。
+     * @param {{signal: AbortSignal, total?: number, into?: Uint8Array, at?: number}} options
      * @returns {Promise<{bytes: Uint8Array, total: number, contentType: string}>}
      */
-    async function get(url, start, end, { signal, total = 0 }) {
+    async function get(url, start, end, { signal, total = 0, into = null, at = 0 }) {
       if (!mediaUrl(url) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start || end - start > MAX_RANGE) throw new Error('不支持的媒体范围');
       if (signal.aborted) throw signal.reason;
       const size = Math.min(BACKGROUND_PIECE, Math.max(MIN_PIECE, Math.ceil((end - start) / URGENT_SPLIT / MIN_PIECE) * MIN_PIECE));
@@ -281,7 +301,7 @@
       counters.urgentRanges++;
       try {
         const results = await Promise.race([Promise.all(pieces.map(p => p.promise)), left]);
-        const bytes = new Uint8Array(end - start);
+        const bytes = into ? into.subarray(at, at + end - start) : new Uint8Array(end - start);
         for (let i = 0; i < pieces.length; i++) {
           const piece = pieces[i], body = results[i].bytes;
           const from = Math.max(start, piece.start), to = Math.min(end, piece.start + body.length);
@@ -293,8 +313,11 @@
       } finally {
         signal.removeEventListener('abort', leave);
         for (const piece of pieces) {
-          // 播放器放弃后，没人等的急需分片立即取消；后台分片继续把前方窗口填满。
-          if (--piece.users === 0 && !piece.keep) cancel(piece, abortError());
+          // 播放器放弃后：没人等的急需分片立即取消；后台分片（含被预热接管的）恢复后台身份继续填窗口。
+          if (--piece.users === 0) {
+            if (piece.keep) piece.urgent = false;
+            else cancel(piece, abortError());
+          }
         }
       }
     }
@@ -304,7 +327,10 @@
     function prefetch(url, start, end, { order = 0, total = 0 } = {}) {
       if (!mediaUrl(url) || !(end > start)) return 0;
       const before = inflight.get(url)?.length || 0;
-      cover(url, start, end, BACKGROUND_PIECE, { urgent: false, keep: true, order, total });
+      for (const piece of cover(url, start, end, BACKGROUND_PIECE, { urgent: false, keep: true, order, total })) {
+        // 窗口里已有播放器的急需分片：预热接管它（keep），否则播放器一放弃它就被取消，窗口留下空洞。
+        if (!piece.keep) { piece.keep = true; piece.order = Math.min(piece.order, order); }
+      }
       return (inflight.get(url)?.length || 0) - before;
     }
 
@@ -325,14 +351,13 @@
 
     function register(payload) {
       const data = payload?.data || payload?.result || payload, dash = data?.dash;
-      const entries = [...(dash?.video || []).map(t => [t, 'video']), ...(dash?.audio || []).map(t => [t, 'audio']),
-        ...(dash?.dolby?.audio || []).map(t => [t, 'audio']), ...(dash?.flac?.audio ? [[dash.flac.audio, 'audio']] : [])];
-      for (const [track, role] of entries) {
+      const entries = [...(dash?.video || []), ...(dash?.audio || []), ...(dash?.dolby?.audio || []), ...(dash?.flac?.audio ? [dash.flac.audio] : [])];
+      for (const track of entries) {
         const backups = track.backupUrl || track.backup_url || track.backup_url_list || [];
         const urls = [...new Set([track.baseUrl || track.base_url, ...(Array.isArray(backups) ? backups : [])].map(mediaUrl).filter(Boolean))];
-        for (const url of urls) { groups.set(url, urls); roles.set(url, role); }
+        for (const url of urls) groups.set(url, urls);
       }
-      while (groups.size > 256) { const key = groups.keys().next().value; groups.delete(key); roles.delete(key); totals.delete(key); }
+      while (groups.size > 256) { const key = groups.keys().next().value; groups.delete(key); totals.delete(key); }
     }
 
     function snapshot() {
@@ -353,14 +378,13 @@
     function reset() {
       generation++;
       for (const list of inflight.values()) for (const piece of list) piece.controller.abort(abortError('页面已切换'));
-      inflight.clear(); groups.clear(); roles.clear(); totals.clear(); health.clear();
+      inflight.clear(); groups.clear(); totals.clear(); health.clear();
       counters = freshCounters();
       speed = 0; sampleBytes = 0; sampleAt = performance.now();
     }
 
     return {
       register, get, prefetch, pruneBackground, snapshot, reset,
-      role: url => roles.get(url),
       total: url => totals.get(url) || 0,
       /** @param {string} url @returns {number[][]} 在途分片区间（半开）。 */
       inflightRanges: url => (inflight.get(url) || []).map(p => [p.start, p.end]),

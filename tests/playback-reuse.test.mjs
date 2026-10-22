@@ -205,3 +205,11 @@ test('复用未命中或模块缺失时保持原有网络路径', async () => {
   await assert.rejects(() => absent.internals.loadPlayerRange(url(), 'bytes=0-299', new AbortController().signal), /不应走网络/);
   assert.equal(absent.calls.read.length, 0);
 });
+
+test('复用查询期间播放器取消：不再发起任何网络分片，直接以取消结束', async () => {
+  const controller = new AbortController();
+  const { internals } = loadObserver({ reuse: async () => { controller.abort(); return null; } });
+  internals.cfg.mode = 'always';
+  // 桩网络的 get 会抛「不应走网络」；修复前这里拿到的是那个错误而不是取消。
+  await assert.rejects(() => internals.loadPlayerRange(url(), 'bytes=0-299', controller.signal), { name: 'AbortError' });
+});

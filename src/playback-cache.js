@@ -189,9 +189,11 @@
   }
   /** 保存已校验的单资源字节；URL（含查询串）严格隔离，容量不足时回收最早的数据。
    * @param {string} url @param {number} start @param {Uint8Array} bytes @param {number} total
-   * @param {{prefetched?: boolean, contentType?: string}} options @returns {boolean}
+   * owned：调用方把这段内存的所有权交给缓存（之后不再读写它），缓存直接保存而不复制。
+   * 网络分片都是新分配且无人修改的，属于这种情况；借来的视图（如播放器响应）必须复制。
+   * @param {{prefetched?: boolean, contentType?: string, owned?: boolean}} options @returns {boolean}
    */
-  function put(url, start, bytes, total, { prefetched = true, contentType = "application/octet-stream" } = {}) {
+  function put(url, start, bytes, total, { prefetched = true, contentType = "application/octet-stream", owned = false } = {}) {
     if (!mediaUrl(url) || !safe(start) || !safe(total) || !bytes?.byteLength || start + bytes.byteLength > total) return false;
     if (bytes.byteLength > limit) return false;
     let entry = resources.get(url);
@@ -213,7 +215,7 @@
       stats.bytes += bytes.byteLength; entry.times = null; revision++;
       trim();
       if (!entry.blocks.includes(block)) return false;
-      const copy = new Uint8Array(bytes.byteLength); copy.set(bytes); block.bytes = copy;
+      if (!owned) { const copy = new Uint8Array(bytes.byteLength); copy.set(bytes); block.bytes = copy; }
     }
     if (!entry.index) {
       let end = 0;
@@ -226,6 +228,18 @@
     }
     trim();
     return Boolean(pieces(entry, start, start + bytes.byteLength));
+  }
+  /** 把完整驻留的 [start,end) 直接复制进 target[offset...]，省去先拼接再复制的一次分配。
+   * @param {string} url @param {number} start @param {number} end @param {Uint8Array} target @param {number} offset
+   * @returns {{total: number, contentType: string}|null} 不完整覆盖时为 null，target 不被改动。
+   */
+  function copy(url, start, end, target, offset) {
+    const entry = resources.get(url);
+    const parts = entry && safe(start) && end > start && end <= entry.total ? pieces(entry, start, end) : null;
+    if (!parts) return null;
+    let cursor = offset;
+    for (const part of parts) { target.set(part, cursor); cursor += part.length; }
+    return { total: entry.total, contentType: entry.contentType };
   }
   /** 完整命中才返回 206 数据；不支持的 Range 原样交还浏览器。
    * @param {string} url @param {string} range @returns {CacheHit|null}
@@ -474,7 +488,7 @@
     window.XMLHttpRequest = CachedXhr;
   }
   window.__biliBufferCache = {
-    put, match, timeRanges, install, stats,
+    put, match, copy, timeRanges, install, stats,
     /** @returns {number} 驻留修订号：任何写入、回收、索引解析或清空都会递增。 */
     revision: () => revision,
     /** @param {string} url @returns {number[][]} 驻留字节区间（半开区间），用于调度缺口。 */

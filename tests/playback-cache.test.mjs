@@ -55,3 +55,25 @@ test('损坏/截断/层级 SIDX 不产生错误黄色', () => {
   cache.put(url, 0, bad, 1000); assert.equal(cache.index(url), null);
   cache.clear(); cache.put(url, 0, sidx().slice(0, 35), 1000); assert.equal(cache.index(url), null);
 });
+
+test('owned 写入直接保存调用方移交的内存；默认仍复制，避免借来的视图被改写', () => {
+  const cache = loadCache();
+  const url = 'https://a.bilivideo.com/owned.m4s';
+  const owned = new Uint8Array([1, 2, 3, 4]), borrowed = new Uint8Array([5, 6, 7, 8]);
+  cache.put(url, 0, owned, 8, { owned: true });
+  cache.put(url, 4, borrowed, 8);
+  owned[0] = 9; borrowed[0] = 9;
+  assert.deepEqual([...cache.match(url, 'bytes=0-7').body], [9, 2, 3, 4, 5, 6, 7, 8]);
+});
+
+test('copy 把完整驻留的范围直接写进目标缓冲；有缺口时不改动目标', () => {
+  const cache = loadCache();
+  const url = 'https://a.bilivideo.com/copy.m4s';
+  cache.put(url, 0, new Uint8Array([1, 2, 3]), 10, { contentType: 'video/mp4' });
+  cache.put(url, 5, new Uint8Array([6, 7]), 10);
+  const target = new Uint8Array(6);
+  assert.deepEqual(JSON.parse(JSON.stringify(cache.copy(url, 1, 3, target, 2))), { total: 10, contentType: 'video/mp4' });
+  assert.deepEqual([...target], [0, 0, 2, 3, 0, 0]);
+  assert.equal(cache.copy(url, 2, 6, target, 0), null);
+  assert.deepEqual([...target], [0, 0, 2, 3, 0, 0]);
+});

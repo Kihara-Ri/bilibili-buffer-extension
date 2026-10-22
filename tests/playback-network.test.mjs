@@ -196,3 +196,66 @@ test('分片在槽位授予后、尝试开始前被取消：立即归还槽位�
   assert.equal(network.snapshot().active, 0);
   assert.equal(network.backgroundPending(), 0);
 });
+
+// ---- 代码审查发现的问题（先复现再修复） ----
+
+test('对冲胜出后，输给副本的慢节点降级，后续分片改走更快的节点', async () => {
+  let primaryCalls = 0;
+  const { fetch, log } = server(4 * MiB, { onRequest: async (url, init) => {
+    // 备用节点本身比主节点慢一些，只凭历史成绩排序时主节点永远排第一。
+    if (url !== primary) { await delay(40); return null; }
+    // 主节点第一次很快（建立「好成绩」），之后开始卡住不出首字节。
+    return ++primaryCalls === 1 ? null : hang(init);
+  } });
+  const network = createNetwork({ fetch, hedgeMs: 30 });
+  network.register(manifest);
+  await network.get(primary, 0, 4, { signal: signal() });
+  await network.get(primary, 4, 8, { signal: signal() });
+  const before = log.requests.length;
+  await network.get(primary, 8, 12, { signal: signal() });
+  assert.equal(log.requests[before].url, backup, '慢节点不能凭旧成绩继续排第一');
+  network.reset();
+});
+
+test('急需分片全部失败时尽快交还原生请求：不在最后一轮之后再白等', async () => {
+  const { fetch } = server(4, { onRequest: () => new Response('no', { status: 403 }) });
+  const network = createNetwork({ fetch });
+  network.register(manifest);
+  const began = performance.now();
+  await assert.rejects(network.get(primary, 0, 4, { signal: signal() }));
+  assert(performance.now() - began < 1000, `耗时 ${Math.round(performance.now() - began)} ms`);
+});
+
+test('播放器放弃后，被它升为急需的后台分片恢复后台身份', async () => {
+  const { fetch } = server(64 * MiB, { onRequest: (url, init) => hang(init) });
+  const network = createNetwork({ fetch });
+  network.prefetch(primary, 0, BACKGROUND_PIECE, { total: 64 * MiB });
+  const controller = new AbortController();
+  const demand = network.get(primary, 0, 1000, { signal: controller.signal, total: 64 * MiB });
+  assert.equal(network.backgroundPending(), 0, '播放器在等时按急需计');
+  controller.abort();
+  await assert.rejects(demand);
+  assert.equal(network.backgroundPending(), 1, '没人等了就回到后台，计入排队深度');
+  network.reset();
+});
+
+test('预热覆盖到在途的急需分片时接管它：播放器放弃后分片继续下载，不留空洞', async () => {
+  const { fetch } = server(64 * MiB, { onRequest: (url, init) => hang(init) });
+  const network = createNetwork({ fetch });
+  const controller = new AbortController();
+  const demand = network.get(primary, 0, 256 * KiB, { signal: controller.signal, total: 64 * MiB });
+  const urgentPieces = network.inflightRanges(primary).length;
+  assert.equal(network.prefetch(primary, 0, 256 * KiB, { total: 64 * MiB }), 0, '不重复下载');
+  controller.abort();
+  await assert.rejects(demand);
+  assert.equal(network.inflightRanges(primary).length, urgentPieces, '被预热接管的分片不能随播放器一起取消');
+  network.reset();
+});
+
+test('救援次数只统计对冲副本胜出，普通的失败换节点不算', async () => {
+  const { fetch } = server(4, { onRequest: url => url === primary ? new Response('no', { status: 503 }) : null });
+  const network = createNetwork({ fetch });
+  network.register(manifest);
+  await network.get(primary, 0, 4, { signal: signal() });
+  assert.equal(network.snapshot().rescues, 0);
+});
