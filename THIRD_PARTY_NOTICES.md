@@ -1,6 +1,6 @@
 # Third-party notices
 
-大陆 CDN 候选表与线路选择思路参考 [Bilibili-thread-ripper](https://github.com/MrTangLuyao/Bilibili-thread-ripper)，在线下载调度适配本项目的原生播放器缓存链路。
+2.8.x 的大陆 CDN 候选表与线路选择思路参考 [Bilibili-thread-ripper](https://github.com/MrTangLuyao/Bilibili-thread-ripper)。2.9.0 起该候选表已移除，在线下载只使用播放清单自带的主备地址；保留本声明作为来源记录。
 
 MIT License
 

@@ -1,5 +1,7 @@
 # 部分命中复用：只补缺口并拼出完整响应
 
+> **2.9.0 更新**：缺口规划已从 `playback-cache.js` 移到观察器的 `assembleRange` + 分片引擎：缓存适配器把未完整命中的请求整体交给 `loadPlayerRange`，后者同步复制驻留快照、复用在途分片、只为缺口新建分片；`MAX_GAPS` 与拼接预留随之删除。下文保留 2.8.3 的设计记录，“快照而非视图”“缺口失败整体回退”“不交付半成品”这些约束仍然成立，验证见 `tests/playback-partial-cache.test.mjs`。
+
 > 对应实现位于 `src/playback-cache.js` 与 `src/playback-observer.js` 的 `loadPlayerRange` 路径。
 > 本文只描述这次新增的“部分命中”能力；完整命中的键、SIDX 时间映射、XHR/fetch 契约与容量回收规则见
 > [playback-cache-design.md](./playback-cache-design.md)。

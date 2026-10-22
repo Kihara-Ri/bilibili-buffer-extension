@@ -20,8 +20,6 @@ test("自定义颜色会规范化并随播放辅助配置持久保存", () => {
   const config = sanitizeAssistConfig({ preheatColor: " #AABBCC " }, ASSIST_DEFAULTS);
   assert.equal(config.preheatColor, "#aabbcc");
   assert.equal(config.mode, "always");
-  assert.equal(config.minWatchedSec, 0);
-  assert.equal(config.minBufferAheadSec, 0);
 });
 
 test("旧播放模式迁移为开启或关闭，不保留准备流程", () => {
@@ -36,7 +34,6 @@ test("无效颜色不会覆盖用户已有颜色或其他合法配置", () => {
   const config = sanitizeAssistConfig({ preheatColor: "transparent", maxConcurrency: 99 }, current);
   assert.equal(config.preheatColor, "#20c997");
   assert.equal(config.mode, "always");
-  assert.equal(config.maxConcurrency, 32);
   assert.equal(normalizePreheatColor("white"), DEFAULT_PREHEAT_COLOR);
 });
 
@@ -53,12 +50,9 @@ test("显示开关独立于提前加载，旧配置默认保留高亮并验证�
   assert.equal(invalid.progressColor, "#abcdef");
 });
 
-test('CDN 路线与并发上限由系统决定，历史保存值一律失效', () => {
-  const migrated = sanitizeAssistConfig({}, {mode:'always',maxConcurrency:4,cdnMode:'mainland'});
-  assert.equal(migrated.maxConcurrency,32);
-  assert.equal(migrated.cdnMode,'original');
-  assert.equal(migrated.networkPolicyVersion,3);
-  const forced = sanitizeAssistConfig({maxConcurrency:8,cdnMode:'auto'},migrated);
-  assert.equal(forced.maxConcurrency,32);
-  assert.equal(forced.cdnMode,'original');
+test('网络策略不进配置：历史保存的路线、并发与窗口字段被丢弃，补丁也写不进去', () => {
+  const legacy = { mode: 'always', maxConcurrency: 4, cdnMode: 'mainland', leadSeconds: 45, networkPolicyVersion: 3, minWatchedSec: 30 };
+  const migrated = sanitizeAssistConfig({ maxConcurrency: 8, cdnMode: 'auto', leadSeconds: 10 }, legacy);
+  assert.deepEqual(Object.keys(migrated).sort(), Object.keys(ASSIST_DEFAULTS).sort());
+  assert.equal(migrated.mode, 'always');
 });

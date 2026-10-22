@@ -32,7 +32,7 @@
 | 页面 → 桥 → 镜像读取 | 1.5 秒 | 连续 3 次失败暂停 60 秒 | 任意一次成功清零计数 |
 | 桥 → 后台回包 | 1.4 秒（迟到即丢） | — | — |
 | 离线镜像写入 | 串行队列 | 同一下载任务连续 3 次失败即停写 | 新任务重新开始 |
-| 缓存→网络回退 | 沿用节点超时与截止时间 | 403 短封、其他指数退避 | 健康度按成功请求恢复 |
+| 缓存→网络回退 | 首字节 8 秒 / 正文停滞 4 秒，每片最多 3 轮 | 403 按地址隔离 60 秒、其他 1→16 秒指数退避 | 健康度按成功请求恢复 |
 
 **取消语义**：观察器的 `loadPlayerRange` 先校验 `signal.aborted`、`cfg.mode` 与页面世代，
 再尝试复用；取消或导航后不写入页面缓存、不交付旧字节、不回退原请求。
@@ -45,10 +45,10 @@
 
 ## 5. 默认配置与权限
 
-- `ASSIST_DEFAULTS`：`mode=always`、`maxConcurrency=32`、`cdnMode=original`、`networkPolicyVersion=3`，
-  与 2.8.0 以来一致；`sanitizeAssistConfig({})` 仍解析出同样的默认值。
+- `ASSIST_DEFAULTS` 只含用户可见字段（`mode=always`、估计器护栏、两种颜色、是否单独标出）；
+  2.9.0 起网络策略是页面侧常量，历史存储里的 `cdnMode` / `maxConcurrency` 等字段在归一化时丢弃。
 - `manifest.permissions` / `host_permissions` 未新增条目；热重载入口仍不在生产注入列表。
-- 新模块顺序固定为 `playback-cache → routes → network → playback-reuse → observer`，
+- 模块顺序固定为 `playback-cache → network → playback-reuse → observer`，
   保证观察器读取 `BiliPlaybackReuse` 时它已就绪。
 
 ## 6. 验证

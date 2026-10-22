@@ -9,16 +9,10 @@ export const PREHEAT_COLOR_PRESETS = Object.freeze([
   Object.freeze({ value: "#f15bb5", label: "粉色" })
 ]);
 
+// 只保存用户可见的开关与外观；预热窗口、并发、分片大小等网络策略是页面侧内部常量
+// （见 playback-observer.js / playback-network.js），不进存储，也就不会被旧版本的保存值卡住。
 export const ASSIST_DEFAULTS = Object.freeze({
   mode: "always",
-  slowTtfbMs: 800,
-  leadSeconds: 45,
-  minWatchedSec: 0,
-  minBufferAheadSec: 0,
-  maxPrefetchMBPerTrack: 200,
-  maxConcurrency: 32,
-  cdnMode: "original",
-  networkPolicyVersion: 3,
   estimatorGuard: true,
   progressColor: "#00a1d6",
   showPreheatHighlight: true,
@@ -37,12 +31,10 @@ export function normalizePreheatColor(value, fallback = DEFAULT_PREHEAT_COLOR) {
 }
 
 export function sanitizeAssistConfig(patch, current = ASSIST_DEFAULTS) {
+  // 只挑已知字段：历史存储里的 cdnMode / maxConcurrency / leadSeconds 等旧策略字段在此丢弃。
   const next = {
-    ...ASSIST_DEFAULTS,
-    ...(current || {}),
     mode: normalizeAssistMode(current?.mode),
-    minWatchedSec: 0,
-    minBufferAheadSec: 0,
+    estimatorGuard: current?.estimatorGuard !== false,
     progressColor: normalizePreheatColor(current?.progressColor, "#00a1d6"),
     showPreheatHighlight: current?.showPreheatHighlight !== false,
     preheatColor: normalizePreheatColor(current?.preheatColor)
@@ -58,20 +50,5 @@ export function sanitizeAssistConfig(patch, current = ASSIST_DEFAULTS) {
   if (patch && Object.hasOwn(patch, "progressColor")) {
     next.progressColor = normalizePreheatColor(patch.progressColor, next.progressColor);
   }
-  for (const [key, min, max] of [
-    ["slowTtfbMs", 200, 10000],
-    ["leadSeconds", 10, 120],
-    ["maxPrefetchMBPerTrack", 16, 1024]
-  ]) {
-    if (!Object.hasOwn(patch || {}, key)) continue;
-    const value = Number(patch[key]);
-    if (Number.isFinite(value)) next[key] = Math.max(min, Math.min(max, value));
-  }
-  // 2.8.10 起 CDN 路线与并发上限退出用户配置：统一由系统策略决定（原线路优先、
-  // 32 路全局上限内按收益自适应增减）。归一化时直接钉死，历史存储里的用户选择
-  // 随之失效；字段保留在配置形状里供统计消费。
-  next.maxConcurrency = ASSIST_DEFAULTS.maxConcurrency;
-  next.cdnMode = ASSIST_DEFAULTS.cdnMode;
-  next.networkPolicyVersion = 3;
   return next;
 }

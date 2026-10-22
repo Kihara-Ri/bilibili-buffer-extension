@@ -29,7 +29,6 @@ try {
     index: url => ({ role: url.includes("audio") ? "audio" : "video" }),
     timeRanges: () => [[10, 50], [62, 80]], install() {}, clear() {}, stats: {}
   };
-  await import("../src/playback-routes.js");
   await import("../src/playback-network.js");
   await import("../src/playback-observer.js");
   const internals = window.__biliBufferPlaybackAssistInternals;

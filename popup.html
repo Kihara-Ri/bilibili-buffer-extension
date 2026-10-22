@@ -123,8 +123,8 @@
             </dl>
             <!--
               进度条外观默认折叠：摘要行本身就是唯一的实时配色示意条，展开后只有
-              图例与配色控件，不重复标题、不画第二条进度条。CDN 路线与并发上限
-              由系统策略自行决定（原线路优先、32 路上限内自适应），不提供手动选择。
+              图例与配色控件，不重复标题、不画第二条进度条。网络策略（分片、槽位、
+              对冲）是页面侧常量，不提供手动选择。
             -->
             <details id="assist-appearance" class="assist-appearance">
               <summary class="appearance-summary">
@@ -160,7 +160,7 @@
                 <div><dt>原线路回退</dt><dd id="assist-fallbacks">—</dd></div>
                 <div class="assist-node"><dt>最近完成节点</dt><dd id="assist-node">等待连接</dd></div>
               </dl>
-              <p class="assist-metrics-note">网速包含当前播放请求与预热；线路默认只用原清单节点，按片段大小分配并发，缺缓冲时增援。已命中仅统计复用缓存；预热就绪取音视频连续就绪的交集；播放器缓冲是 B 站播放器自身的余量。</p>
+              <p class="assist-metrics-note">网速包含当前播放请求与预热；只用播放清单自带的主备节点，多个分片并行下载，节点卡住时在备用节点对冲。已命中仅统计复用缓存；预热就绪取音视频连续就绪的交集；播放器缓冲是 B 站播放器自身的余量。</p>
             </details>
           </section>
         </section>

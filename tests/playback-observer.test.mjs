@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
-const routesSource = await readFile(new URL("../src/playback-routes.js", import.meta.url), "utf8");
 const networkSource = await readFile(new URL("../src/playback-network.js", import.meta.url), "utf8");
 const source = await readFile(new URL("../src/playback-observer.js", import.meta.url), "utf8");
 
@@ -40,10 +39,10 @@ test("只有音视频轨都预热的交集才映射为实心高亮", () => {
 });
 
 test("只预热 DASH 单轨时不显示可能误导的实心高亮", () => {
-  const { internals } = loadObserver();
+  const { internals, cacheTimes } = loadObserver();
   const video = internals.trackFor("https://a.bilivideo.com/path/video.m4s");
   video.size = 1000;
-  internals.addRange(video.prefetchedRanges, 100, 300);
+  cacheTimes.set(video.url, [[10, 30]]);
 
   assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), []);
 });
@@ -52,7 +51,7 @@ test("未知索引的单文件 MP4 不再按字节比例伪造黄色", () => {
   const { internals } = loadObserver();
   const media = internals.trackFor("https://a.bilivideo.com/path/video.mp4");
   media.size = 1000;
-  internals.addRange(media.prefetchedRanges, 100, 300);
+  internals.recordMedia({ url: media.url, range: { start: 100 }, bytes: 200, status: 206, completed: true });
 
   assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), []);
 });
@@ -106,27 +105,7 @@ test("追踪参数变化保留预热色段，切换分 P 才清空", () => {
   assert.equal(internals.tracks.size, 0);
 });
 
-test("配置确认开启后不等待播放时长或慢请求，关闭仍立即阻止预取", () => {
-  const { internals } = loadObserver();
-  const url = "https://upos-sz-mirrorcosov.bilivideo.com/path/video.m4s";
-  const track = internals.trackFor(url);
-  track.anchor = 1024;
-  assert.equal(internals.shouldPrefetch(track), false);
-  internals.cfg.mode = "always";
-  assert.equal(internals.shouldPrefetch(track), true);
-  assert.equal(track.cold, false);
-  assert.equal(internals.stats.playedSec, 0);
-  internals.cfg.mode = "off";
-  assert.equal(internals.shouldPrefetch(track), false);
-  internals.cfg.mode = "always";
-  track.cooldownUntil = Date.now() + 1000;
-  assert.equal(internals.shouldPrefetch(track), false);
-  track.cooldownUntil = 0;
-  track.prefetchDisabled = true;
-  assert.equal(internals.shouldPrefetch(track), false);
-});
-
-test("播放器收到首个 Content-Range 响应头后即可预取下一段", () => {
+test("播放器收到首个 Content-Range 响应头后即可规划预取", () => {
   const { internals } = loadObserver();
   const url = "https://upos-sz-mirrorcosov.bilivideo.com/path/video.m4s";
   const track = internals.trackFor(url);
@@ -142,23 +121,92 @@ test("播放器收到首个 Content-Range 响应头后即可预取下一段", ()
 
   assert.equal(track.anchor, 1048576);
   assert.equal(track.size, 10485760);
-  assert.equal(internals.shouldPrefetch(track), true);
+  // 索引尚未解析：先取文件头 64 KiB 找 SIDX。
+  assert.deepEqual(fromVm(internals.wantedRanges(track, 0)), [{ start: 0, end: 65536, order: 0 }]);
 });
 
-test("开启调度不再因标签页隐藏或初始播放余量为零而暂停", async () => {
-  const { internals, intervals, document } = loadObserver();
+test("关闭时规划器不发任何请求；开启后即使标签页隐藏、播放余量为零也立即规划", async () => {
+  const { internals, intervals, document, requests } = loadObserver({ hangFetch: true });
   document.hidden = true;
-  internals.cfg.mode = "always";
   const track = internals.trackFor("https://upos-sz-mirrorcosov.bilivideo.com/path/video.m4s");
-  track.anchor = 1024;
   track.size = 16 * 1024 * 1024;
+  internals.planPrefetch();
+  assert.equal(internals.network.backgroundPending(), 0);
 
-  const scheduler = intervals.find((interval) => interval.milliseconds === 400);
+  internals.cfg.mode = "always";
+  const scheduler = intervals.find((interval) => interval.milliseconds === 500);
   assert.ok(scheduler);
   scheduler.callback();
-  assert.equal(internals.stats.prefetching, 1);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(internals.stats.prefetching, 0);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(internals.network.backgroundPending(), 1);
+  assert.deepEqual(requests.map((request) => request.range), ["bytes=0-65535"]);
+  stop(internals);
+});
+
+test("有索引时按 距播放点秒数 交错规划音视频分段，不超过排队深度", () => {
+  const { internals, indexes, video } = loadObserver();
+  internals.cfg.mode = "always";
+  video.currentTime = 10;
+  const MB = 1024 * 1024;
+  // 视频每段 4 秒 2 MiB，音频每段 4 秒 128 KiB；初始化区都在 1000 字节之前。
+  const segments = (size, count) => Array.from({ length: count }, (_, i) => ({ start: 1000 + i * size, end: 1000 + (i + 1) * size, timeStart: i * 4, timeEnd: i * 4 + 4 }));
+  const videoTrack = internals.trackFor("https://a.bilivideo.com/v/video.m4s");
+  const audioTrack = internals.trackFor("https://a.bilivideo.com/a/audio.m4s");
+  indexes.set(videoTrack.url, { role: "video", segments: segments(2 * MB, 100) });
+  indexes.set(audioTrack.url, { role: "audio", segments: segments(128 * 1024, 100) });
+
+  const wanted = internals.wantedRanges(videoTrack, 10);
+  assert.deepEqual(fromVm(wanted[0]), { start: 0, end: 1000, order: 0 });
+  // 当前段 [8,12) 起算、前方 90 秒内（含 96 MiB 字节上限）。
+  assert.deepEqual(fromVm(wanted[1]), { start: 1000 + 2 * 2 * MB, end: 1000 + 3 * 2 * MB, order: 0 });
+  assert.equal(wanted.length, 1 + 23);
+  assert(wanted.at(-1).order < 90);
+
+  internals.planPrefetch();
+  const pending = [videoTrack, audioTrack].flatMap((track) => internals.network.inflightRanges(track.url).map((range) => [track === videoTrack ? "v" : "a", ...range]));
+  assert.equal(pending.length, 16, "排队深度封顶");
+  assert(pending.some(([role]) => role === "a") && pending.some(([role]) => role === "v"), "音视频交错，不会只顾视频");
+  stop(internals);
+});
+
+test("前方窗口按字节封顶：高码率视频不会把预热塞满整个页面缓存", () => {
+  const { internals, indexes } = loadObserver();
+  const MB = 1024 * 1024;
+  const track = internals.trackFor("https://a.bilivideo.com/v/video.m4s");
+  indexes.set(track.url, { role: "video", segments: Array.from({ length: 60 }, (_, i) => ({ start: 1000 + i * 10 * MB, end: 1000 + (i + 1) * 10 * MB, timeStart: i, timeEnd: i + 1 })) });
+  const wanted = internals.wantedRanges(track, 0).slice(1);
+  const bytes = wanted.reduce((sum, range) => sum + range.end - range.start, 0);
+  assert(bytes >= 96 * MB && bytes < 106 * MB, `bytes=${bytes}`);
+});
+
+test("切换清晰度后只预热播放器最近使用的同类轨道", () => {
+  const { internals, indexes } = loadObserver();
+  internals.cfg.mode = "always";
+  const segments = [{ start: 1000, end: 2000, timeStart: 0, timeEnd: 4 }];
+  const old = internals.trackFor("https://a.bilivideo.com/old/video.m4s");
+  const next = internals.trackFor("https://a.bilivideo.com/new/video.m4s");
+  indexes.set(old.url, { role: "video", segments });
+  indexes.set(next.url, { role: "video", segments });
+  internals.planPrefetch();
+  assert.deepEqual(fromVm(internals.network.inflightRanges(old.url)), []);
+  assert.deepEqual(fromVm(internals.network.inflightRanges(next.url)), [[0, 1000], [1000, 2000]]);
+  stop(internals);
+});
+
+test("拖动后旧窗口的后台分片被取消，新窗口立即补位", () => {
+  const { internals, indexes, video } = loadObserver();
+  internals.cfg.mode = "always";
+  const KB = 1024;
+  const track = internals.trackFor("https://a.bilivideo.com/v/video.m4s");
+  indexes.set(track.url, { role: "video", segments: Array.from({ length: 200 }, (_, i) => ({ start: 1000 + i * 512 * KB, end: 1000 + (i + 1) * 512 * KB, timeStart: i, timeEnd: i + 1 })) });
+  internals.planPrefetch();
+  assert(internals.network.inflightRanges(track.url).every(([start]) => start < 1000 + 20 * 512 * KB));
+  video.currentTime = 150;
+  internals.planPrefetch();
+  const ranges = internals.network.inflightRanges(track.url);
+  assert(ranges.some(([start]) => start >= 1000 + 150 * 512 * KB), "新窗口已规划");
+  assert(!ranges.some(([start]) => start > 1000 && start < 1000 + 149 * 512 * KB), "旧窗口分片已取消");
+  stop(internals);
 });
 
 test("估计器护栏只在同 host 热样本充足且刚发生慢请求时清洗", async () => {
@@ -231,20 +279,23 @@ test('新清晰度未解析/未预热时不借旧轨道的黄色，旧请求晚�
   cacheTimes.set(next.url, [[20, 30]]);
   assert.deepEqual(fromVm(internals.normalizedPrefetchedRanges()), [[.2, .3]]);
 });
-test('关闭后重新开启允许重新补齐已清理的初始化区', () => {
-  const { internals, window, eventListeners } = loadObserver();
+test('关闭后重新开启允许重新补齐已清理的初始化区，桥下发的旧策略字段被忽略', () => {
+  const { internals, window, eventListeners } = loadObserver({ hangFetch: true });
   const track = internals.trackFor('https://a.bilivideo.com/video.m4s');
-  track.size = 2 * 1024 * 1024; track.anchor = 1000; track.indexProbeBytes = 1024 * 1024; track.prefetchedBytes = 200 * 1024 * 1024;
-  const config = mode => eventListeners.get('message')({ source: window, data: { channel: 'bili-buffer-playback-assist-v1', dir: 'ext->page', type: 'config', payload: { mode } } });
-  config('off'); config('always');
-  const job = internals.pickJob();
-  assert.equal(job.start, 0); assert.equal(job.end, 64 * 1024);
+  track.size = 2 * 1024 * 1024; track.anchor = 1000; track.failures = 3; track.retryAt = Date.now() + 60000;
+  const config = payload => eventListeners.get('message')({ source: window, data: { channel: 'bili-buffer-playback-assist-v1', dir: 'ext->page', type: 'config', payload } });
+  config({ mode: 'off' }); config({ mode: 'always', leadSeconds: 5, maxConcurrency: 1 });
+  assert.equal(internals.cfg.leadSeconds, 90);
+  assert.equal(internals.cfg.maxConcurrency, undefined);
+  internals.planPrefetch();
+  assert.deepEqual(fromVm(internals.network.inflightRanges(track.url)), [[0, 65536]]);
+  stop(internals);
 });
 
-function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) {
-  const cacheTimes = new Map();
+function loadObserver({ documentElement = { dataset: {} }, storage = {}, hangFetch = false } = {}) {
+  const cacheTimes = new Map(), indexes = new Map(), requests = [];
   const cache = {
-    index: url => cacheTimes.has(url) ? { role: url.includes('audio') ? 'audio' : 'video' } : null,
+    index: url => indexes.get(url) || (cacheTimes.has(url) ? { role: url.includes('audio') ? 'audio' : 'video' } : null),
     timeRanges: url => cacheTimes.get(url) || [],
     clear: () => cacheTimes.clear(), install() {}, ranges: () => [], stats: {}
   };
@@ -280,7 +331,10 @@ function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) 
     __biliBufferCache: cache,
     Storage: FakeStorage,
     XMLHttpRequest: FakeXhr,
-    fetch: async () => { throw new Error("测试不应发出真实请求"); },
+    // hangFetch：记录预热发出的真实 Range 请求并保持挂起，便于观察规划结果。
+    fetch: hangFetch
+      ? async (url, init) => { requests.push({ url, range: init.headers.Range }); return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true })); }
+      : async () => { throw new Error("测试不应发出真实请求"); },
     addEventListener(type, listener) { eventListeners.set(type, listener); },
     postMessage() {}
   };
@@ -310,7 +364,6 @@ function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) 
       observe(target, options) { observedTargets.push({ target, options }); }
     }
   });
-  vm.runInContext(routesSource, context);
   vm.runInContext(networkSource, context);
   window.BiliPlaybackNetwork = context.BiliPlaybackNetwork;
   vm.runInContext(source, context, { filename: "playback-observer.js" });
@@ -318,6 +371,9 @@ function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) 
     internals: window.__biliBufferPlaybackAssistInternals,
     window,
     cacheTimes,
+    indexes,
+    requests,
+    video: testVideo,
     localStorage,
     location,
     observedTargets,
@@ -325,6 +381,12 @@ function loadObserver({ documentElement = { dataset: {} }, storage = {} } = {}) 
     intervals,
     document
   };
+}
+
+// 关闭辅助后再清空分片表：配置消息排下的规划会在测试结束后触发，开启状态下会继续发请求、拖住进程。
+function stop(internals) {
+  internals.cfg.mode = "off";
+  internals.network.reset();
 }
 
 function fromVm(value) {

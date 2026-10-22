@@ -16,25 +16,30 @@
   const ESTIMATOR_BACKUP_KEY = "__bili_buffer_estimator_backup_v1";
   const MEDIA_RE = /^https?:\/\/[^/]*(?:bilivideo\.com|bilivideo\.cn|hdslb\.com|akamaized\.net)\//i;
   const MB = 1024 * 1024;
+  const MAX_RANGE = 16 * MB;
   const PREHEAT_STYLE_ID = "bili-buffer-preheat-progress-style";
   const DEFAULT_PREHEAT_COLOR = "#ff8a1f";
   // 回看窗口：拖动后短暂回到刚看过的位置也应命中，但窗口要小，避免保护过多历史数据。
   const RETENTION_REWIND_SECONDS = 5;
+  // 前方预热窗口按 SIDX 真实秒数计算；同时按字节封顶，给 128 MiB 页面缓存留出回看与播放器请求的余量。
+  const LEAD_SECONDS = 90;
+  const AHEAD_BYTES_CAP = 96 * MB;
+  // 索引未知时先取文件头解析 SIDX：64 KiB 覆盖绝大多数视频，超长视频的索引再扩到 1 MiB。
+  const INDEX_PROBES = [64 * 1024, MB];
+  // 后台分片排队深度：略多于引擎的后台槽位，分片一完成就有下一片可发，流水线不断档。
+  const BACKGROUND_QUEUE = 16;
+  const PIECE = window.BiliPlaybackNetwork.BACKGROUND_PIECE || 512 * 1024;
   const DEFAULTS = {
     mode: "pending",
     slowTtfbMs: 800,
-    leadSeconds: 45,
-    minWatchedSec: 0,
-    minBufferAheadSec: 0,
-    maxPrefetchMBPerTrack: 200,
-    maxConcurrency: 32,
-    cdnMode: "original",
-    networkPolicyVersion: 3,
+    leadSeconds: LEAD_SECONDS,
     estimatorGuard: true,
     progressColor: "#00a1d6",
     showPreheatHighlight: true,
     preheatColor: DEFAULT_PREHEAT_COLOR
   };
+  // 只接受这些由桥下发的用户配置；网络策略是内部常量，历史存储里的旧字段一律忽略。
+  const CONFIG_KEYS = ["estimatorGuard", "progressColor", "showPreheatHighlight", "preheatColor"];
   const cfg = { ...DEFAULTS };
   const tracks = new Map();
   const observedVideos = new WeakSet();
@@ -44,10 +49,6 @@
     requests: 0,
     slowRequests: 0,
     requestErrors: 0,
-    prefetchChunks: 0,
-    prefetchBytes: 0,
-    prefetchErrors: 0,
-    prefetching: 0,
     stalls: 0,
     stallMs: 0,
     waitingSince: 0,
@@ -59,13 +60,23 @@
   };
 
   const playbackCache = window.__biliBufferCache;
-  const prefetchControllers = new Set();
-  const prefetchJobs = new Map();
-  const urgentFlights = new Map();
   const nativeFetch = window.fetch;
-  // 并发只在页面内约束（playback-network.js 的共享队列）；不再逐请求向 SW 申请跨标签租约。
-  const networkFetch = (...args) => nativeFetch.apply(window, args);
-  const network = window.BiliPlaybackNetwork.createNetwork({ fetch: networkFetch });
+  // 分片落地即写入页面缓存（预热与播放器急需共用），并立刻规划下一批，保持流水线连续。
+  const network = window.BiliPlaybackNetwork.createNetwork({
+    fetch: (...args) => nativeFetch.apply(window, args),
+    onPiece(url, start, bytes, total, contentType) {
+      const track = tracks.get(trackKey(url));
+      if (track) { track.size = total; track.failures = 0; track.retryAt = 0; }
+      playbackCache?.put(url, start, bytes, total, { contentType });
+      queuePump();
+    },
+    onPieceError(url, urgent) {
+      // 后台分片在全部候选节点上重试仍失败：该轨道短暂退避，避免对拒绝中的节点反复发同一批请求。
+      const track = tracks.get(trackKey(url));
+      if (track && !urgent) { track.failures += 1; track.retryAt = Date.now() + Math.min(15000, 1000 * 2 ** Math.min(track.failures, 4)); }
+      queuePump();
+    }
+  });
   // 离线原始范围的读取器由 playback-reuse.js 提供；缺失时全部走网络，功能整体降级。
   const reuse = globalThis.BiliPlaybackReuse;
   const reuseClient = reuse?.createReuseClient?.() || null;
@@ -140,21 +151,7 @@
 
   function hostStat(host) {
     if (!host) host = "unknown";
-    if (!stats.hosts[host]) {
-      stats.hosts[host] = {
-        requests: 0,
-        slow: 0,
-        errors: 0,
-        ttfbs: [],
-        hotTtfbs: [],
-        hotThroughputsKbps: [],
-        prefetchSuccesses: 0,
-        prefetchErrors: 0,
-        prefetchConcurrency: 2,
-        chunkBytes: 512 * 1024,
-        lastSlowAt: 0
-      };
-    }
+    if (!stats.hosts[host]) stats.hosts[host] = { requests: 0, slow: 0, errors: 0, ttfbs: [], hotTtfbs: [], hotThroughputsKbps: [], lastSlowAt: 0 };
     return stats.hosts[host];
   }
 
@@ -182,22 +179,28 @@
     list.splice(0, list.length, ...merged);
   }
 
-  function firstGap(ranges, from, to) {
+  /** [from,to) 中未被 ranges（有序、不重叠）覆盖的部分。 @returns {number[][]} */
+  function missingRanges(ranges, from, to) {
+    const gaps = [];
     let cursor = from;
     for (const [start, end] of ranges) {
       if (end <= cursor) continue;
-      if (start > cursor) return [cursor, Math.min(start, to)];
+      if (start >= to) break;
+      if (start > cursor) gaps.push([cursor, start]);
       cursor = Math.max(cursor, end);
-      if (cursor >= to) return null;
     }
-    return cursor < to ? [cursor, to] : null;
+    if (cursor < to) gaps.push([cursor, to]);
+    return gaps;
   }
+
+  // 同一路径换 CDN 主机视为新轨道；查询串（签名）变化仍是同一轨道。
+  const trackKey = url => `${hostFor(url)}|${pathFor(url)}`;
 
   function trackFor(url, playerRequest = true) {
     const path = pathFor(url);
     if (!path) return null;
     const host = hostFor(url);
-    const key = `${host}|${path}`;
+    const key = trackKey(url);
     let track = tracks.get(key);
     if (!track) {
       for (const existing of tracks.values()) {
@@ -211,14 +214,9 @@
         active: true,
         size: 0,
         anchor: 0,
-        covered: [],
-        prefetchedRanges: [],
-        inflight: [],
         cold: false,
-        prefetchedBytes: 0,
-        consecutivePrefetchErrors: 0,
-        cooldownUntil: 0,
-        prefetchDisabled: false,
+        failures: 0,
+        retryAt: 0,
         lastSeen: Date.now(),
         lastPlayerSeen: ++playerSequence
       };
@@ -236,6 +234,7 @@
     return track;
   }
 
+  // 只观察原生发出的媒体请求（插件未接管或回退时），为估计器护栏积累同节点的首字节与吞吐样本。
   function recordMedia({ url, range, bytes = 0, ttfbMs = null, totalMs = null, contentRange = null, status = 0, completed = false, error = false }) {
     if (!MEDIA_RE.test(String(url || ""))) return;
     stats.requests += 1;
@@ -266,10 +265,7 @@
     }
     const parsed = primeTrackFromHeaders(track, range, contentRange, status);
     if (completed && status >= 200 && status < 300 && bytes > 0) {
-      const start = range?.start ?? parsed?.start ?? 0;
-      const end = start + bytes;
-      addRange(track.covered, start, end);
-      track.anchor = Math.max(track.anchor, end);
+      track.anchor = Math.max(track.anchor, (range?.start ?? parsed?.start ?? 0) + bytes);
     }
   }
 
@@ -321,14 +317,7 @@
           if (this.readyState !== 2 || state.ttfbMs !== null || currentPageKey() !== state.pageKey) return;
           state.ttfbMs = performance.now() - state.startedAt;
           const track = trackFor(state.url, false);
-          if (track) {
-            primeTrackFromHeaders(
-              track,
-              state.range,
-              safeXhrHeader(this, "content-range"),
-              Number(this.status) || 0
-            );
-          }
+          if (track) primeTrackFromHeaders(track, state.range, safeXhrHeader(this, "content-range"), Number(this.status) || 0);
         });
         this.addEventListener("loadend", () => {
           if (currentPageKey() !== state.pageKey) return;
@@ -403,9 +392,18 @@
     window.fetch = wrapped;
   }
 
+  function videos() {
+    return [...document.querySelectorAll("video")];
+  }
+
+  function currentVideo() {
+    const all = videos();
+    return all.find(item => !item.paused) || all[0];
+  }
+
   function currentBufferAhead() {
     let best = 0;
-    for (const video of document.querySelectorAll("video")) {
+    for (const video of videos()) {
       const buffered = video.buffered;
       for (let index = 0; index < buffered.length; index += 1) {
         if (video.currentTime >= buffered.start(index) - 0.1 && video.currentTime <= buffered.end(index) + 0.1) {
@@ -417,8 +415,7 @@
   }
 
   function anyVideoPlaying() {
-    return [...document.querySelectorAll("video")]
-      .some((video) => !video.paused && !video.ended && video.readyState > 2);
+    return videos().some((video) => !video.paused && !video.ended && video.readyState > 2);
   }
 
   function observeVideo(video) {
@@ -429,6 +426,7 @@
         stats.waitingSince = performance.now();
         stats.stalls += 1;
       }
+      queuePump();
     };
     const endWaiting = () => {
       if (!stats.waitingSince) return;
@@ -441,211 +439,184 @@
     video.addEventListener("canplay", endWaiting);
     video.addEventListener("ended", endWaiting);
     video.addEventListener("pause", endWaiting);
+    // 拖动后旧窗口的后台分片立即让位，新窗口马上开始规划。
+    video.addEventListener("seeking", queuePump);
   }
 
   function scanVideos() {
-    for (const video of document.querySelectorAll("video")) observeVideo(video);
+    for (const video of videos()) observeVideo(video);
   }
 
-  function leadBytes(track) {
-    const duration = Math.max(0, ...[...document.querySelectorAll("video")].map((video) => Number(video.duration) || 0));
-    const estimatedBytesPerSecond = track.size > 0 && duration > 0 ? track.size / duration : 0;
-    const requested = estimatedBytesPerSecond > 0
-      ? estimatedBytesPerSecond * Math.max(10, Number(cfg.leadSeconds) || DEFAULTS.leadSeconds)
-      : 24 * MB;
-    return Math.max(8 * MB, Math.min(48 * MB, requested));
+  // ---- 播放器请求 ----------------------------------------------------------------
+
+  /**
+   * 拼出播放器请求的完整范围：驻留字节同步复制成快照（下载期间缓存可能回收），
+   * 缺口交给分片引擎——它会直接复用已在途的后台分片，而不是取消重下。
+   * 任一缺口失败就取消其余缺口，由缓存适配器整体回退原生请求，绝不交付半成品。
+   * @returns {Promise<{body: Uint8Array, start: number, end: number, total: number, contentType: string, reused: number}>}
+   */
+  async function assembleRange(url, start, end, signal, total) {
+    const resident = [];
+    for (const [left, right] of playbackCache?.ranges(url) || []) {
+      const from = Math.max(left, start), to = Math.min(right, end);
+      const hit = to > from ? playbackCache.match(url, `bytes=${from}-${to - 1}`) : null;
+      if (hit) resident.push(hit);
+    }
+    const gaps = missingRanges(resident.map(hit => [hit.start, hit.end]), start, end);
+    const controller = new AbortController();
+    const stop = () => controller.abort(signal.reason);
+    signal.addEventListener("abort", stop, { once: true });
+    try {
+      const fetched = await Promise.all(gaps.map(([from, to]) => network.get(url, from, to, { signal: controller.signal, total })));
+      const body = new Uint8Array(end - start);
+      let reused = 0, size = total || resident[0]?.total || 0, contentType = resident[0]?.contentType;
+      for (const hit of resident) { body.set(hit.body, hit.start - start); reused += hit.body.length; }
+      fetched.forEach((result, index) => {
+        if (size && result.total !== size) throw new Error("缓存与网络的文件总长不一致");
+        body.set(result.bytes, gaps[index][0] - start);
+        size = result.total; contentType = result.contentType;
+      });
+      return { body, start, end, total: size, contentType: contentType || "application/octet-stream", reused };
+    } catch (error) {
+      controller.abort(error);
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", stop);
+    }
   }
 
   // 只接管播放器实际请求的媒体范围，不依赖先成功收到原节点响应头。
-  // 同范围请求共享任务，最后一个订阅者取消后才停止，避免 XHR 与 fetch 重复下载。
-  async function loadPlayerRange(url, range, signal, parentRange = null) {
+  async function loadPlayerRange(url, range, signal) {
     const parsed = /^bytes=(\d+)-(\d*)$/i.exec(range || "");
     if (!parsed || signal.aborted || cfg.mode !== "always") return null;
     resetTracksAfterNavigation(); captureInitialPlayinfo();
+    const track = trackFor(url);
+    if (!track) return null;
+    const known = track.size || network.total(url);
     const start = Number(parsed[1]);
-    const end = parsed[2] ? Number(parsed[2]) + 1 : network.total(url);
-    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start || end - start > 16 * MB) return null;
+    const end = parsed[2] ? Number(parsed[2]) + 1 : known;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start || end - start > MAX_RANGE || (known && end > known)) return null;
+    // 预热窗口（无索引时）从播放器正在要的位置之后接续；向后拖动也必须允许回退。
+    track.anchor = end;
     // 只有本次会话已在 playurl 里授权过的地址才尝试复用本机已下载的原始范围；
-    // 未授权、无总量、超限、超时或桥不可用都返回 null，随后完全走原有网络路径。
+    // 未授权、无总量、超限、超时或桥不可用都返回 null，随后走网络路径。
     if (reuseClient) {
-      const reuseTotal = reuse.totalHint(url) || network.total(url);
-      const reused = reuseTotal > 0 ? await reuseClient.read({url, start, end, total: reuseTotal}) : null;
+      const reuseTotal = reuse.totalHint(url) || known;
+      const reused = reuseTotal > 0 ? await reuseClient.read({ url, start, end, total: reuseTotal }) : null;
       if (reused) {
-        const track = trackFor(url);
-        if (track) {
-          track.size = reused.total;
-          track.anchor = Math.max(track.anchor, end);
-          track.cooldownUntil = 0;
-          track.prefetchDisabled = false;
-        }
+        track.size = reused.total;
         // 复用的字节来自本机磁盘，单独计数，不参与 CDN 吞吐与节点健康度统计。
         stats.reuseHits += 1;
         stats.reuseBytes += reused.body.length;
-        playbackCache?.put(url, start, reused.body, reused.total, {contentType: reused.contentType});
+        playbackCache?.put(url, start, reused.body, reused.total, { contentType: reused.contentType });
         renderPreheatProgress();
-        return {body: reused.body, start, end: start + reused.body.length, total: reused.total, contentType: reused.contentType};
+        return { body: reused.body, start, end: start + reused.body.length, total: reused.total, contentType: reused.contentType };
       }
     }
-
-    const key = `${url}|${start}|${end}`;
-    let entry = urgentFlights.get(key);
-    if (!entry) {
-      const controller = new AbortController(), pageKey = currentPageKey();
-      const track = trackFor(url);
-      if (!track) return null;
-      // 避免后台预热占用正在播放的同一段：让更高优先级的需求任务接管重叠区间。
-      for (const [control, job] of prefetchJobs) {
-        if (job.track.url === url && start < job.end && end > job.start) control.abort();
-      }
-      entry = {controller, users:0, promise:null};
-      const current = entry;
-      entry.promise = (async () => {
-        network.tune({ahead:currentBufferAhead(),demand:true,now:performance.now()});
-        const priority = network.role(url) === 'audio' ? 200 : 100;
-        const result = await network.download(url,start,end,track.size,controller.signal,{priority});
-        if (controller.signal.aborted || cfg.mode !== 'always' || currentPageKey() !== pageKey || tracks.get(track.key) !== track || track.url !== url) throw new DOMException('旧媒体请求已取消','AbortError');
-        track.size = result.total;
-        // 同一部分命中的缺口统一使用原需求末端；向后 seek 必须允许锚点回退。
-        track.anchor = parentRange && Number.isSafeInteger(parentRange.end) ? Math.min(result.total,parentRange.end) : start + result.bytes.length;
-        track.cooldownUntil = 0; track.prefetchDisabled = false;
-        playbackCache?.put(url,start,result.bytes,result.total,{contentType:result.contentType});
-        renderPreheatProgress();
-        return {body:result.bytes,start,end:start+result.bytes.length,total:result.total,contentType:result.contentType};
-      })().catch(error => { if (!controller.signal.aborted) network.fallback(); throw error; }).finally(() => {
-        if (urgentFlights.get(key) === current) urgentFlights.delete(key);
-      });
-      urgentFlights.set(key,entry);
-    }
-    entry.users++;
-    return new Promise((resolve,reject) => {
-      let finished = false;
-      const finish = () => {
-        if (finished) return false; finished = true;
-        signal.removeEventListener('abort',cancel);entry.users--;
-        if (!entry.users) entry.controller.abort();
-        return true;
-      };
-      const cancel = () => { if (finish()) reject(signal.reason || new DOMException('已取消','AbortError')); };
-      signal.addEventListener('abort',cancel,{once:true});
-      if (signal.aborted) cancel();
-      entry.promise.then(value => {if(finish())resolve(value);},error => {if(finish())reject(error);});
-    });
-  }
-
-  function shouldPrefetch(track) {
-    if (cfg.mode !== "always") return false;
-    if (track.prefetchDisabled || Date.now() < track.cooldownUntil) return false;
-    // 限制的是驻留内存与前方窗口，不能在长视频累计下载 200 MB 后永久停止加速。
-    return true;
-  }
-
-  function pickJob() {
-    const candidates = [...tracks.values()]
-      .filter((track) => track.active !== false && track.anchor > 0 && shouldPrefetch(track))
-      .sort((left, right) => (left.lastPrefetchAt || 0) - (right.lastPrefetchAt || 0));
-    for (const track of candidates) {
-      const host = hostStat(track.host);
-      const sameHostInflight = track.inflight.length;
-      if (sameHostInflight >= 1) continue;
-      const byteCap = 8 * MB;
-      const reservedBytes = track.inflight.reduce((sum, [start, end]) => sum + Math.max(0, end - start), 0);
-      const remainingBytes = byteCap - reservedBytes;
-      if (remainingBytes <= 0) continue;
-      const to = track.size
-        ? Math.min(track.size, track.anchor + leadBytes(track), track.anchor + remainingBytes)
-        : Math.min(track.anchor + leadBytes(track), track.anchor + remainingBytes);
-      // 优先补齐初始化区，SIDX 一般在文件头；最多探测 1 MiB，未知格式不伪造时间映射。
-      const index = playbackCache?.index(track.url);
-      if (playbackCache && !index && (track.indexProbeBytes || 0) < Math.min(track.size || MB, MB)) {
-        if (track.inflight.length) continue;
-        const probeEnd = Math.min(track.size || MB, track.indexProbeBytes ? MB : 64 * 1024);
-        track.indexProbeBytes = probeEnd;
-        const gap = firstGap(playbackCache.ranges(track.url), 0, probeEnd);
-        if (gap) return { track, start: gap[0], end: Math.min(gap[1], gap[0] + remainingBytes) };
-      }
-      if (index && playbackCache) {
-        // 清晰度切换后只为播放器最近使用的同类轨道预取，不用文件大小猜音视频。
-        const newer = [...tracks.values()].some(other => other !== track && other.active !== false && playbackCache.index(other.url)?.role === index.role
-          && other.lastPlayerSeen > track.lastPlayerSeen);
-        if (newer) continue;
-        const video = [...document.querySelectorAll("video")].find(item => !item.paused) || document.querySelectorAll("video")[0];
-        const now = Number(video?.currentTime) || 0;
-        const targets = [[0, index.segments[0].start], ...index.segments
-          .filter(segment => segment.timeEnd > now && segment.timeStart < now + cfg.leadSeconds)
-          .map(segment => [segment.start, segment.end])];
-        const resident = playbackCache.ranges(track.url);
-        for (const [left, right] of targets) {
-          const coverage = resident.map(range => range.slice());
-          for (const [a, b] of track.inflight) addRange(coverage, a, b);
-          const gap = firstGap(coverage, left, right);
-          if (gap) return { track, start: gap[0], end: Math.min(gap[1], gap[0] + host.chunkBytes, gap[0] + remainingBytes) };
-        }
-        continue;
-      }
-      let cursor = track.anchor;
-      for (let guard = 0; guard < 128 && cursor < to; guard += 1) {
-        const gap = firstGap(track.covered, cursor, to);
-        if (!gap) break;
-        const start = gap[0];
-        const end = Math.min(gap[1], start + host.chunkBytes);
-        if (!track.inflight.some(([left, right]) => start < right && end > left)) return { track, start, end };
-        cursor = end;
-      }
-    }
-    return null;
-  }
-
-  async function prefetch(job) {
-    const { track, start, end } = job;
-    const host = hostStat(track.host);
-    track.inflight.push([start, end]);
-    stats.prefetching += 1;
-    const controller = new AbortController();
-    prefetchControllers.add(controller);
-    prefetchJobs.set(controller, job);
-    track.lastPrefetchAt = performance.now();
-    const pageKey = currentPageKey(), requestUrl = track.url;
-    const timer = setTimeout(() => controller.abort(new DOMException("预热超时", "TimeoutError")), 45000);
-    const startedAt = performance.now();
+    const pageKey = currentPageKey();
     try {
-      const result = await network.download(requestUrl, start, end, track.size, controller.signal);
-      const body = result.bytes, bytes = body.byteLength;
-      // 备用 CDN 的数据验证后写到播放器原 URL 下；不把签名地址或节点切换暴露给播放器。
-      if (controller.signal.aborted || cfg.mode !== "always" || currentPageKey() !== pageKey || tracks.get(track.key) !== track || track.url !== requestUrl || track.active === false) return;
+      // assembleRange 同步登记急需分片后才让规划器运行，后台不会抢先把同一段切成大分片。
+      const pending = assembleRange(url, start, end, signal, known);
+      queuePump();
+      const result = await pending;
+      if (signal.aborted || cfg.mode !== "always" || currentPageKey() !== pageKey || tracks.get(track.key) !== track) throw new DOMException("旧媒体请求已取消", "AbortError");
       track.size = result.total;
-      playbackCache?.put(requestUrl, start, body, result.total, { contentType: result.contentType });
-      addRange(track.covered, start, start + bytes);
-      addRange(track.prefetchedRanges, start, start + bytes);
-      track.prefetchedBytes += bytes;
-      track.lastSeen = Date.now();
-      stats.prefetchChunks += 1;
-      stats.prefetchBytes += bytes;
-      host.prefetchSuccesses += 1;
-      track.consecutivePrefetchErrors = 0;
-      track.cooldownUntil = 0;
-      const elapsed = performance.now() - startedAt;
-      if (elapsed < 12000 && host.prefetchConcurrency < cfg.maxConcurrency) host.prefetchConcurrency += 1;
-      if (elapsed < 8000) host.chunkBytes = MB;
       renderPreheatProgress();
-    } catch {
-      if (controller.signal.aborted && controller.signal.reason?.name !== "TimeoutError") return;
-      stats.prefetchErrors += 1;
-      host.prefetchErrors += 1;
-      track.consecutivePrefetchErrors += 1;
-      track.cooldownUntil = Date.now() + Math.min(30000, 1000 * (2 ** Math.min(track.consecutivePrefetchErrors, 5)));
-      track.prefetchDisabled = false; // 冷缓存失败后仍允许恢复，不能永久停用轨道。
-      track.indexProbeBytes = 0;
-      host.prefetchConcurrency = Math.max(1, Math.ceil(host.prefetchConcurrency / 2));
-      host.chunkBytes = 512 * 1024;
-    } finally {
-      clearTimeout(timer);
-      prefetchControllers.delete(controller);
-      prefetchJobs.delete(controller);
-      stats.prefetching = Math.max(0, stats.prefetching - 1);
-      const index = track.inflight.findIndex(([left, right]) => left === start && right === end);
-      if (index >= 0) track.inflight.splice(index, 1);
+      return result;
+    } catch (error) {
+      if (!signal.aborted) network.fallback();
+      throw error;
     }
   }
+
+  // ---- 后台预热规划 -----------------------------------------------------------------
+
+  /** 每种角色只预热播放器最近用过的轨道；索引尚未解析的活动轨道也纳入，以便先取到索引。 */
+  function prefetchTracks() {
+    const newest = new Map(), unindexed = [];
+    for (const track of tracks.values()) {
+      if (track.active === false) continue;
+      const role = playbackCache?.index(track.url)?.role;
+      if (!role) { unindexed.push(track); continue; }
+      if (!newest.has(role) || track.lastPlayerSeen > newest.get(role).lastPlayerSeen) newest.set(role, track);
+    }
+    return [...newest.values(), ...unindexed];
+  }
+
+  function residentPrefix(url) {
+    const first = playbackCache?.ranges(url)[0];
+    return first && first[0] === 0 ? first[1] : 0;
+  }
+
+  /** 轨道前方想要的字节区间，附带 order（距播放点的秒数），越近越先下载。
+   * @returns {{start: number, end: number, order: number}[]} */
+  function wantedRanges(track, position) {
+    const lead = Math.max(1, Number(cfg.leadSeconds) || LEAD_SECONDS);
+    const index = playbackCache?.index(track.url);
+    if (index?.segments?.length) {
+      const wanted = [{ start: 0, end: index.segments[0].start, order: 0 }];
+      let bytes = 0;
+      for (const segment of index.segments) {
+        if (segment.timeEnd <= position) continue;
+        if (segment.timeStart >= position + lead || bytes >= AHEAD_BYTES_CAP) break;
+        wanted.push({ start: segment.start, end: segment.end, order: Math.max(0, segment.timeStart - position) });
+        bytes += segment.end - segment.start;
+      }
+      return wanted;
+    }
+    if (!playbackCache) return [];
+    const head = residentPrefix(track.url);
+    for (const probe of INDEX_PROBES) {
+      const end = track.size ? Math.min(track.size, probe) : probe;
+      if (head < end) return [{ start: 0, end, order: 0 }];
+    }
+    // 没有可用索引（非 DASH 或格式变化）：按平均码率从播放器最近请求处向后推进，只用于调度不用于标黄。
+    if (!track.size || !track.anchor) return [];
+    const duration = Number(currentVideo()?.duration) || 0;
+    const rate = duration > 0 ? track.size / duration : 0;
+    const bytes = Math.min(AHEAD_BYTES_CAP, rate ? rate * lead : 24 * MB);
+    return [{ start: track.anchor, end: Math.min(track.size, track.anchor + bytes), order: 1 }];
+  }
+
+  let pumpQueued = false;
+  function queuePump() {
+    if (pumpQueued) return;
+    pumpQueued = true;
+    setTimeout(() => { pumpQueued = false; planPrefetch(); }, 0);
+  }
+
+  /**
+   * 事件驱动的预热流水线：任何分片完成、播放器请求或拖动都会触发一次规划。
+   * 1. 先取消不再需要的后台分片（拖动/换清晰度后旧窗口的数据），让出槽位；
+   * 2. 再把前方窗口内 未驻留且未在途 的缺口按 距播放点秒数 排序，补足到排队深度。
+   * 音视频按同一时间轴交错排序，因此不会出现视频跑得很远、音频却还没到的情况。
+   */
+  function planPrefetch() {
+    if (cfg.mode !== "always") return;
+    const position = Number(currentVideo()?.currentTime) || 0;
+    const plans = prefetchTracks().map(track => ({ track, wanted: wantedRanges(track, position) }));
+    const byUrl = new Map(plans.map(plan => [plan.track.url, plan.wanted]));
+    network.pruneBackground((url, start, end) => byUrl.get(url)?.some(range => start < range.end && end > range.start));
+    let room = BACKGROUND_QUEUE - network.backgroundPending();
+    if (room <= 0) return;
+    const jobs = [];
+    for (const { track, wanted } of plans) {
+      if (Date.now() < track.retryAt) continue;
+      const busy = playbackCache ? playbackCache.ranges(track.url) : [];
+      for (const range of network.inflightRanges(track.url)) addRange(busy, range[0], range[1]);
+      for (const range of wanted) {
+        for (const [start, end] of missingRanges(busy, range.start, range.end)) jobs.push({ track, start, end, order: range.order });
+      }
+    }
+    jobs.sort((left, right) => left.order - right.order);
+    for (const job of jobs) {
+      if (room <= 0) break;
+      const end = Math.min(job.end, job.start + room * PIECE);
+      room -= network.prefetch(job.track.url, job.start, end, { order: job.order, total: job.track.size });
+    }
+  }
+
+  // ---- 估计器护栏 -----------------------------------------------------------------
 
   function sanitizeEstimator(raw) {
     if (!cfg.estimatorGuard || cfg.mode !== "always") return raw;
@@ -750,6 +721,8 @@
     storageProto[NS] = true;
   }
 
+  // ---- 统计 ---------------------------------------------------------------------
+
   function publicStats() {
     const transfer = network.snapshot();
     const hosts = {};
@@ -760,11 +733,10 @@
         errors: host.errors,
         ttfbP50: percentile(host.ttfbs, 0.5),
         ttfbP95: percentile(host.ttfbs, 0.95),
-        hotKbpsP25: percentile(host.hotThroughputsKbps, 0.25),
-        prefetchConcurrency: host.prefetchConcurrency,
-        chunkKB: Math.round(host.chunkBytes / 1024)
+        hotKbpsP25: percentile(host.hotThroughputsKbps, 0.25)
       };
     }
+    const cache = playbackCache?.stats || {};
     return {
       at: Date.now(),
       mode: cfg.mode,
@@ -776,6 +748,7 @@
       networkSpeed: transfer.speed,
       networkActive: transfer.active,
       networkLimit: transfer.limit,
+      networkQueued: transfer.queued,
       networkHost: transfer.host,
       networkRescues: transfer.rescues,
       acceleratedRequests: transfer.accelerated,
@@ -784,53 +757,56 @@
       reuseHits: stats.reuseHits,
       reuseMB: +(stats.reuseBytes / MB).toFixed(2),
       blockedNodes: transfer.blocked,
-      cdnMode: transfer.cdnMode,
       networkReceivedMB: +(transfer.receivedBytes / MB).toFixed(2),
       prefetchAheadSec: prefetchAhead(),
       coldTracks: [...tracks.values()].filter((track) => track.cold).length,
-      disabledTracks: [...tracks.values()].filter((track) => track.prefetchDisabled).length,
-      cacheHits: (playbackCache?.stats.hits || 0) + (playbackCache?.stats.partialHits || 0),
-    reuseHits: stats.reuseHits,
-      cacheHitMB: +(((playbackCache?.stats.hitBytes || 0) + (playbackCache?.stats.partialHitBytes || 0)) / MB).toFixed(2),
-      cacheResidentMB: +((playbackCache?.stats.bytes || 0) / MB).toFixed(2),
-      prefetchChunks: stats.prefetchChunks,
-      prefetchMB: +(stats.prefetchBytes / MB).toFixed(1),
-      prefetchErrors: stats.prefetchErrors,
-      prefetching: stats.prefetching,
+      cacheHits: (cache.hits || 0) + (cache.partialHits || 0),
+      cacheHitMB: +(((cache.hitBytes || 0) + (cache.partialHitBytes || 0)) / MB).toFixed(2),
+      cacheResidentMB: +((cache.bytes || 0) / MB).toFixed(2),
+      prefetchMB: +(transfer.prefetchBytes / MB).toFixed(1),
+      prefetchErrors: transfer.prefetchErrors,
+      prefetching: transfer.prefetching,
       stalls: stats.stalls,
       stallMs: Math.round(stats.stallMs + (stats.waitingSince ? performance.now() - stats.waitingSince : 0)),
       playedSec: stats.playedSec,
       bufferAheadSec: +currentBufferAhead().toFixed(1),
       pageHidden: document.hidden,
-      warmingUp: stats.playedSec < cfg.minWatchedSec,
-      minWatchedSec: cfg.minWatchedSec,
-      minBufferAheadSec: cfg.minBufferAheadSec,
       estimator: readEstimator(),
       hosts
     };
   }
 
   function prefetchAhead() {
-    const video = [...document.querySelectorAll("video")].find(item => !item.paused) || document.querySelectorAll("video")[0];
+    const video = currentVideo();
     if (!(video?.duration > 0)) return 0;
     const now = video.currentTime / video.duration;
     const range = normalizedPrefetchedRanges().find(([start, end]) => start <= now + .001 && end > now);
     return range ? +((range[1] - now) * video.duration).toFixed(1) : 0;
   }
 
+  // ---- 进度条着色 -------------------------------------------------------------------
+
+  // 进度条按帧刷新；驻留、轨道和时长都没变时直接复用上次的音视频交集。
+  let timelineMemo = { key: "", ranges: [] };
   function normalizedPrefetchedRanges() {
+    const revision = playbackCache?.revision?.();
+    const duration = Number(currentVideo()?.duration);
+    const key = `${revision}|${playerSequence}|${tracks.size}|${duration}`;
+    if (revision !== undefined && key === timelineMemo.key) return timelineMemo.ranges;
     const eligible = [...tracks.values()].filter(track => track.active !== false);
     const pair = chooseCurrentDashPair(eligible);
-    if (!pair) return [];
+    let ranges = [];
     // 新清晰度的初始化尚未解析时，不能继续借旧清晰度画黄色。
-    if (eligible.some(track => !playbackCache?.index(track.url)?.role && track.lastPlayerSeen > Math.min(pair.video.lastPlayerSeen, pair.audio.lastPlayerSeen))) return [];
-    return intersectRanges(normalizedTrackRanges(pair.video), normalizedTrackRanges(pair.audio));
+    if (pair && !eligible.some(track => !playbackCache?.index(track.url)?.role && track.lastPlayerSeen > Math.min(pair.video.lastPlayerSeen, pair.audio.lastPlayerSeen))) {
+      ranges = intersectRanges(normalizedTrackRanges(pair.video), normalizedTrackRanges(pair.audio));
+    }
+    timelineMemo = { key, ranges };
+    return ranges;
   }
 
   function normalizedTrackRanges(track) {
     const normalized = [];
-    const video = [...document.querySelectorAll("video")].find(item => !item.paused) || document.querySelectorAll("video")[0];
-    const duration = Number(video?.duration);
+    const duration = Number(currentVideo()?.duration);
     if (!playbackCache || !(duration > 0) || !Number.isFinite(duration)) return normalized;
     // SIDX 给出每段真实时长；绝不把可变码率的字节占比伪装成可播放时间。
     for (const [start, end] of playbackCache.timeRanges(track.url)) {
@@ -946,12 +922,12 @@
   // 失活轨道显式释放，避免旧清晰度/旧 CDN 地址继续占用保护名额。
   function updateRetentionHints() {
     if (!playbackCache?.retain) return;
-    // 渲染定时器在关闭辅助后仍运行，不能重新保护刚被清理的旧轨道。
+    // 渲染在关闭辅助后仍运行，不能重新保护刚被清理的旧轨道。
     if (cfg.mode !== "always") { playbackCache.clearRetention?.(); return; }
-    const video = [...document.querySelectorAll("video")].find(item => !item.paused) || document.querySelectorAll("video")[0];
+    const video = currentVideo();
     const position = Number(video?.currentTime) || 0;
     const duration = Number(video?.duration) || 0;
-    const ahead = Math.max(1, Number(cfg.leadSeconds) || DEFAULTS.leadSeconds);
+    const ahead = Math.max(1, Number(cfg.leadSeconds) || LEAD_SECONDS);
     for (const track of tracks.values()) {
       if (track.active === false) playbackCache.release?.(track.url);
       else playbackCache.retain(track.url, { active: true, position, ahead, rewind: RETENTION_REWIND_SECONDS, duration, protectInit: true });
@@ -1001,18 +977,21 @@
     }
   }
 
+  // ---- 生命周期 ---------------------------------------------------------------------
+
+  function clearSession() {
+    network.reset();
+    playbackCache?.clear();
+    timelineMemo = { key: "", ranges: [] };
+  }
+
   function resetTracksAfterNavigation() {
     const nextPageKey = currentPageKey();
     if (nextPageKey === lastPageKey) return false;
     lastPageKey = nextPageKey;
-    for (const controller of prefetchControllers) controller.abort();
-    playbackCache?.clear();
+    clearSession();
     tracks.clear();
-    network.reset();
-    urgentFlights.clear();
     initialPlayinfo = window.__playinfo__; // SPA 导航后不重新注册旧页面留下的清单。
-    stats.prefetchBytes = 0;
-    stats.prefetchErrors = 0;
     renderPreheatProgress();
     return true;
   }
@@ -1022,32 +1001,18 @@
     const message = event.data;
     if (!message || message.channel !== CHANNEL || message.dir !== "ext->page") return;
     if (message.type === "config" && message.payload && typeof message.payload === "object") {
-      Object.assign(cfg, message.payload);
-      cfg.mode = ["off", "observe"].includes(cfg.mode) ? "off" : "always";
-      if (cfg.networkPolicyVersion !== 3) cfg.maxConcurrency = 32;
-      cfg.networkPolicyVersion = 3;
-      cfg.maxConcurrency = Math.max(1, Math.min(32, Number(cfg.maxConcurrency) || DEFAULTS.maxConcurrency));
-      network.setMax(cfg.maxConcurrency);
-      network.setMode(cfg.cdnMode);
-      if (cfg.mode === "off") {
-        for (const controller of prefetchControllers) controller.abort();
-        playbackCache?.clear();
-        network.reset();
-        urgentFlights.clear();
-        initialPlayinfo = null;
-        for (const track of tracks.values()) {
-          track.indexProbeBytes = 0;
-          track.prefetchedBytes = 0;
-          track.prefetchedRanges = [];
-          track.covered = [];
-        }
-      }
-      cfg.minWatchedSec = 0;
-      cfg.minBufferAheadSec = 0;
-      cfg.maxPrefetchMBPerTrack = Math.max(16, Math.min(1024, Number(cfg.maxPrefetchMBPerTrack) || DEFAULTS.maxPrefetchMBPerTrack));
+      const payload = message.payload;
+      for (const key of CONFIG_KEYS) if (Object.hasOwn(payload, key)) cfg[key] = payload[key];
+      cfg.mode = ["off", "observe"].includes(payload.mode) ? "off" : "always";
       cfg.preheatColor = normalizePreheatColor(cfg.preheatColor);
+      if (cfg.mode === "off") {
+        clearSession();
+        initialPlayinfo = null;
+        for (const track of tracks.values()) { track.failures = 0; track.retryAt = 0; }
+      }
       renderPreheatProgress();
       if (cfg.estimatorGuard) queueEstimatorCleanup();
+      queuePump();
     } else if (message.type === "command") {
       const success = message.payload?.name === "clearEstimator"
         ? backupAndClearEstimator()
@@ -1062,23 +1027,22 @@
     cfg,
     network,
     capturePlayurl,
-    prefetch,
     loadPlayerRange,
+    planPrefetch,
+    wantedRanges,
     stats,
     tracks,
     percentile,
     parseRangeHeader,
     parseContentRange,
     addRange,
-    firstGap,
+    missingRanges,
     trackFor,
     recordMedia,
     slowThreshold,
     dynamicEstimatorFloor,
     sanitizeEstimator,
     queueEstimatorCleanup,
-    shouldPrefetch,
-    pickJob,
     normalizedPrefetchedRanges,
     normalizedTrackRanges,
     chooseCurrentDashPair,
@@ -1099,11 +1063,12 @@
   playbackCache?.install({
     loadRange: loadPlayerRange,
     enabled: () => { resetTracksAfterNavigation(); return cfg.mode === "always"; },
-    onChange: renderPreheatProgress,
+    onChange: () => { renderPreheatProgress(); queuePump(); },
     onHit: (url, hit) => {
       // 本地命中不是 CDN 吞吐样本，不能污染播放器的网络能力估计。
       const track = trackFor(url);
       if (track) primeTrackFromHeaders(track, { start: hit.start }, `bytes ${hit.start}-${hit.end - 1}/${hit.total}`, 206);
+      queuePump();
     }
   });
   scanVideos();
@@ -1113,8 +1078,9 @@
     resetTracksAfterNavigation();
     if (anyVideoPlaying()) stats.playedSec += 1;
     scanVideos();
+    window.postMessage({ channel: CHANNEL, dir: "page->ext", type: "stats", payload: publicStats() }, "*");
   }, 1000);
-  setInterval(renderPreheatProgress, 750);
+  // 进度条跟随帧刷新（隐藏标签页不画）；规划主要由事件驱动，这个定时器只负责播放位置推进后的补位。
   if (typeof window.requestAnimationFrame === "function") {
     let lastPaint = 0;
     const animate = (now) => {
@@ -1126,27 +1092,14 @@
   setInterval(() => {
     resetTracksAfterNavigation();
     if (cfg.mode !== "always") return;
-    updateRetentionHints();
     captureInitialPlayinfo();
-    const transfer = network.snapshot();
-    // 驻留预热还未进入播放器，不可用它掩盖 video.buffered 的真实饥饿。
-    const video = [...document.querySelectorAll("video")][0];
-    const duration = Number(video?.duration) || 0;
-    const activeTracks = [...tracks.values()].filter(track => track.active !== false);
-    const requiredRate = duration > 0 ? activeTracks.reduce((sum, track) => sum + (track.size || 0) / duration, 0) * (Number(video?.playbackRate) || 1) : 0;
-    network.tune({ ahead: currentBufferAhead(), demand: urgentFlights.size > 0 || stats.prefetching > 0 || activeTracks.some(track => track.anchor > 0 && shouldPrefetch(track)), rate: transfer.speed, requiredRate });
-    // 后台仅安排音视频各一段，内部自行拆块；共享池优先满足播放器的当前请求。
-    while (stats.prefetching < 2) {
-      const job = pickJob();
-      if (!job) break;
-      void prefetch(job);
-    }
-  }, 400);
-  setInterval(() => {
-    window.postMessage({ channel: CHANNEL, dir: "page->ext", type: "stats", payload: publicStats() }, "*");
-  }, 1000);
+    updateRetentionHints();
+    planPrefetch();
+  }, 500);
   setInterval(() => {
     const cutoff = Date.now() - 5 * 60 * 1000;
-    for (const [key, track] of tracks) if (track.lastSeen < cutoff && !track.inflight.length) { playbackCache?.release?.(track.url); tracks.delete(key); }
+    for (const [key, track] of tracks) {
+      if (track.lastSeen < cutoff && !network.inflightRanges(track.url).length) { playbackCache?.release?.(track.url); tracks.delete(key); }
+    }
   }, 30000);
 })();

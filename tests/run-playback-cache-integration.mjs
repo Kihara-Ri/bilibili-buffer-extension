@@ -57,7 +57,6 @@ try {
   const initial = Object.fromEntries(Object.entries(fixtures).map(([key, value]) => [key, { initEnd: value.initEnd, total: value.bytes.length }]));
   await page.evaluate(value => window.fixtureInfo = value, initial);
   await page.addScriptTag({ path: path.join(root, 'src/playback-cache.js') });
-  await page.addScriptTag({ path: path.join(root, 'src/playback-routes.js') });
   await page.addScriptTag({ path: path.join(root, 'src/playback-network.js') });
   await page.addScriptTag({ path: path.join(root, 'src/playback-observer.js') });
   const run = async (warm, xhr) => {

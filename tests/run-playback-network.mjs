@@ -19,15 +19,16 @@ try {
     await route.fulfill({status:206,body:Buffer.from([1,2,3,4]),headers:{'content-range':'bytes 0-3/4','access-control-allow-origin':'*','access-control-expose-headers':'Content-Range','content-type':'video/mp4'}}).catch(()=>{});
   });
   await page.goto('https://www.bilibili.com/video/BV1test/');
-  for(const script of ['playback-cache','playback-routes','playback-network','playback-observer']) await page.addScriptTag({path:fileURLToPath(new URL(`../src/${script}.js`,import.meta.url))});
+  for(const script of ['playback-cache','playback-network','playback-observer']) await page.addScriptTag({path:fileURLToPath(new URL(`../src/${script}.js`,import.meta.url))});
   // 覆盖真实 fetch 清单捕获、主节点延迟、备用命中及原 URL 缓存复用。
   const result=await page.evaluate(async ({primary})=>{
     await (await fetch('https://api.bilibili.com/x/player/playurl?cid=1')).json();
     await new Promise(r=>setTimeout(r,50));
     const internals=window.__biliBufferPlaybackAssistInternals;
-    internals.cfg.mode='always';internals.network.setMode('original');
-    const track=internals.trackFor(primary); track.size=4;
-    await internals.prefetch({track,start:0,end:4});
+    internals.cfg.mode='always';
+    // 直接排一个后台分片：主节点延迟 2.5 秒，对冲到备用节点后写回原 URL 的缓存。
+    internals.network.prefetch(primary,0,4,{total:4});
+    await new Promise(r=>{const t=setInterval(()=>{if(!internals.network.backgroundPending()){clearInterval(t);r();}},20);});
     const response=await fetch(primary,{headers:{Range:'bytes=0-3'}});
     return {bytes:[...new Uint8Array(await response.arrayBuffer())],stats:internals.publicStats()};
   },{primary});
@@ -39,8 +40,9 @@ try {
     const i=window.__biliBufferPlaybackAssistInternals;history.pushState({}, "", "?p=2");
     const registrations=[];const original=i.network.register;i.network.register=p=>{registrations.push(p);return original(p);};
     await new Promise((resolve,reject)=>{const x=new XMLHttpRequest();x.open('GET','https://api.bilibili.com/x/player/wbi/playurl?cid=1');x.onload=resolve;x.onerror=reject;x.send();});
-    const capturedBefore=registrations.length;const t=i.trackFor('https://a.bilivideo.com/browser.m4s');t.size=4;
-    await i.prefetch({track:t,start:0,end:4});
+    const capturedBefore=registrations.length;
+    i.network.prefetch('https://a.bilivideo.com/browser.m4s',0,4,{total:4});
+    await new Promise(r=>{const t=setInterval(()=>{if(!i.network.backgroundPending()){clearInterval(t);r();}},20);});
     const rescue=i.publicStats().networkRescues;
     window.postMessage({channel:'bili-buffer-playback-assist-v1',dir:'ext->page',type:'config',payload:{mode:'off'}},'*');
     await new Promise(r=>setTimeout(r,30));

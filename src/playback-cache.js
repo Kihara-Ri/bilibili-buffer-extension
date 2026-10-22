@@ -5,15 +5,10 @@
   /** @typedef {{start: number, end: number, timeStart: number, timeEnd: number}} MediaSegment */
   /** @typedef {{segments: MediaSegment[], initEnd: number, role: 'video'|'audio'|null}} SegmentIndex */
   const resources = new Map();
-  const stats = { bytes: 0, hits: 0, hitBytes: 0, misses: 0, evictions: 0, partialHits: 0, partialHitBytes: 0, partialBytes: 0, partialPeak: 0 };
-  let limit = 128 * 1024 * 1024, sequence = 0, installed = false, epoch = 0;
+  const stats = { bytes: 0, hits: 0, hitBytes: 0, misses: 0, evictions: 0, partialHits: 0, partialHitBytes: 0 };
+  // revision 在任何驻留变化时递增，观察器据此跳过未变化时的时间轴重算。
+  let limit = 128 * 1024 * 1024, sequence = 0, installed = false, epoch = 0, revision = 0;
   const INDEX_LIMIT = 1024 * 1024;
-  // 单次请求最多重组 16 MiB。规划期会复制驻留快照、下载期会持有缺口正文、交付期还有一份输出，
-  // 三者之和约为该上限的两倍，避免开放结尾请求把整部视频留在页面内存里。
-  const MAX_REASSEMBLY = 16 * 1024 * 1024;
-  // 缺口过多说明驻留极其碎片化，补齐的收益低于排一长串子请求；宁可整条交还原请求。
-  const MAX_GAPS = 32;
-  const partialControllers = new Set();
   const mediaUrl = (url) => {
     try { const u = new URL(url); return /^https?:$/.test(u.protocol) && /(^|\.)(bilivideo\.com|bilivideo\.cn|hdslb\.com|akamaized\.net)$/.test(u.hostname); }
     catch { return false; }
@@ -29,6 +24,7 @@
     if (entry) stats.bytes -= entry.blocks.reduce((sum, block) => sum + block.bytes.length, 0);
     resources.delete(url);
     retention.delete(url);
+    revision++;
   }
   const seconds = (value, fallback) => Number.isFinite(value) && value >= 0 ? value : fallback;
   // 合并相邻/重叠保护区间；一次回收涉及的区间数量很小，保持稳定排序。
@@ -118,14 +114,17 @@
       // 整池都处于保护区时仍继续回收：保护只调整顺序，不能突破内存硬上限。
       if (!victim) break;
       victim.entry.blocks.splice(victim.entry.blocks.indexOf(victim.block), 1);
+      victim.entry.times = null;
       stats.bytes -= victim.block.bytes.length;
       stats.evictions++;
+      revision++;
     }
   }
   function pieces(entry, start, end, prefetchedOnly = false) {
     const result = [];
     let cursor = start;
-    for (const block of [...entry.blocks].sort((a, b) => a.start - b.start)) {
+    // entry.blocks 始终按起点有序（见 put），这里无需再排序。
+    for (const block of entry.blocks) {
       if (prefetchedOnly && !block.prefetched) continue;
       const right = block.start + block.bytes.length;
       if (right <= cursor) continue;
@@ -143,98 +142,6 @@
     for (const part of parts) { output.set(part, cursor); cursor += part.length; }
     return output;
   }
-  /** 在 [start,end) 内把“已驻留字节”与“缺口”拆开；驻留部分立即复制快照。
-   * 快照必须同步完成：缺口下载是异步的，期间可能发生容量回收或条目替换，
-   * 若只持有 subarray 视图，后续交付的字节就不再可控。
-   * @param {{blocks: {start: number, bytes: Uint8Array}[]}} entry @param {number} start @param {number} end
-   * @returns {{parts: {start: number, bytes: Uint8Array}[], gaps: number[][]}}
-   */
-  function coverage(entry, start, end) {
-    const blocks = [...entry.blocks].sort((left, right) => left.start - right.start);
-    const parts = [], gaps = [];
-    let cursor = start;
-    for (const block of blocks) {
-      const right = block.start + block.bytes.length;
-      if (right <= cursor) continue;
-      // 块按起点排序：第一个起点大于 cursor 的块之前，不可能再被后面的块覆盖。
-      if (block.start > cursor) {
-        const gapEnd = Math.min(block.start, end);
-        if (gapEnd > cursor) gaps.push([cursor, gapEnd]);
-        cursor = gapEnd;
-        if (cursor >= end) break;
-      }
-      const stop = Math.min(right, end);
-      if (stop > cursor) {
-        parts.push({ start: cursor, bytes: block.bytes.slice(cursor - block.start, stop - block.start) });
-        cursor = stop;
-      }
-      if (cursor >= end) break;
-    }
-    if (cursor < end) gaps.push([cursor, end]);
-    return { parts, gaps };
-  }
-  /** 部分命中规划：完整命中、越界、超过重组上限或缺口过多时返回 null（走原路径）。
-   * @param {string} url @param {string} range @returns {object|null}
-   */
-  function partialPlan(url, range) {
-    const entry = resources.get(url), parsed = /^bytes=(\d+)-(\d*)$/i.exec(String(range || "").trim());
-    if (!entry || !parsed) return null;
-    const start = Number(parsed[1]), end = parsed[2] ? Number(parsed[2]) + 1 : entry.total;
-    if (!safe(start) || !safe(end) || end <= start || end > entry.total || end - start > MAX_REASSEMBLY) return null;
-    const reserved=2*(end-start);
-    if(stats.partialBytes+reserved>32*1024*1024)return null;
-    const { parts, gaps } = coverage(entry, start, end);
-    // parts 为空说明请求范围内没有任何可复用字节，交回旧路径而非伪装成部分命中。
-    if (!parts.length || !gaps.length || gaps.length > MAX_GAPS) return null;
-    stats.partialBytes+=reserved;stats.partialPeak=Math.max(stats.partialPeak,stats.partialBytes);let released=false;
-    return { url, start, end, total: entry.total, contentType: entry.contentType, length: end - start, parts, gaps,release(){if(!released){released=true;stats.partialBytes-=reserved;}} };
-  }
-  /** 校验每个缺口结果后拼接；任何边界、长度或总长不一致都返回 null，绝不交付半成品。
-   * @param {object} plan @param {object[]} results @returns {CacheHit & {reused: number}|null}
-   */
-  function assemble(plan, results) {
-    if (!Array.isArray(results) || results.length !== plan.gaps.length) return null;
-    const current = resources.get(plan.url);
-    if (current && current.total !== plan.total) return null;
-    const body = new Uint8Array(plan.length);
-    let contentType = plan.contentType, reused = 0;
-    for (const part of plan.parts) { body.set(part.bytes, part.start - plan.start); reused += part.bytes.length; }
-    for (let index = 0; index < plan.gaps.length; index += 1) {
-      const [gapStart, gapEnd] = plan.gaps[index], result = results[index];
-      const bytes = result?.body ? (result.body instanceof Uint8Array ? result.body : new Uint8Array(result.body)) : null;
-      if (!bytes || result.start !== gapStart || bytes.length !== gapEnd - gapStart) return null;
-      if (!Number.isSafeInteger(result.total) || result.total !== plan.total) return null;
-      body.set(bytes, gapStart - plan.start);
-      if (result.contentType) contentType = result.contentType;
-    }
-    return { body, start: plan.start, end: plan.end, total: plan.total, contentType, reused };
-  }
-  /** 失败时取消其余缺口，避免已经原生回退后后台仍下载同一范围。
-   * @param {object} plan @param {Function} loadRange @param {AbortSignal} signal @returns {Promise<object|null>}
-   */
-  async function fillPlan(plan, loadRange, signal) {
-    const controller=new AbortController(), cancel=()=>controller.abort(signal.reason);
-    signal.addEventListener('abort',cancel,{once:true});if(signal.aborted)cancel();
-    partialControllers.add(controller);
-    let abort;
-    const cancelled=new Promise((_,reject)=>{abort=()=>reject(controller.signal.reason);controller.signal.addEventListener('abort',abort,{once:true});if(controller.signal.aborted)abort();});
-    try {
-      const requests=plan.gaps.map(async ([from,to])=>{
-        if(controller.signal.aborted)throw controller.signal.reason;
-        const value=await loadRange(plan.url,`bytes=${from}-${to-1}`,controller.signal,{start:plan.start,end:plan.end});
-        if(!value || value.start!==from || value.end!==to || value.total!==plan.total || (value.body?.byteLength??-1)!==to-from)throw Error('缓存缺口结果不一致');
-        return value;
-      });
-      const results=await Promise.race([Promise.all(requests),cancelled]);
-      return assemble(plan,results);
-    } finally {
-      controller.signal.removeEventListener('abort',abort);controller.abort();
-      signal.removeEventListener('abort',cancel);partialControllers.delete(controller);
-    }
-  }
-
-  // 规划本身出错时退回“无部分命中”的原有整段路径，不影响播放器请求。
-  const safePartial = (url, range) => { try { return partialPlan(url, range); } catch { return null; } };
   // ISO BMFF 的 first_offset 相对 sidx 盒尾，不是文件起点；v1 使用 64 位值。
   function parseIndex(bytes, total) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -300,17 +207,22 @@
     }
     if (!pieces(entry, start, start + bytes.byteLength, prefetched)) {
       // 先把借来的候选加入回收决策，再复制真正留下的块；避免复制后才腾空间的驻留峰值。
-      const block={start,bytes,prefetched,order:++sequence};entry.blocks.push(block);stats.bytes+=bytes.byteLength;trim();
-      if(!entry.blocks.includes(block))return false;
-      const copy = new Uint8Array(bytes.byteLength);copy.set(bytes);block.bytes=copy;
+      const block = { start, bytes, prefetched, order: ++sequence };
+      const at = entry.blocks.findIndex(other => other.start > start);
+      entry.blocks.splice(at < 0 ? entry.blocks.length : at, 0, block);
+      stats.bytes += bytes.byteLength; entry.times = null; revision++;
+      trim();
+      if (!entry.blocks.includes(block)) return false;
+      const copy = new Uint8Array(bytes.byteLength); copy.set(bytes); block.bytes = copy;
     }
     if (!entry.index) {
       let end = 0;
-      for (const block of [...entry.blocks].sort((a, b) => a.start - b.start)) {
+      for (const block of entry.blocks) {
         if (block.start > end) break;
         end = Math.min(INDEX_LIMIT, Math.max(end, block.start + block.bytes.length));
       }
       if (end) entry.index = parseIndex(join(pieces(entry, 0, end), end), total);
+      if (entry.index) { entry.times = null; revision++; }
     }
     trim();
     return Boolean(pieces(entry, start, start + bytes.byteLength));
@@ -331,15 +243,18 @@
    * @param {string} url @returns {number[][]}
    */
   function timeRanges(url) {
-    const entry = resources.get(url), result = [];
-    if (!entry?.index || !pieces(entry, 0, entry.index.segments[0].start)) return result;
+    const entry = resources.get(url);
+    if (!entry?.index || !pieces(entry, 0, entry.index.segments[0].start)) return [];
+    // 进度条每帧都会读取；只在该资源驻留变化后重算一次。
+    if (entry.times) return entry.times;
+    const result = [];
     for (const segment of entry.index.segments) {
       if (!pieces(entry, segment.start, segment.end, true)) continue;
       const previous = result.at(-1);
       if (previous && previous[1] === segment.timeStart) previous[1] = segment.timeEnd;
       else result.push([segment.timeStart, segment.timeEnd]);
     }
-    return result;
+    return (entry.times = result);
   }
   // 分配失败或缓存条目异常时回退原请求，不能把优化失败变成播放失败。
   function safeMatch(url, range) { try { return match(url, range); } catch { return null; } }
@@ -354,6 +269,24 @@
   function install({ enabled = () => true, onHit = () => {}, onChange = () => {}, loadRange = null } = {}) {
     if (installed) return; installed = true;
     const hitRecorded = (url, hit) => { stats.hits++; stats.hitBytes += hit.body.length; onHit(url, hit); };
+    // 加速返回属于网络下载，不计作完整命中；其中复用的驻留字节（reused）单独计为部分命中。
+    const partialRecorded = (hit) => { if (hit.reused > 0) { stats.partialHits++; stats.partialHitBytes += hit.reused; } };
+    // 不预先把 Response 正文标为消费完毕：拿到响应后、读取正文前的 abort 仍须生效。
+    const respond = (request, hit) => {
+      let cleanup = () => {};
+      const body = new ReadableStream({
+        start(controller) {
+          const abort = () => { controller.error(request.signal.reason || new DOMException("Aborted", "AbortError")); cleanup(); };
+          cleanup = () => request.signal.removeEventListener("abort", abort);
+          request.signal.addEventListener("abort", abort, { once: true });
+        },
+        pull(controller) { controller.enqueue(hit.body); controller.close(); cleanup(); },
+        cancel() { cleanup(); }
+      }, { highWaterMark: 0 });
+      const response = new Response(body, { status: 206, statusText: "Partial Content", headers: headersFor(hit) });
+      Object.defineProperties(response, { url: { value: request.url }, type: { value: "cors" } });
+      return response;
+    };
     const inspect = (url, header, body, contentType, requestEpoch) => {
       if (!enabled() || epoch !== requestEpoch) return;
       const parsed = /^bytes 0-(\d+)\/(\d+)$/.exec(header || "");
@@ -375,58 +308,28 @@
           return Promise.resolve().then(() => {
             if (request.signal.aborted) throw request.signal.reason || new DOMException("Aborted", "AbortError");
             if (!enabled() || lookupEpoch !== epoch) return nativeFetch.call(window, input, init);
-            let response, cleanup = () => {};
-            try {
-              // 不预先把 Response 正文标为消费完毕：拿到响应后、读取正文前的 abort 仍须生效。
-              const body = new ReadableStream({
-                start(controller) {
-                  const abort = () => { controller.error(request.signal.reason || new DOMException("Aborted", "AbortError")); cleanup(); };
-                  cleanup = () => request.signal.removeEventListener("abort", abort);
-                  request.signal.addEventListener("abort", abort, { once: true });
-                },
-                pull(controller) { controller.enqueue(hit.body); controller.close(); cleanup(); },
-                cancel() { cleanup(); }
-              }, { highWaterMark: 0 });
-              response = new Response(body, { status: 206, statusText: "Partial Content", headers: headersFor(hit) });
-              Object.defineProperties(response, { url: { value: request.url }, type: { value: "cors" } });
-            } catch { cleanup(); return nativeFetch.call(window, input, init); }
+            let response;
+            try { response = respond(request, hit); } catch { return nativeFetch.call(window, input, init); }
             hitRecorded(request.url, hit); return response;
           });
         }
         stats.misses++;
         const rangeHeader = request.headers.get("range");
         if (loadRange && /^bytes=\d+-\d*$/i.test(rangeHeader || "")) {
-          const requestEpoch = epoch;
-          // 规划必须同步完成：驻留字节在此刻复制成快照，缺口下载期间的回收不会改动待交付内容。
-          const plan = safePartial(request.url, rangeHeader);
+          // loadRange 自己处理「部分驻留 + 在途分片 + 缺口」，失败或返回空时交还原生请求。
           return Promise.resolve().then(() => {
-            if (request.signal.aborted || requestEpoch !== epoch) throw request.signal.reason || new DOMException("页面已切换", "AbortError");
-            if (!plan) return loadRange(request.url, rangeHeader, request.signal);
-            // 只对缺口发起下载；各缺口仍走 loadPlayerRange 的同一去重与取消语义。
-            return fillPlan(plan, loadRange, request.signal);
+            if (request.signal.aborted || lookupEpoch !== epoch) throw request.signal.reason || new DOMException("页面已切换", "AbortError");
+            return loadRange(request.url, rangeHeader, request.signal);
           }).then(hit => {
             if (request.signal.aborted) throw request.signal.reason || new DOMException("已取消", "AbortError");
-            if (requestEpoch !== epoch) throw new DOMException("页面已切换", "AbortError");
+            if (lookupEpoch !== epoch) throw new DOMException("页面已切换", "AbortError");
             if (!hit || !enabled()) return nativeFetch.call(window, input, init);
-            // 部分命中的驻留字节来自本地缓存；缺口仍属网络下载，分开计数以免污染命中统计。
-            if (plan && hit.reused !== undefined) { stats.partialHits++; stats.partialHitBytes += hit.reused; }
-            // 加速返回属于网络下载，不计作缓存命中；保留 fetch 正文消费前取消语义。
-            let cleanup = () => {};
-            const body = new ReadableStream({
-              start(controller) {
-                const abort = () => { controller.error(request.signal.reason); cleanup(); };
-                cleanup = () => request.signal.removeEventListener("abort", abort);
-                request.signal.addEventListener("abort", abort, {once:true});
-              },
-              pull(controller) { controller.enqueue(hit.body); controller.close(); cleanup(); }, cancel() { cleanup(); }
-            }, {highWaterMark:0});
-            const response = new Response(body, {status:206, statusText:"Partial Content", headers:headersFor(hit)});
-            Object.defineProperties(response, {url:{value:request.url}, type:{value:"cors"}});
-            return response;
-          }).catch(error => {
-            if (request.signal.aborted || requestEpoch !== epoch) throw request.signal.reason || new DOMException("页面已切换", "AbortError");
+            partialRecorded(hit);
+            return respond(request, hit);
+          }).catch(() => {
+            if (request.signal.aborted || lookupEpoch !== epoch) throw request.signal.reason || new DOMException("页面已切换", "AbortError");
             return nativeFetch.call(window, input, init);
-          }).finally(()=>plan?.release());
+          });
         }
       }
       const requestEpoch = epoch;
@@ -482,8 +385,6 @@
         const sentAt = performance.now();
         const canLoad = !hit && eligible && loadRange && /^bytes=\d+-\d*$/i.test(rangeHeader || "");
         if (!hit && !canLoad) return super.send(body);
-        // 与 fetch 同策略：同步快照驻留字节，只把缺口交给 loadRange。
-        const plan = canLoad ? safePartial(req.url, rangeHeader) : null;
         const generation = ++this._cacheGeneration;
         this._cachePending = true;
         this._cacheReply = { hit, state: 1, aborted: false };
@@ -509,7 +410,7 @@
           this._cachePending = false;
           this.dispatchEvent(new Event("readystatechange")); if (!alive()) return;
           if (cached) hitRecorded(req.url, result);
-          else if (plan && result.reused !== undefined) { stats.partialHits++; stats.partialHitBytes += result.reused; }
+          else partialRecorded(result);
           event("load", result.body.length, result.body.length);
           if (alive()) event("loadend", result.body.length, result.body.length);
         };
@@ -526,11 +427,10 @@
           event("timeout"); if (this._cacheGeneration === generation + 1) event("loadend");
         }, this.timeout);
         event("loadstart");
-        if (!alive()) {plan?.release();return;}
+        if (!alive()) return;
         Promise.resolve().then(() => {
           if (!alive() || req.epoch !== epoch || signal.aborted) throw new DOMException("已取消", "AbortError");
-          if (!plan) return loadRange(req.url, rangeHeader, signal);
-          return fillPlan(plan, loadRange, signal);
+          return loadRange(req.url, rangeHeader, signal);
         }).then(result => deliver(result, false), () => {
           if (!alive()) return;
           clearTimeout(this._networkTimer);
@@ -538,7 +438,7 @@
           this._cacheReply = null; this._cachePending = false; this._skipNativeLoadstart = true;
           if (this.timeout > 0) super.timeout = Math.max(1, this.timeout - (performance.now() - sentAt));
           super.send(body);
-        }).finally(()=>plan?.release());
+        });
       }
       abort() {
         this._networkController?.abort(); clearTimeout(this._networkTimer);
@@ -575,12 +475,12 @@
   }
   window.__biliBufferCache = {
     put, match, timeRanges, install, stats,
-    /** 单次部分命中允许重组的最大字节数；超过则交还整段原请求。 */
-    maxReassembly: MAX_REASSEMBLY,
+    /** @returns {number} 驻留修订号：任何写入、回收、索引解析或清空都会递增。 */
+    revision: () => revision,
     /** @param {string} url @returns {number[][]} 驻留字节区间（半开区间），用于调度缺口。 */
     ranges(url) {
       const result = [];
-      for (const block of [...(resources.get(url)?.blocks || [])].sort((a, b) => a.start - b.start)) {
+      for (const block of resources.get(url)?.blocks || []) {
         const end = block.start + block.bytes.length, previous = result.at(-1);
         if (previous && block.start <= previous[1]) previous[1] = Math.max(previous[1], end);
         else result.push([block.start, end]);
@@ -611,7 +511,7 @@
     clearRetention() { retention.clear(); },
     /** @param {number} bytes @returns {void} 设置全页缓存上限。 */
     setLimit(bytes) { if (safe(bytes)) { limit = bytes; trim(); } },
-    /** @returns {void} 导航时取消缺口、清理旧正文与保留提示。 */
-    clear() { epoch++; for(const controller of partialControllers)controller.abort(new DOMException("缓存已清理", "AbortError")); resources.clear(); retention.clear(); stats.bytes = 0; }
+    /** @returns {void} 导航或关闭时清理旧正文与保留提示；epoch 递增挡住迟到的旧请求。 */
+    clear() { epoch++; revision++; resources.clear(); retention.clear(); stats.bytes = 0; }
   };
 })();

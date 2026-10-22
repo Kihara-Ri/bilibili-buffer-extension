@@ -1,309 +1,372 @@
 (() => {
   'use strict';
+  // 在线播放的分片下载引擎（MAIN world）。
+  //
+  // 一个「分片」= 一次真实的 HTTP Range 请求，正文按 Content-Range 与长度完整校验后才交付。
+  // 播放器的急需范围与后台预热共用同一张在途分片表：同一 URL 的在途分片互不重叠，
+  // 急需请求碰到已在途的后台分片就直接等待并复用它，而不是取消后重下。
+  //
+  // 并发只在页面内用信号量约束，不再向 Service Worker 申请跨标签租约：
+  // 租约要求每个分片都经 页面→隔离桥→SW→storage.session 串行往返两次，
+  // 海外高延迟下协调链路本身就成了瓶颈；SW 休眠时 2 秒超时还会被误记成 CDN 节点故障。
   const MiB = 1024 * 1024;
-  const abortError = () => new DOMException('播放请求已取消', 'AbortError');
-  /** 按主机与范围量级比较有效吞吐；三个样本确认一次试探，避免一次抖动追涨杀跌。
-   * @returns {{choose: Function, record: Function, snapshot: Function, reset: Function}}
-   */
-  function createAdaptiveBudget() {
-    const states=new Map();let sequence=0;
-    const median=values=>[...values].sort((a,b)=>a-b)[Math.floor(values.length/2)];
-    return {
-      choose(url,bytes,ceiling,sizeBudget) {
-        const host=new URL(url).hostname, cap=Math.max(1,Math.min(ceiling,sizeBudget));
-        const key=host+'|'+Math.ceil(Math.log2(Math.max(1,bytes)));
-        let state=states.get(key);
-        if(!state || state.cap!==cap){state={host,cap,workers:cap,phase:'baseline',samples:[],epoch:++sequence,reference:null};states.set(key,state);}
-        while(states.size>32)states.delete(states.keys().next().value);
-        return {key,epoch:state.epoch,workers:state.workers};
-      },
-      record(ticket,{bytes,ms,rescues=0}) {
-        const state=states.get(ticket.key);
-        // 极短请求主要测到调度噪声，救援样本混入额外节点；二者不用于判定并发收益。
-        if(!state || state.epoch!==ticket.epoch || bytes<512*1024 || !Number.isFinite(ms) || ms<200 || rescues) return;
-        state.samples.push(bytes*1000/ms);
-        const needed=state.phase==='hold'?6:3;
-        if(state.samples.length<needed)return;
-        const rate=median(state.samples);state.samples=[];state.epoch=++sequence;
-        if(state.phase==='baseline' || state.phase==='hold'){
-          state.reference={workers:state.workers,rate};
-          if(state.workers<state.cap && state.phase==='hold'){
-            state.workers=Math.min(state.cap,state.workers*2);state.phase='probe-up';
-          }else if(state.workers>1){state.workers=Math.max(1,Math.floor(state.workers/2));state.phase='probe-down';}
-          else state.phase='hold';
-        }else{
-          const worthwhile=state.phase==='probe-down' ? rate>=state.reference.rate*.9 : rate>=state.reference.rate*1.1;
-          if(!worthwhile)state.workers=state.reference.workers;
-          state.phase='hold';
-        }
-      },
-      snapshot(){return [...states.values()].map(({host,workers,phase})=>({host,workers,phase}));},
-      reset(){states.clear();sequence++;}
-    };
+  const MAX_RANGE = 16 * MiB;
+  // 后台预热分片：海外节点首字节常在 0.5–2 秒，分片太小会让首字节开销占满时间；
+  // 太大则单个慢分片拖住整段前方窗口。512 KiB 在两者之间取平衡。
+  const BACKGROUND_PIECE = 512 * 1024;
+  // 急需范围拆成约 16 片并行以缩短播放器等待，单片不小于 64 KiB、不大于后台分片。
+  const URGENT_SPLIT = 16, MIN_PIECE = 64 * 1024;
+  const HOSTS = /(^|\.)(bilivideo\.(com|cn)|hdslb\.com|akamaized\.net)$/i;
+  const abortError = (message = '播放请求已取消') => new DOMException(message, 'AbortError');
+
+  /** @param {string} value @returns {string|null} 仅接受现有 host 权限内、不带凭据的 HTTPS 媒体地址。 */
+  function mediaUrl(value) {
+    try {
+      const u = new URL(value);
+      return u.protocol === 'https:' && HOSTS.test(u.hostname) && /\.(m4s|mp4)$/i.test(u.pathname) && !u.username && !u.password ? u.href : null;
+    } catch { return null; }
   }
 
-  /** 在线请求与预热共享的分块下载器；签名 URL 只留在内存，公开状态只有主机名。
-   * @param {{fetch: Function, maxConcurrency?: number, cdnMode?: string, hedgeMs?: number, timeoutMs?: number, firstByteMs?: number, stallMs?: number}} options
-   * @returns {object} register/download/tune/reset/snapshot 配合页面世代使用。
+  /** 把 [start,end) 按 size 切成连续片段。 @returns {number[][]} */
+  function split(start, end, size) {
+    const result = [];
+    for (let from = start; from < end; from += size) result.push([from, Math.min(end, from + size)]);
+    return result;
+  }
+
+  /**
+   * @param {{fetch: Function, onPiece?: (url: string, start: number, bytes: Uint8Array, total: number, contentType: string) => void,
+   *   onPieceError?: (url: string, urgent: boolean) => void,
+   *   maxSlots?: number, backgroundSlots?: number, hedgeMs?: number, firstByteMs?: number, stallMs?: number}} options
+   * @returns {object} register/get/prefetch/… 见文件末尾的返回值。
    */
-  function createNetwork({ fetch: fetcher, maxConcurrency = 32, cdnMode = 'original', hedgeMs = 700, timeoutMs = 10000, firstByteMs = 3500, stallMs = 2500 } = {}) {
-    const groups = new Map(), totals = new Map(), roles = new Map(), health = new Map();
-    const adaptive = createAdaptiveBudget();
-    let downloadSerial = 0, budgetWaits = 0, budgetPending = 0;
-    const pending = [], running = new Set(), jobs = new Set();
-    let ceiling = Math.max(1, Math.min(32, Math.floor(maxConcurrency))), limit = Math.min(8, ceiling), mode = cdnMode;
-    let generation = 0, receivedBytes = 0, rescues = 0, lastHost = '', lastTune = -Infinity, requestSequence = 0, sampleAt = performance.now(), sampleBytes = 0, speed = 0;
-    let accelerated = 0, acceleratedBytes = 0, nativeFallbacks = 0;
-    const MEMORY_LIMIT=64*MiB,memoryQueue=[];let memoryBytes=0,memoryPeak=0;
-    function drainMemory(){
-      let index;
-      while((index=memoryQueue.findIndex(job=>memoryBytes+job.bytes<=MEMORY_LIMIT))>=0){
-        const job=memoryQueue.splice(index,1)[0];job.signal.removeEventListener('abort',job.cancel);
-        if(job.signal.aborted){job.reject(job.signal.reason);continue;}
-        memoryBytes+=job.bytes;memoryPeak=Math.max(memoryPeak,memoryBytes);let released=false;
-        job.resolve(()=>{if(released)return;released=true;memoryBytes-=job.bytes;drainMemory();});
-      }
-    }
-    // 在创建正文前预留整段拼接的双份空间与救援副本；等待者取消/导航必须可唤醒。
-    function reserveMemory(bytes,signal,priority){
-      if(signal.aborted)return Promise.reject(signal.reason);
-      return new Promise((resolve,reject)=>{
-        const job={bytes,signal,priority,resolve,reject,cancel:null};
-        job.cancel=()=>{const i=memoryQueue.indexOf(job);if(i>=0)memoryQueue.splice(i,1);signal.removeEventListener('abort',job.cancel);reject(signal.reason);drainMemory();};
-        signal.addEventListener('abort',job.cancel,{once:true});memoryQueue.push(job);memoryQueue.sort((a,b)=>b.priority-a.priority);drainMemory();
-      });
-    }
-    const floor = () => Math.min(8, ceiling);
+  function createNetwork({ fetch: fetcher, onPiece = () => {}, onPieceError = () => {}, maxSlots = 32, backgroundSlots = 12, hedgeMs = 800, firstByteMs = 8000, stallMs = 4000 } = {}) {
+    const groups = new Map(), roles = new Map(), totals = new Map(), health = new Map();
+    /** @type {Map<string, object[]>} url → 在途分片（按起点有序、互不重叠） */
+    const inflight = new Map();
+    const waiting = [];
+    let running = 0, runningBackground = 0, generation = 0, sequence = 0;
+    const freshCounters = () => ({ receivedBytes: 0, hedgeWins: 0, urgentRanges: 0, urgentBytes: 0, backgroundBytes: 0, backgroundErrors: 0, fallbacks: 0, host: '' });
+    let counters = freshCounters();
+    let speed = 0, sampleAt = performance.now(), sampleBytes = 0;
+
+    // ---- 槽位：急需尝试可用满 maxSlots；后台尝试另受 backgroundSlots 约束，给播放器请求留余量。
     function drain() {
-      while (running.size < limit) {
-        // 预热最多占一半连接，急需的音频/媒体和救援不受此子限额限制。
-        const background = [...running].filter(t => t.priority <= 0).length;
-        const index = pending.findIndex(j => j.priority > 0 || background < Math.max(1, Math.floor(limit / 2)));
-        if (index < 0) break;
-        const job = pending.splice(index, 1)[0];
-        job.signal.removeEventListener('abort', job.cancel);
-        if (job.signal.aborted) { job.reject(job.signal.reason); continue; }
-        const token = { priority: job.priority };
-        running.add(token);
-        job.resolve(() => { running.delete(token); drain(); });
+      waiting.sort((a, b) => b.piece.urgent - a.piece.urgent || a.piece.order - b.piece.order || a.seq - b.seq);
+      for (let i = 0; i < waiting.length && running < maxSlots;) {
+        const entry = waiting[i];
+        if (!entry.piece.urgent && runningBackground >= backgroundSlots) { i++; continue; }
+        waiting.splice(i, 1);
+        entry.signal.removeEventListener('abort', entry.cancel);
+        const background = !entry.piece.urgent;
+        running++; if (background) runningBackground++;
+        let released = false;
+        entry.resolve(() => {
+          if (released) return; released = true;
+          running--; if (background) runningBackground--;
+          drain();
+        });
       }
     }
-    function acquire(signal, priority) {
+    function acquire(piece, signal) {
       if (signal.aborted) return Promise.reject(signal.reason);
       return new Promise((resolve, reject) => {
-        const job = { signal, priority, sequence: requestSequence++, resolve, reject };
-        job.cancel = () => { const index = pending.indexOf(job); if (index >= 0) pending.splice(index, 1); signal.removeEventListener('abort', job.cancel); reject(signal.reason); };
-        signal.addEventListener('abort', job.cancel, { once: true });
-        pending.push(job); pending.sort((a,b) => b.priority - a.priority || a.sequence - b.sequence); drain();
+        const entry = { piece, signal, resolve, seq: sequence++ };
+        entry.cancel = () => { const i = waiting.indexOf(entry); if (i >= 0) waiting.splice(i, 1); reject(signal.reason); };
+        signal.addEventListener('abort', entry.cancel, { once: true });
+        waiting.push(entry); drain();
       });
     }
+
+    // ---- 节点健康：成功更新首字节/吞吐的指数平均；失败按地址指数退避隔离，不影响同组其他地址。
+    function candidates(url, round) {
+      const all = groups.get(url) || [url], now = performance.now();
+      const healthy = all.filter(u => (health.get(u)?.until || 0) <= now);
+      const pool = (healthy.length ? healthy : all).slice();
+      // 已测量的地址按「首字节 + 传 256 KiB 的时间」排在前；未测量的按清单顺序（主地址在前）排在后，
+      // 由对冲副本与失败换节点自然探索到。
+      const score = u => { const h = health.get(u); return h?.bps ? h.ttfb + 262144000 / h.bps : Infinity; };
+      pool.sort((a, b) => score(a) - score(b) || all.indexOf(a) - all.indexOf(b));
+      const shift = round % pool.length;
+      return [...pool.slice(shift), ...pool.slice(0, shift)];
+    }
+    // 对冲阈值随节点常态首字节伸缩：常态 1 秒首字节的冷节点不该每片都被判慢。
+    const hedgeDelay = url => Math.min(3000, Math.max(hedgeMs, 2 * (health.get(url)?.ttfb || 0)));
+
+    /** 单个 HTTP 尝试：持有槽位直到正文读完或失败。 */
+    async function attempt(piece, url, signal, progress) {
+      const release = await acquire(piece, signal);
+      // 槽位授予与 await 恢复之间可能已被取消；此时 abort 事件已错过，必须立即归还槽位。
+      if (signal.aborted) { release(); throw signal.reason; }
+      const epoch = generation;
+      const child = new AbortController();
+      const cancel = () => child.abort(signal.reason);
+      signal.addEventListener('abort', cancel, { once: true });
+      let timer, reader;
+      const arm = (ms) => { clearTimeout(timer); timer = setTimeout(() => child.abort(new DOMException('媒体节点超时', 'TimeoutError')), ms); };
+      const began = performance.now();
+      progress.started = true; progress.at = began;
+      arm(firstByteMs);
+      try {
+        const response = await fetcher(url, { headers: { Range: `bytes=${piece.start}-${piece.end - 1}` }, credentials: 'omit', cache: 'no-store', signal: child.signal, priority: piece.urgent ? 'high' : 'low' });
+        const ttfb = performance.now() - began;
+        const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') || '');
+        const total = Number(match?.[3]), known = piece.total || totals.get(piece.url) || 0;
+        if (response.status !== 206 || !match || Number(match[1]) !== piece.start || Number(match[2]) !== Math.min(piece.end, total) - 1 || (known && total !== known)) {
+          await response.body?.cancel().catch(() => {});
+          throw Object.assign(new Error('媒体节点范围校验失败'), { status: response.status });
+        }
+        const bytes = new Uint8Array(Number(match[2]) - piece.start + 1);
+        reader = response.body.getReader();
+        // 中止时主动取消读取：挂起的 read() 不一定随 fetch 的 signal 结束，否则槽位会被永久占住。
+        child.signal.addEventListener('abort', () => void reader.cancel(child.signal.reason).catch(() => {}), { once: true });
+        let read = 0;
+        arm(stallMs);
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (child.signal.aborted) throw child.signal.reason;
+          if (done) break;
+          if (read + value.byteLength > bytes.length) throw new Error('媒体正文超出请求范围');
+          bytes.set(value, read); read += value.byteLength;
+          progress.at = performance.now(); arm(stallMs);
+          if (epoch === generation) counters.receivedBytes += value.byteLength;
+        }
+        if (read !== bytes.length) throw new Error('媒体正文提前结束');
+        const bps = read * 1000 / Math.max(1, performance.now() - began - ttfb), old = health.get(url);
+        health.set(url, { until: 0, failures: 0, ttfb: old?.ttfb ? old.ttfb * .7 + ttfb * .3 : ttfb, bps: old?.bps ? old.bps * .7 + bps * .3 : bps });
+        totals.set(piece.url, total);
+        counters.host = new URL(url).hostname;
+        return { bytes, total, contentType: response.headers.get('content-type') || 'application/octet-stream' };
+      } catch (error) {
+        // 只有节点自身的失败才计入退避；被取消（副本胜出、导航、播放器放弃）不算节点故障。
+        if (!child.signal.aborted || child.signal.reason?.name === 'TimeoutError') {
+          if (epoch === generation) {
+            const old = health.get(url), failures = (old?.failures || 0) + 1;
+            // 403 是该签名地址被拒，按地址隔离更久；其余故障 1→16 秒指数退避。
+            health.set(url, { ...old, failures, until: performance.now() + (error.status === 403 ? 60000 : Math.min(16000, 1000 * 2 ** (failures - 1))) });
+          }
+        }
+        throw error;
+      } finally {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', cancel);
+        if (reader) void reader.cancel().catch(() => {});
+        release();
+      }
+    }
+
+    /** 一轮对冲：先用最优地址；首字节或正文停滞超过阈值时在下一个地址并行发副本，先完成者胜。
+     * 原请求不会因对冲被取消——它可能马上就要出字节了。 */
+    function race(piece, round) {
+      const urls = candidates(piece.url, round), signal = piece.controller.signal;
+      return new Promise((resolve, reject) => {
+        const tries = []; let settled = false, failed = 0, lastError, timer;
+        const finish = (fn, value) => {
+          if (settled) return; settled = true; clearTimeout(timer);
+          signal.removeEventListener('abort', onAbort);
+          for (const t of tries) t.controller.abort(abortError('已有副本胜出'));
+          fn(value);
+        };
+        const onAbort = () => finish(reject, signal.reason);
+        const launch = () => {
+          const url = urls[tries.length % urls.length];
+          const t = { url, controller: new AbortController(), progress: { started: false, at: 0 } };
+          tries.push(t);
+          // 分片取消经 onAbort → finish 统一中止全部尝试，尝试只需监听自己的控制器。
+          attempt(piece, url, t.controller.signal, t.progress).then(result => {
+            if (tries.indexOf(t) > 0) counters.hedgeWins++;
+            finish(resolve, result);
+          }, error => {
+            failed++; lastError = error;
+            if (settled) return;
+            // 还有未试的地址就立刻换下一个；全部失败才结束本轮。
+            if (tries.length < urls.length) launch();
+            else if (failed === tries.length) finish(reject, lastError);
+          });
+        };
+        const watch = () => {
+          if (settled) return;
+          const first = tries[0];
+          // 每轮最多一个对冲副本；尝试还在排队等槽位时不对冲（此时多发一份只会更挤）。
+          if (tries.length === 1 && !failed && first.progress.started && performance.now() - first.progress.at >= hedgeDelay(first.url)) launch();
+          timer = setTimeout(watch, 200);
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) { onAbort(); return; }
+        launch(); timer = setTimeout(watch, 200);
+      });
+    }
+
+    async function runPiece(piece) {
+      let lastError;
+      for (let round = 0; round < 3; round++) {
+        try { return await race(piece, round); } catch (error) {
+          lastError = error;
+          if (piece.controller.signal.aborted) throw piece.controller.signal.reason;
+          await new Promise(resolve => setTimeout(resolve, 250 * 2 ** round));
+        }
+      }
+      throw lastError;
+    }
+
+    function startPiece(url, start, end, { urgent, keep, order = 0, total = 0 }) {
+      const piece = { url, start, end, urgent, keep, order, total, users: 0, controller: new AbortController(), epoch: generation };
+      const list = inflight.get(url) || [];
+      list.push(piece); list.sort((a, b) => a.start - b.start); inflight.set(url, list);
+      piece.promise = runPiece(piece).then(result => {
+        if (piece.epoch !== generation) throw abortError('页面已切换');
+        // 分片落地即写入页面缓存：哪怕同批其他分片失败，已下好的字节也不浪费。
+        onPiece(url, start, result.bytes, result.total, result.contentType);
+        if (!piece.urgent) counters.backgroundBytes += result.bytes.length;
+        return result;
+      }, error => {
+        if (!piece.controller.signal.aborted && piece.epoch === generation) {
+          if (!piece.urgent) counters.backgroundErrors++;
+          onPieceError(url, piece.urgent);
+        }
+        throw error;
+      }).finally(() => drop(piece));
+      piece.promise.catch(() => {});
+      return piece;
+    }
+
+    // 取消时同步移出在途表：同一轮规划里就能为这段重新排分片，也不会有新请求挂到已取消的分片上。
+    function drop(piece) {
+      const list = inflight.get(piece.url);
+      const index = list?.indexOf(piece) ?? -1;
+      if (index >= 0) list.splice(index, 1);
+      if (list && !list.length) inflight.delete(piece.url);
+    }
+    function cancel(piece, reason) {
+      drop(piece);
+      piece.controller.abort(reason);
+    }
+
+    /** 按顺序遍历 [start,end)：在途分片原样返回，缺口按 size 新建分片。 */
+    function cover(url, start, end, size, options) {
+      const result = [];
+      let cursor = start;
+      for (const piece of [...(inflight.get(url) || [])]) {
+        if (piece.end <= cursor) continue;
+        if (piece.start >= end) break;
+        for (const [a, b] of split(cursor, Math.min(piece.start, end), size)) result.push(startPiece(url, a, b, options));
+        result.push(piece);
+        cursor = Math.max(cursor, piece.end);
+      }
+      for (const [a, b] of split(cursor, end, size)) result.push(startPiece(url, a, b, options));
+      return result;
+    }
+
+    /**
+     * 取 [start,end) 的完整字节，播放器请求专用（急需优先级）。
+     * @param {string} url @param {number} start @param {number} end
+     * @param {{signal: AbortSignal, total?: number}} options
+     * @returns {Promise<{bytes: Uint8Array, total: number, contentType: string}>}
+     */
+    async function get(url, start, end, { signal, total = 0 }) {
+      if (!mediaUrl(url) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start || end - start > MAX_RANGE) throw new Error('不支持的媒体范围');
+      if (signal.aborted) throw signal.reason;
+      const size = Math.min(BACKGROUND_PIECE, Math.max(MIN_PIECE, Math.ceil((end - start) / URGENT_SPLIT / MIN_PIECE) * MIN_PIECE));
+      const pieces = cover(url, start, end, size, { urgent: true, keep: false, total });
+      for (const piece of pieces) {
+        piece.users++;
+        // 播放器在等的后台分片升为急需：排队中的尝试立刻获得优先权。
+        if (!piece.urgent) { piece.urgent = true; drain(); }
+      }
+      let leave;
+      const left = new Promise((_, reject) => {
+        leave = () => reject(signal.reason || abortError());
+        signal.addEventListener('abort', leave, { once: true });
+      });
+      counters.urgentRanges++;
+      try {
+        const results = await Promise.race([Promise.all(pieces.map(p => p.promise)), left]);
+        const bytes = new Uint8Array(end - start);
+        for (let i = 0; i < pieces.length; i++) {
+          const piece = pieces[i], body = results[i].bytes;
+          const from = Math.max(start, piece.start), to = Math.min(end, piece.start + body.length);
+          if (to - from !== Math.min(end, piece.end) - from) throw new Error('媒体分片长度不一致');
+          bytes.set(body.subarray(from - piece.start, to - piece.start), from - start);
+        }
+        counters.urgentBytes += bytes.length;
+        return { bytes, total: results[0].total, contentType: results[0].contentType };
+      } finally {
+        signal.removeEventListener('abort', leave);
+        for (const piece of pieces) {
+          // 播放器放弃后，没人等的急需分片立即取消；后台分片继续把前方窗口填满。
+          if (--piece.users === 0 && !piece.keep) cancel(piece, abortError());
+        }
+      }
+    }
+
+    /** 为前方窗口排后台分片（不等待结果）；order 越小越先下载，通常是距播放点的秒数。
+     * @param {string} url @param {number} start @param {number} end @param {{order?: number, total?: number}} [options] @returns {number} 新建分片数 */
+    function prefetch(url, start, end, { order = 0, total = 0 } = {}) {
+      if (!mediaUrl(url) || !(end > start)) return 0;
+      const before = inflight.get(url)?.length || 0;
+      cover(url, start, end, BACKGROUND_PIECE, { urgent: false, keep: true, order, total });
+      return (inflight.get(url)?.length || 0) - before;
+    }
+
+    /** 拖动或换清晰度后，旧窗口的后台分片已无意义：取消没有播放器在等、且不再被需要的分片，让出槽位。
+     * @param {(url: string, start: number, end: number) => boolean} isWanted */
+    function pruneBackground(isWanted) {
+      for (const list of inflight.values()) for (const piece of [...list]) {
+        if (piece.keep && !piece.users && !isWanted(piece.url, piece.start, piece.end)) cancel(piece, abortError('播放位置已改变'));
+      }
+    }
+
+    /** @returns {number} 尚未完成的后台分片数，预热规划据此控制排队深度。 */
+    function backgroundPending() {
+      let count = 0;
+      for (const list of inflight.values()) for (const piece of list) if (!piece.urgent) count++;
+      return count;
+    }
+
     function register(payload) {
       const data = payload?.data || payload?.result || payload, dash = data?.dash;
-      const entries = [...(dash?.video || []).map(t => [t,'video']), ...(dash?.audio || []).map(t => [t,'audio']),
-        ...(dash?.dolby?.audio || []).map(t => [t,'audio']), ...(dash?.flac?.audio ? [[dash.flac.audio,'audio']] : [])];
+      const entries = [...(dash?.video || []).map(t => [t, 'video']), ...(dash?.audio || []).map(t => [t, 'audio']),
+        ...(dash?.dolby?.audio || []).map(t => [t, 'audio']), ...(dash?.flac?.audio ? [[dash.flac.audio, 'audio']] : [])];
       for (const [track, role] of entries) {
         const backups = track.backupUrl || track.backup_url || track.backup_url_list || [];
-        const urls = [...new Set([track.baseUrl || track.base_url, ...(Array.isArray(backups) ? backups : [])].map(globalThis.BiliPlaybackRoutes.mediaUrl).filter(Boolean))];
+        const urls = [...new Set([track.baseUrl || track.base_url, ...(Array.isArray(backups) ? backups : [])].map(mediaUrl).filter(Boolean))];
         for (const url of urls) { groups.set(url, urls); roles.set(url, role); }
       }
       while (groups.size > 256) { const key = groups.keys().next().value; groups.delete(key); roles.delete(key); totals.delete(key); }
     }
-    function candidates(url, offset = 0) {
-      const all = globalThis.BiliPlaybackRoutes.candidates(groups.get(url) || [url], mode);
-      const now = performance.now();
-      const available = all.filter(u => (health.get(u)?.until || 0) <= now);
-      const pool = available.length ? available : all;
-      // 首轮分块分散到不同节点，避免所有块都在同一个冷缓存节点排队。
-      const rotation = pool.length ? offset % Math.min(3, pool.length) : 0;
-      const rotated = [...pool.slice(rotation), ...pool.slice(0, rotation)];
-      return rotated.sort((a,b) => {
-        const score = u => { const h = health.get(u); return h?.bps ? h.ttfb + 262144000 / h.bps : 1500; };
-        return score(a) - score(b);
-      });
-    }
-    async function attempt(url, start, end, total, signal, priority, epoch, progress) {
-      const release = await acquire(signal, priority);
-      const child = new AbortController();let began=performance.now(),budgetStarted=0,budgetWaiting=false;
-      const cancel = () => child.abort(signal.reason);
-      signal.addEventListener('abort', cancel, { once: true });
-      if (signal.aborted) cancel();
-      let reader, firstTimer, bodyTimer, bytesRead = 0;
-      const timeout = () => child.abort(new DOMException('媒体节点超时', 'TimeoutError'));
-      const totalTimer = setTimeout(timeout, timeoutMs);
-      firstTimer = setTimeout(timeout, firstByteMs);
-      progress.started = true; progress.lastByte = began;
-      try {
-        if (child.signal.aborted) throw child.signal.reason;
-        const response = await fetcher(url, { headers: { Range: `bytes=${start}-${end - 1}` }, credentials: 'omit', cache: 'no-store', signal: child.signal, priority: priority > 0 ? 'high' : 'low', onBudgetWait(waiting){
-          if(waiting){budgetStarted=performance.now();budgetWaiting=true;budgetPending++;progress.started=false;clearTimeout(firstTimer);}
-          else {if(budgetWaiting){budgetWaiting=false;budgetPending--;}if(performance.now()-budgetStarted>50)budgetWaits++;began=performance.now();progress.started=true;progress.lastByte=began;firstTimer=setTimeout(timeout,firstByteMs);}
-        } });
-        clearTimeout(firstTimer);
-        const ttfb = performance.now() - began;
-        const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') || '');
-        const size = Number(match?.[3]), actualEnd = Number(match?.[2]);
-        if (response.status !== 206 || !match || !Number.isSafeInteger(size) || Number(match[1]) !== start || actualEnd !== Math.min(end, size) - 1 || size <= actualEnd || (total > 0 && size !== total)) {
-          await response.body?.cancel(); throw Object.assign(new Error('媒体节点范围校验失败'), {status: response.status});
-        }
-        const bytes = new Uint8Array(actualEnd - start + 1);
-        reader = response.body.getReader();
-        const cancelReader = () => { void reader.cancel(child.signal.reason).catch(() => {}); };
-        child.signal.addEventListener('abort', cancelReader, {once:true});
-        const arm = () => { clearTimeout(bodyTimer); bodyTimer = setTimeout(timeout, stallMs); };
-        arm();
-        try {
-          if (child.signal.aborted) throw child.signal.reason;
-          while (true) {
-            const {done, value} = await reader.read();
-            if (child.signal.aborted) throw child.signal.reason;
-            if (done) break;
-            arm(); progress.lastByte = performance.now();
-            if (epoch === generation) receivedBytes += value.byteLength;
-            if (bytesRead + value.byteLength > bytes.length) throw new Error('媒体正文超出请求范围');
-            bytes.set(value, bytesRead); bytesRead += value.byteLength;
-          }
-        } finally { child.signal.removeEventListener('abort', cancelReader); }
-        if (bytesRead !== bytes.length) throw new Error('媒体正文提前结束');
-        if (epoch !== generation || signal.aborted) throw abortError();
-        const bps = bytesRead * 1000 / Math.max(1, performance.now() - began), old = health.get(url);
-        health.set(url, {until:0, failures:0, bps:old?.bps ? old.bps*.6+bps*.4 : bps, ttfb});
-        lastHost = new URL(url).hostname;
-        return {bytes, total:size, contentType:response.headers.get('content-type') || 'application/octet-stream'};
-      } catch (error) {
-        if (!signal.aborted && epoch === generation) {
-          const old = health.get(url), failures = (old?.failures || 0) + 1;
-          // 403 是这个签名地址被拒绝，不能据此永久封禁整个节点或削减所有轨道并发。
-          health.set(url, { ...old, failures, until:performance.now() + (error.status === 403 ? 60000 : Math.min(30000, 1000 * 2 ** Math.min(failures,4))) });
-        }
-        throw error;
-      } finally {
-        clearTimeout(firstTimer); clearTimeout(bodyTimer); clearTimeout(totalTimer);
-        signal.removeEventListener('abort', cancel);
-        await reader?.cancel().catch(() => {});
-        if(budgetWaiting){budgetWaiting=false;budgetPending--;} release();
-      }
-    }
-    async function piece(url, start, end, total, signal, priority, epoch, offset) {
-      let lastError;
-      // 只重试失败子块，已完成子块不重新下载；两轮均受整个媒体请求的截止时间约束。
-      for (let round = 0; round < 2; round++) {
-        if (signal.aborted) throw signal.reason;
-        const urls = candidates(url, offset + round).slice(0, 10);
-        try {
-          return await new Promise((resolve,reject) => {
-            let next=0, live=0, settled=false, timer;
-            const children=[];
-            const stop=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);for(const c of children)c.controller.abort();};
-            const abort=()=>{if(settled)return;settled=true;stop();reject(signal.reason || abortError());};
-            const launch=()=>{
-              if(settled || next>=urls.length)return;
-              const index=next++, controller=new AbortController(), progress={started:false,lastByte:performance.now()};
-              children.push({controller,progress});live++;
-              attempt(urls[index],start,end,total,controller.signal,priority+(index && priority>0?10:0),epoch,progress).then(result=>{
-                if(settled)return;settled=true;
-                if(index>0 && epoch===generation)rescues++;
-                stop();resolve(result);
-              },error=>{
-                live--;lastError=error;if(settled)return;
-                if(next<urls.length)launch();else if(!live){settled=true;stop();reject(error);}
-              });
-            };
-            const rescue=()=>{
-              if(settled)return;
-              const slow=children.find(c=>!c.controller.signal.aborted && c.progress.started && performance.now()-c.progress.lastByte>=hedgeMs);
-              if(slow && live<2 && next<urls.length){
-                const saturated=running.size>=limit;launch();
-                if(saturated)slow.controller.abort();
-              }
-              timer=setTimeout(rescue,Math.max(50,hedgeMs));
-            };
-            signal.addEventListener('abort',abort,{once:true});
-            if(signal.aborted){abort();return;}
-            if(!urls.length){abort();return;}
-            launch();timer=setTimeout(rescue,Math.max(50,hedgeMs));
-          });
-        } catch(error) { lastError=error; if(signal.aborted)throw signal.reason; }
-      }
-      throw lastError;
-    }
-    /** 半开字节区间，单次最多 16 MiB；所有子块共享连接池与截止时间。
-     * @param {string} url @param {number} start @param {number} end @param {number} total
-     * @param {AbortSignal} signal @param {{priority?: number}} options @returns {Promise<object>}
-     */
-    async function download(url,start,end,total,signal,{priority=0}={}) {
-      if (!globalThis.BiliPlaybackRoutes.mediaUrl(url) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start<0 || end<=start || end-start>16*MiB) throw new Error('不支持的媒体范围');
-      const epoch=generation, controller=new AbortController(), cancel=()=>controller.abort(signal.reason);
-      signal.addEventListener('abort',cancel,{once:true});if(signal.aborted)cancel();jobs.add(controller);
-      const serial=++downloadSerial, exclusive=jobs.size===1;
-      const deadline=setTimeout(()=>controller.abort(new DOMException('媒体请求超时','TimeoutError')),25000);
-      let releaseMemory=()=>{};
-      try {
-        releaseMemory=await reserveMemory(2*(end-start)+ceiling*512*1024,controller.signal,priority);
-        if(controller.signal.aborted)throw controller.signal.reason;
-        let known=total || totals.get(url) || 0;
-        let head=null, cursor=start;
-        if(!known && end-start>256*1024){
-          head=await piece(url,start,Math.min(end,start+65536),0,controller.signal,priority+20,epoch,0);
-          known=head.total;cursor=start+head.bytes.length;
-        }
-        const target=known ? Math.min(end,known) : end;
-        const parts=[];
-        if(head)parts.push({start,result:head});
-        const ranges=[];
-        // 保留 64 KiB 小块以便局部重试，但子块数量不等于应同时开启的连接数。
-        // 后台维持 256 KiB，避免普通预热制造过多小请求。
-        const chunkSize = priority > 0 ? 64*1024 : 256*1024;
-        for(let from=cursor;from<target;from+=chunkSize)ranges.push([from,Math.min(target,from+chunkSize)]);
-        // 每个任务最多排入少量工作者，避免长视频请求把音频/后续请求淹没在队列里。
-        // 真实 Chrome 实测：2 MiB 用 8 路优于盲开 32，8 MiB 则受益于 32 路。
-        // 每 256 KiB 分配一个普通工作者；救援仍共享全局预算，用户较低上限优先。
-        const sizeBudget = priority > 0 ? Math.min(ceiling, Math.max(1, Math.ceil((target-start)/(256*1024)))) : ceiling;
-        const ticket=adaptive.choose(url,target-start,ceiling,sizeBudget);
-        const requestConcurrency = priority > 0 ? ticket.workers : sizeBudget;
-        const sampleStart=performance.now(), initialRescues=rescues, initialBudgetWaits=budgetWaits;
-        let next=0;
-        await Promise.all(Array.from({length:Math.min(ranges.length,requestConcurrency)},async()=>{
-          while(next<ranges.length){const index=next++, [from,to]=ranges[index];
-            const result=await piece(url,from,to,known,controller.signal,priority,epoch,index);
-            if(!known)known=result.total;
-            if(result.total!==known)throw new Error('不同节点返回的文件总长不一致');
-            parts.push({start:from,result});
-          }
-        }));
-        if(controller.signal.aborted || epoch!==generation)throw controller.signal.reason || abortError();
-        parts.sort((a,b)=>a.start-b.start);
-        const length=Math.min(end,known)-start, bytes=new Uint8Array(length);
-        let position=start;
-        for(const part of parts){if(part.start!==position)throw new Error('媒体分块存在缺口');bytes.set(part.result.bytes,position-start);position+=part.result.bytes.length;}
-        if(position!==start+length)throw new Error('媒体分块长度不一致');
-        if(priority>0 && exclusive && jobs.size===1 && serial===downloadSerial && requestConcurrency<=limit && budgetWaits===initialBudgetWaits) adaptive.record(ticket,{bytes:length,ms:performance.now()-sampleStart,rescues:rescues-initialRescues});
-        totals.set(url,known);
-        if(priority>0){accelerated++;acceleratedBytes+=length;}
-        return {bytes,total:known,contentType:parts[0].result.contentType};
-      } finally {clearTimeout(deadline);controller.abort();signal.removeEventListener('abort',cancel);jobs.delete(controller);releaseMemory();}
-    }
-    function tune({ahead,demand,rate=0,requiredRate=0,now=performance.now()}) {
-      // 真正可播放缓冲不足 3 秒时立即拉满，不能等低吞吐样本或下个慢周期。
-      if(demand && ahead<3){limit=ceiling;lastTune=now;drain();return;}
-      const starving=demand && (ahead<10 || (requiredRate>0 && rate<requiredRate*1.25));
-      if(now-lastTune<(starving?500:1500))return;lastTune=now;
-      if(starving)limit=Math.min(ceiling,Math.max(16,limit*2));
-      else if(demand && ahead<25)limit=Math.min(ceiling,limit+8);
-      else if(!demand || ahead>=45)limit=Math.max(floor(),limit-4);
-      drain();
-    }
+
     function snapshot() {
-      const now=performance.now(), elapsed=now-sampleAt;
-      if(elapsed>=500){const rate=(receivedBytes-sampleBytes)*1000/elapsed;speed=rate>0 || running.size ? speed*.6+rate*.4 : 0;sampleAt=now;sampleBytes=receivedBytes;}
-      return {active:Math.max(0,running.size-budgetPending),limit,speed:Math.round(speed),receivedBytes,rescues,host:lastHost,accelerated,acceleratedBytes,nativeFallbacks,queued:pending.length+budgetPending,memoryBytes,memoryPeak,memoryLimit:MEMORY_LIMIT,memoryQueued:memoryQueue.length,cdnMode:mode,blocked:[...health.values()].filter(h=>h.until>now).length};
+      const now = performance.now(), elapsed = now - sampleAt;
+      if (elapsed >= 500) {
+        const rate = (counters.receivedBytes - sampleBytes) * 1000 / elapsed;
+        speed = rate > 0 || running ? speed * .5 + rate * .5 : 0;
+        sampleAt = now; sampleBytes = counters.receivedBytes;
+      }
+      return {
+        active: running, limit: maxSlots, speed: Math.round(speed), receivedBytes: counters.receivedBytes,
+        rescues: counters.hedgeWins, host: counters.host, accelerated: counters.urgentRanges, acceleratedBytes: counters.urgentBytes,
+        nativeFallbacks: counters.fallbacks, prefetching: backgroundPending(), prefetchBytes: counters.backgroundBytes, prefetchErrors: counters.backgroundErrors,
+        queued: waiting.length, blocked: [...health.values()].filter(h => h.until > now).length
+      };
     }
+
     function reset() {
-      generation++;adaptive.reset();for(const job of jobs)job.abort(abortError());groups.clear();roles.clear();totals.clear();health.clear();
-      receivedBytes=0;sampleBytes=0;speed=0;rescues=0;lastHost='';lastTune=-Infinity;sampleAt=performance.now();limit=floor();accelerated=0;acceleratedBytes=0;nativeFallbacks=0;
+      generation++;
+      for (const list of inflight.values()) for (const piece of list) piece.controller.abort(abortError('页面已切换'));
+      inflight.clear(); groups.clear(); roles.clear(); totals.clear(); health.clear();
+      counters = freshCounters();
+      speed = 0; sampleBytes = 0; sampleAt = performance.now();
     }
-    return {register,download,tune,snapshot,reset,role:url=>roles.get(url),total:url=>totals.get(url)||0,
-      fallback(){nativeFallbacks++;}, setMode(value){mode=['mainland','auto','original'].includes(value)?value:'original';},
-      setMax(value){ceiling=Math.max(1,Math.min(32,Math.floor(value)||32));limit=Math.min(ceiling,Math.max(limit,floor()));drain();}};
+
+    return {
+      register, get, prefetch, pruneBackground, snapshot, reset,
+      role: url => roles.get(url),
+      total: url => totals.get(url) || 0,
+      /** @param {string} url @returns {number[][]} 在途分片区间（半开）。 */
+      inflightRanges: url => (inflight.get(url) || []).map(p => [p.start, p.end]),
+      backgroundPending,
+      fallback() { counters.fallbacks++; }
+    };
   }
-  globalThis.BiliPlaybackNetwork={createNetwork,createAdaptiveBudget};
+  globalThis.BiliPlaybackNetwork = { createNetwork, mediaUrl, BACKGROUND_PIECE };
 })();

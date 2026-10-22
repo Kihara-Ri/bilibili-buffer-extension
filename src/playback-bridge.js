@@ -6,15 +6,9 @@
   const DEFAULT_PREHEAT_COLOR = "#ff8a1f";
   const DEFAULTS = {
     mode: "always",
-    slowTtfbMs: 800,
-    leadSeconds: 45,
-    minWatchedSec: 0,
-    minBufferAheadSec: 0,
-    maxPrefetchMBPerTrack: 200,
-    maxConcurrency: 32,
-    cdnMode: "original",
-    networkPolicyVersion: 3,
     estimatorGuard: true,
+    progressColor: "#00a1d6",
+    showPreheatHighlight: true,
     preheatColor: DEFAULT_PREHEAT_COLOR
   };
   let config = { ...DEFAULTS };
@@ -31,16 +25,11 @@
     window.postMessage({ channel: CHANNEL, dir: "ext->page", type, payload }, "*");
   }
 
+  // 桥直读 storage：只转发已知的用户字段，历史存储里的旧网络策略字段不会传到页面。
   function normalizedConfig(input) {
-    const next = { ...DEFAULTS, ...(input || {}) };
+    const next = {};
+    for (const key of Object.keys(DEFAULTS)) next[key] = input && Object.hasOwn(input, key) ? input[key] : DEFAULTS[key];
     next.mode = ["off", "observe"].includes(next.mode) ? "off" : "always";
-    // 2.8.10：CDN 路线与并发上限不再可配置，钉死系统默认；桥直读 storage，
-    // 必须在这里挡掉历史存储里的用户选择，否则旧值会在页面侧继续生效。
-    next.maxConcurrency = 32;
-    next.cdnMode = "original";
-    next.networkPolicyVersion = 3;
-    next.minWatchedSec = 0;
-    next.minBufferAheadSec = 0;
     const color = String(next.preheatColor || "").trim().toLowerCase();
     next.preheatColor = /^#[0-9a-f]{6}$/.test(color) ? color : DEFAULT_PREHEAT_COLOR;
     return next;

@@ -16,10 +16,10 @@
 
 **播放提前加载（在线）**
 
-- 取得播放器首个媒体请求后立即预热前方约 45 秒的分段；播放器请求完整命中时直接用本机数据回应，缺口部分分块加速下载。
+- 取得播放器首个媒体请求后立即预热前方约 90 秒的分段：多个 Range 分片并行流水线下载，任一分片完成立即补位；播放器请求完整命中时直接用本机数据回应，缺口部分拆片并行补齐，并复用正在下载的分片。
 - 提前就绪的范围在进度条上单独着色，按 SIDX 真实时间索引映射（不是按字节比例估算）；颜色可自定义，也可关闭区分。
-- 页面内存缓存设 128 MiB 驻留上限与并发约束，控制额外流量；关闭开关即取消预热并清理缓存。
-- CDN 路线与并发由扩展按网络状况自动调度，无需手动调节。
+- 页面内存缓存设 128 MiB 驻留上限，前方窗口另按 96 MiB 封顶；关闭开关即取消预热并清理缓存。
+- 节点慢或卡住时在清单里的备用地址上对冲一份请求，先到先用；失败节点自动隔离退避，无需手动调节。
 
 **完整缓存（离线）**
 
@@ -63,4 +63,4 @@ npm run build      # 生成 dist/unpacked 与 dist/yingsao-<version>.zip（含�
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — 参考项目与许可声明
 - [store/](store/) — Chrome Web Store 提审资料
 
-当前版本 2.8.13。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。
+当前版本 2.9.0。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。

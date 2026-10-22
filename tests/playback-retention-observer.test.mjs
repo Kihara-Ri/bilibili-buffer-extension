@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-const routesSource = await readFile(new URL('../src/playback-routes.js', import.meta.url), 'utf8');
 const networkSource = await readFile(new URL('../src/playback-network.js', import.meta.url), 'utf8');
 const cacheSource = await readFile(new URL('../src/playback-cache.js', import.meta.url), 'utf8');
 const observerSource = await readFile(new URL('../src/playback-observer.js', import.meta.url), 'utf8');
@@ -86,7 +85,6 @@ function loadObserver({ realCache = false, currentTime = 0, duration = 100 } = {
       observe(target, options) { observedTargets.push({ target, options }); }
     }
   });
-  vm.runInContext(routesSource, context);
   vm.runInContext(networkSource, context);
   window.BiliPlaybackNetwork = context.BiliPlaybackNetwork;
   if (realCache) vm.runInContext(cacheSource, context);
@@ -140,7 +138,7 @@ test('观察器按当前播放位置刷新保留提示，并释放失活轨道',
 
   internals.renderPreheatProgress();
 
-  const expected = { active: true, position: 12, ahead: 45, rewind: 5, duration: 100, protectInit: true };
+  const expected = { active: true, position: 12, ahead: 90, rewind: 5, duration: 100, protectInit: true };
   assert.deepEqual(calls.retained.get(active.url), expected);
   assert.deepEqual(calls.retained.get(audio.url), expected);
   assert.equal(calls.retained.has(old.url), false);
@@ -187,13 +185,13 @@ test('切换分 P 时清空保留状态', () => {
   assert.ok(calls.cleared >= 1);
 });
 
-test('400ms 调度独立刷新保留提示', () => {
+test('500ms 调度独立刷新保留提示', () => {
   const { internals, calls, intervals, video } = loadObserver({ currentTime: 30, duration: 100 });
   internals.cfg.mode = 'always';
   const track = internals.trackFor('https://a.bilivideo.com/video.m4s');
   video.currentTime = 33;
 
-  const scheduler = intervals.find(item => item.milliseconds === 400);
+  const scheduler = intervals.find(item => item.milliseconds === 500);
   assert.ok(scheduler);
   scheduler.callback();
   assert.equal(calls.retained.get(track.url)?.position, 33);

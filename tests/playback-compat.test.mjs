@@ -249,7 +249,7 @@ test('缺少 MutationObserver 等能力时观察器仍能加载并保持原生�
   window.window = window;
   // 故意不提供 BiliPlaybackReuse / BiliPlaybackNetwork 与 MutationObserver：
   // 观察器必须只降级，而不是在注入时抛错导致整页脚本失效。
-  window.BiliPlaybackNetwork = { createNetwork: () => ({ register() {}, download: async () => { throw new Error('不应走网络'); }, tune() {}, snapshot: () => ({}), total: () => 0, role: () => null, fallback() {}, setMode() {}, setMax() {}, reset() {} }) };
+  window.BiliPlaybackNetwork = { createNetwork: () => ({ register() {}, get: async () => { throw new Error('不应走网络'); }, prefetch: () => 0, pruneBackground() {}, inflightRanges: () => [], backgroundPending: () => 0, snapshot: () => ({}), total: () => 0, role: () => null, fallback() {}, reset() {} }) };
   const context = vm.createContext({
     window, document, localStorage: new FakeStorage(), location: { href: 'https://www.bilibili.com/video/BV1test/' }, URL, Headers, Response, Request,
     ReadableStream, Uint8Array, DataView, ArrayBuffer, Blob, DOMException, AbortController, performance, queueMicrotask, setTimeout, clearTimeout,
@@ -266,10 +266,7 @@ test('缺少 MutationObserver 等能力时观察器仍能加载并保持原生�
 
 test('默认配置与权限保持既有值，新增模块不引入新权限', () => {
   assert.equal(ASSIST_DEFAULTS.mode, 'always');
-  assert.equal(ASSIST_DEFAULTS.maxConcurrency, 32);
-  assert.equal(ASSIST_DEFAULTS.cdnMode, 'original');
-  assert.equal(ASSIST_DEFAULTS.networkPolicyVersion, 3);
-  assert.deepEqual(sanitizeAssistConfig({}).maxConcurrency, 32);
+  assert.deepEqual(Object.keys(sanitizeAssistConfig({})).sort(), ['estimatorGuard', 'mode', 'preheatColor', 'progressColor', 'showPreheatHighlight']);
   assert.deepEqual(manifest.permissions, [
     'activeTab', 'alarms', 'cookies', 'declarativeNetRequestWithHostAccess', 'downloads', 'offscreen', 'storage', 'unlimitedStorage'
   ]);
@@ -285,10 +282,10 @@ test('默认配置与权限保持既有值，新增模块不引入新权限', ()
 
 test('取消与关闭模式不发起复用读取', async () => {
   const reader = await readFile(new URL('../src/playback-observer.js', import.meta.url), 'utf8');
-  // 结构化断言：复用分支必须位于 mode 校验与 in-flight 去重之后，且命中前不触发网络。
+  // 结构化断言：复用分支必须位于 mode 校验之后、网络拼装之前，命中时不触发网络。
   const gate = reader.indexOf('cfg.mode !== "always"');
   const branch = reader.indexOf('reuseClient.read(');
-  const network = reader.indexOf('const result = await network.download(');
+  const network = reader.indexOf('const pending = assembleRange(');
   assert.ok(gate > 0 && branch > gate && network > branch);
   assert.match(reader, /if \(reuseClient\) \{/);
   assert.match(reader, /if \(!reused\)|if \(reused\) \{/);

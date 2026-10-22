@@ -174,7 +174,7 @@ function loadObserver({ reuse, mediaFetch } = {}) {
   });
   // 真实页面里 globalThis 就是 window；沙箱里补一分别名即可。
   vm.runInContext('globalThis.BiliPlaybackReuse = window.BiliPlaybackReuse', context);
-  vm.runInContext('window.BiliPlaybackNetwork = { createNetwork: () => ({ register(){}, download: async () => { throw new Error("不应走网络"); }, tune(){}, snapshot: () => ({ receivedBytes: 0, blocked: 0, cdnMode: "original", active: 0, limit: 8, speed: 0, rescues: 0 }), total: () => 0, role: () => null, fallback(){}, setMode(){}, setMax(){}, reset(){} }) };', context);
+  vm.runInContext('window.BiliPlaybackNetwork = { createNetwork: () => ({ register(){}, get: async () => { throw new Error("不应走网络"); }, prefetch: () => 0, pruneBackground(){}, inflightRanges: () => [], backgroundPending: () => 0, snapshot: () => ({ receivedBytes: 0, blocked: 0, active: 0, limit: 32, speed: 0, rescues: 0 }), total: () => 0, role: () => null, fallback(){}, reset(){} }) };', context);
   vm.runInContext(observerSource, context, { filename: 'playback-observer.js' });
   return { internals: window.__biliBufferPlaybackAssistInternals, calls };
 }

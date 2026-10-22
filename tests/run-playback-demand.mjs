@@ -14,13 +14,13 @@ try {
   await r.fulfill({status:206,body:Buffer.alloc(+b-+a+1,7),headers:{'content-range':`bytes ${a}-${b}/${total}`,'access-control-allow-origin':'*','access-control-expose-headers':'Content-Range'}}).catch(()=>{});
  });
  await page.goto('https://www.bilibili.com/video/BVtest/');
- for(const s of ['playback-cache','playback-routes','playback-network','playback-observer'])await page.addScriptTag({path:fileURLToPath(new URL(`../src/${s}.js`,import.meta.url))});
+ for(const s of ['playback-cache','playback-network','playback-observer'])await page.addScriptTag({path:fileURLToPath(new URL(`../src/${s}.js`,import.meta.url))});
  const result=await page.evaluate(async({url,total})=>{
   const i=window.__biliBufferPlaybackAssistInternals;i.cfg.mode='always';
   const start=performance.now();const r=await fetch(url,{headers:{Range:`bytes=0-${total-1}`}});const b=new Uint8Array(await r.arrayBuffer());
   return {ms:performance.now()-start,bytes:b.length,valid:b.every(x=>x===7),stats:i.publicStats()};
  },{url,total});
- assert.equal(result.bytes,total);assert(result.valid);assert.equal(peak,12);assert(result.stats.acceleratedRequests>=1);
+ assert.equal(result.bytes,total);assert(result.valid);assert.equal(peak,16,'3 MiB 急需范围应拆成 16 片并行');assert(result.stats.acceleratedRequests>=1);
  // 独立适配器 fixture：覆盖待决网络请求的 XHR 取消、超时、重开与原生回退。
  await page.goto('https://www.bilibili.com/video/BVxhr/');
  await page.addScriptTag({path:fileURLToPath(new URL('../src/playback-cache.js',import.meta.url))});
