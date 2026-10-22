@@ -54,6 +54,9 @@ const sendSourceRange = (request) => chrome.runtime.sendMessage({ target: "backg
 import { isRecoverableDownloadError, makeDownloadRetryState } from "./download-retry.js";
 import { startDevReloadPolling } from "./dev-reload.js";
 
+// 原生 fetch 必须以 window 为 this 调用；作为 options.fetchImpl 传下去再以方法形式调用会抛
+// 「Illegal invocation」（2.8.13 的回归：离线缓存每次都在第一个请求就失败）。
+const networkFetch = (input, init) => fetch(input, init);
 const CHUNK_SIZE = 4 * 1024 * 1024;
 // 合并后的单文件缓存使用独立的分块序列。
 const MERGED_TRACK = "merged";
@@ -572,7 +575,7 @@ async function downloadProgressiveSource(video, existing, source, job) {
   let ranking;
   try {
     ranking = await rankRangeCandidates(source.urls, {
-      fetchImpl: fetch,
+      fetchImpl: networkFetch,
       start: resumeBytes,
       totalBytes: source.expectedBytes,
       signal: job.controller.signal
@@ -606,7 +609,7 @@ async function downloadProgressiveSource(video, existing, source, job) {
   coordinator.setRanking("media", ranking);
   try {
     const result = await downloadByteRanges({
-      fetchImpl: fetch,
+      fetchImpl: networkFetch,
       urls: ranking.urls,
       start: resumeBytes,
       totalBytes: ranking.totalBytes,
@@ -1061,7 +1064,7 @@ async function downloadTrackSource(video, existing, source, job) {
     try {
       const state = coordinator.getState(trackName);
       const ranking = await rankRangeCandidates(sourceTrack.urls, {
-        fetchImpl: fetch,
+        fetchImpl: networkFetch,
         start: state.resumeBytes,
         totalBytes: state.totalBytes,
         signal: localController.signal
@@ -1071,7 +1074,7 @@ async function downloadTrackSource(video, existing, source, job) {
         ? trackName === "video" ? DEFAULT_RANGE_CONCURRENCY : 1
         : DEFAULT_RANGE_CONCURRENCY;
       const result = await downloadByteRanges({
-      fetchImpl: fetch,
+      fetchImpl: networkFetch,
         urls: ranking.urls,
         start: state.resumeBytes,
         totalBytes: ranking.totalBytes,

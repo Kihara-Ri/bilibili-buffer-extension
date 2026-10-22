@@ -34,7 +34,10 @@ globalThis.chrome = {
 };
 
 const nativeFetch = globalThis.fetch;
-globalThis.fetch = async (url, init = {}) => {
+// 与原生 fetch 一样拒绝错误的 this：把 fetch 当作对象方法转交（options.fetchImpl(...)）
+// 在真实浏览器里会抛 Illegal invocation，箭头函数桩发现不了这类回归。
+globalThis.fetch = async function (url, init = {}) {
+  if (this !== undefined && this !== globalThis) throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
   const text = String(url);
   if (!text.includes("/fixtures/")) return nativeFetch(url, init);
   const source = text.includes("progressive")
