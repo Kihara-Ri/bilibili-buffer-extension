@@ -59,11 +59,11 @@ test("提前加载并入当前视频：开关、三个概览数字，其余诊�
   assert.match(preload, /id="assist-toggle"[^>]*role="switch"/);
   const summary = between('class="assist-summary"', "</dl>");
   for (const id of ["assist-speed", "assist-ready", "assist-hit"]) assert.match(summary, new RegExp(`<dd id="${id}"[^>]*>—</dd>`), `概览缺少 ${id}`);
-  for (const id of ["assist-buffer", "assist-connections", "assist-node"]) assert.doesNotMatch(summary, new RegExp(`id="${id}"`), `诊断 ${id} 不应出现在概览`);
+  for (const id of ["assist-buffer", "assist-stalls", "assist-node"]) assert.doesNotMatch(summary, new RegExp(`id="${id}"`), `诊断 ${id} 不应出现在概览`);
   assert.match(preload, /id="assist-details-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="assist-metrics-panel"/);
   const diagnostics = between('id="assist-metrics-panel"', "</dl>");
   assert.match(diagnostics, /^[^>]*hidden/, "详细数据默认折叠");
-  for (const id of ["assist-buffer", "assist-connections", "assist-accelerated", "assist-rescues", "assist-fallbacks", "assist-node"]) {
+  for (const id of ["assist-buffer", "assist-stalls", "assist-residency", "assist-accelerated", "assist-trouble", "assist-node"]) {
     assert.match(diagnostics, new RegExp(`id="${id}"`), `详细数据缺少 ${id}`);
   }
   // 诊断说明放在各指标的 title 里，不再堆一段长说明文字。

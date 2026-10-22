@@ -106,10 +106,10 @@
             </dl>
             <dl id="assist-metrics-panel" class="assist-metrics" aria-label="提前加载详细数据" hidden>
               <div><dt title="B 站播放器自身已缓冲、可直接播放的秒数">播放器缓冲</dt><dd id="assist-buffer">—</dd></div>
-              <div><dt title="最近 10 秒内同时进行的分片请求峰值 / 页面内并发上限；空闲时为 0">并发峰值</dt><dd id="assist-connections">—</dd></div>
-              <div><dt title="由插件加速完成的播放器请求">加速请求</dt><dd id="assist-accelerated">—</dd></div>
-              <div><dt title="节点卡住时，备用节点上的副本先完成的次数">备用节点救援</dt><dd id="assist-rescues">—</dd></div>
-              <div><dt title="加速失败、交还 B 站播放器自己下载的次数">交还原生</dt><dd id="assist-fallbacks">—</dd></div>
+              <div><dt title="本页播放卡住（等待数据）的次数与累计时长">卡顿</dt><dd id="assist-stalls">—</dd></div>
+              <div><dt title="插件缓存当前占用的内存 / 上限，超过后按播放位置回收">缓存占用</dt><dd id="assist-residency">—</dd></div>
+              <div><dt title="由插件加速完成的播放器请求；「救援」是节点卡住时备用节点上的副本先完成的次数">加速请求</dt><dd id="assist-accelerated">—</dd></div>
+              <div class="assist-trouble" hidden><dt title="加速失败后交还 B 站播放器自己下载的次数、后台预热失败的次数、当前被暂时隔离的 CDN 节点数；一切正常时不显示">异常</dt><dd id="assist-trouble"></dd></div>
               <div class="assist-node"><dt title="最近一次完成下载的 CDN 节点">最近节点</dt><dd id="assist-node">等待连接</dd></div>
             </dl>
           </section>

@@ -171,7 +171,9 @@ const ASSIST_STATS = {
   bufferAheadSec: 46.2,
   prefetchMB: 138.4,
   prefetching: 3,
-  stalls: 0
+  stalls: 0,
+  stallMs: 0,
+  cacheResidentMB: 86.4
 };
 
 let listener = () => {};

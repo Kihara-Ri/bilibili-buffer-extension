@@ -60,7 +60,7 @@ const elements = {
   assistDetailsToggle: $("#assist-details-toggle"),
   assistMetricsPanel: $("#assist-metrics-panel"),
   assistStatus: $("#assist-status"),
-  assistMetrics: Object.fromEntries(["speed", "hit", "buffer", "ready", "connections", "rescues", "node", "accelerated", "fallbacks"].map(key => [key, $(`#assist-${key}`)])),
+  assistMetrics: Object.fromEntries(["speed", "hit", "buffer", "ready", "stalls", "residency", "trouble", "node", "accelerated"].map(key => [key, $(`#assist-${key}`)])),
   appearance: $("#assist-appearance"),
   appearanceReset: $("#assist-appearance-reset"),
   preheatControls: $("#assist-preheat-controls"),
@@ -776,18 +776,19 @@ function renderAssist() {
     hit: live ? formatBytes(finite(stats.cacheHitMB) * 1024 * 1024) : "—",
     ready: live ? `${finite(stats.prefetchAheadSec).toFixed(0)} 秒` : "—",
     buffer: live ? `${finite(stats.bufferAheadSec).toFixed(1)} 秒` : "—",
-    connections: live ? `${Math.max(finite(stats.networkActive), finite(stats.networkPeak))} / ${finite(stats.networkLimit)}` : "—",
-    rescues: live ? `${finite(stats.networkRescues)} 次` : "—",
-    accelerated: live ? `${finite(stats.acceleratedRequests)} 次` : "—",
-    fallbacks: live ? `${finite(stats.nativeFallbacks)} 次` : "—",
+    // 卡顿是「插件有没有让你少卡」的结果指标；累计时长不足 0.1 秒不显示，免得「0 次 · 0.0 秒」。
+    stalls: live ? `${finite(stats.stalls)} 次${finite(stats.stallMs) >= 100 ? ` · ${(finite(stats.stallMs) / 1000).toFixed(1)} 秒` : ""}` : "—",
+    // 驻留上限是 playback-cache 的 128 MiB；超过后按播放位置回收，用户需要知道离上限有多远。
+    residency: live ? `${finite(stats.cacheResidentMB).toFixed(0)} / 128 MB` : "—",
+    accelerated: live ? `${finite(stats.acceleratedRequests)} 次${finite(stats.networkRescues) > 0 ? ` · 救援 ${finite(stats.networkRescues)}` : ""}` : "—",
+    trouble: live ? [finite(stats.nativeFallbacks) > 0 ? `交还原生 ${finite(stats.nativeFallbacks)}` : "", finite(stats.prefetchErrors) > 0 ? `预热失败 ${finite(stats.prefetchErrors)}` : "", finite(stats.blockedNodes) > 0 ? `隔离节点 ${finite(stats.blockedNodes)}` : ""].filter(Boolean).join(" · ") : "",
     node: live ? (stats.networkHost || "等待连接") : (enabled ? "等待数据" : "已关闭")
   };
   for (const [key, value] of Object.entries(metrics)) setText(elements.assistMetrics[key], value);
-  // 「交还原生」是失败指标：为 0 时只是噪音，不占一行；出现过才显示并用警示色。
-  const fallbackRow = elements.assistMetrics.fallbacks.parentElement;
-  const hasFallbacks = live && finite(stats.nativeFallbacks) > 0;
-  fallbackRow.hidden = !hasFallbacks;
-  fallbackRow.classList.toggle("is-warning", hasFallbacks);
+  // 「异常」合并交还原生 / 预热失败 / 隔离节点：全是失败信号，为 0 时只是噪音，整行不出现；出现才显示并用警示色。
+  const troubleRow = elements.assistMetrics.trouble.parentElement;
+  troubleRow.hidden = !metrics.trouble;
+  troubleRow.classList.toggle("is-warning", Boolean(metrics.trouble));
   setAttr(elements.assistMetrics.node, "title", metrics.node);
   elements.assistToggle.setAttribute("aria-checked", String(enabled));
 
