@@ -155,15 +155,22 @@ const LIBRARY = [
 ];
 
 const ASSIST_CONFIG = { mode: "always", preheatColor: "#ff8a1f", progressColor: "#00a1d6", showPreheatHighlight: true };
+// 字段与 playback-observer.js 的 publicStats() 对齐（2.10.1 起没有 estimator 读数）。
 const ASSIST_STATS = {
   activeTracks: 2,
-  hosts: { "upos-sz-mirror08c.bilivideo.com": { ttfbP95: 412 } },
-  slowRequests: 0,
+  networkSpeed: 1_850_000,
+  networkActive: 6,
+  networkLimit: 32,
+  networkHost: "upos-hz-mirrorakam.akamaized.net",
+  networkRescues: 3,
+  acceleratedRequests: 41,
+  nativeFallbacks: 0,
+  cacheHitMB: 86.4,
+  prefetchAheadSec: 62.5,
   bufferAheadSec: 46.2,
   prefetchMB: 138.4,
   prefetching: 3,
-  stalls: 0,
-  estimator: { suspect: false }
+  stalls: 0
 };
 
 let listener = () => {};
@@ -179,6 +186,7 @@ globalThis.chrome = {
     async create() {}
   },
   runtime: {
+    getManifest: () => ({ version: "2.11.0" }),
     onMessage: { addListener(callback) { listener = callback; } },
     async sendMessage(message) {
       switch (message.type) {
@@ -203,7 +211,7 @@ globalThis.chrome = {
         case "LIST_VIDEOS":
           return { ok: true, videos: structuredClone(library) };
         case "GET_ASSIST_STATE":
-          return { ok: true, config: assistConfig, stats: ASSIST_STATS };
+          return { ok: true, config: assistConfig, stats: { ...ASSIST_STATS, at: Date.now() } };
         case "SET_ASSIST_CONFIG":
           assistConfig = { ...assistConfig, ...message.patch };
           return { ok: true, config: assistConfig };
@@ -221,6 +229,14 @@ globalThis.chrome = {
         case "SAVE_VIDEO":
         case "DELETE_VIDEO":
           return { ok: true };
+        case "GET_HEALTH":
+          return { ok: true, report: { browserVersion: "155.0.8059.85", checks: [{ id: "storage-local", label: "本地存储", ok: true, detail: "" }] } };
+        case "PAUSE_CACHE":
+        case "RESUME_CACHE": {
+          const video = library.find((item) => item.id === message.videoId);
+          if (video) video.status = message.type === "PAUSE_CACHE" ? "paused" : "downloading";
+          return { ok: true, paused: message.type === "PAUSE_CACHE", video: structuredClone(video) };
+        }
         default:
           throw new Error(`场景夹具未实现的请求：${message.type}`);
       }
@@ -248,7 +264,13 @@ await delay(400);
 // 场景切换入口，供 scripts/store-assets.mjs 调用。
 globalThis.__storeScene = {
   async showTab(view) {
-    document.querySelector(`[data-panel-view="${view}"]`).click();
+    // 2.11 起「缓存」「播放」合并为「当前视频」；设置是齿轮打开的二级视图。
+    if (view === "settings") {
+      if (document.querySelector("#settings-view").hidden) document.querySelector("#settings-button").click();
+    } else {
+      const target = view === "library" ? "library" : "current";
+      document.querySelector(`[data-panel-view="${target}"]`).click();
+    }
     await delay(260);
   },
   async setCacheMode(mode) {

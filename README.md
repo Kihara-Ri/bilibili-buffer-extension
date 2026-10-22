@@ -30,7 +30,7 @@
 
 **其他**
 
-- 弹窗按「缓存 / 播放 / 片库」三个页签组织；页眉右侧的 GitHub 图标直达项目仓库。
+- 弹窗分「当前视频」「片库」两个页签：当前视频里缓存正在看的视频并查看提前加载效果；片库里管理所有任务，下载中可暂停、随时继续（不需要打开原视频），删除后可在提示里撤销。进度条配色、浏览器自检与关于收在右上角齿轮里。
 - 浏览器自检：Chrome 升级后若某项能力失效，弹窗会列出具体失败项与排查入口，而不是表现成「没反应」。
 
 ## 安装
@@ -66,4 +66,4 @@ npm run test:chrome  # 下载与本机 Chrome 同版本的 Chrome for Testing，
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — 参考项目与许可声明
 - [store/](store/) — Chrome Web Store 提审资料
 
-当前版本 2.10.1。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。
+当前版本 2.11.0。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。

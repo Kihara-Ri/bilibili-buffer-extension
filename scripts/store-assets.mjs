@@ -3,6 +3,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { readPngSize } from "./lib/png-alpha.mjs";
 import path from "node:path";
+import { chromiumLaunchOptions } from "./lib/browser-launch.mjs";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -30,34 +31,36 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright")
 /** 弹窗真实尺寸：Chrome 给扩展弹窗的宽度由页面决定，高度上限 600。 */
 const POPUP_WIDTH = 360;
 const POPUP_HEIGHT = 640;
+/** Chrome 给扩展弹窗的最大高度：超过就会出现滚动条，截图里看不出来，必须在这里拦住。 */
+const CHROME_POPUP_MAX_HEIGHT = 600;
 
 const scenes = [
   {
     file: "screenshot-1-cache.png",
-    tab: "cache",
+    tab: "current",
     before: (page) => page.evaluate(() => globalThis.__storeScene.setCacheMode("video")),
-    kicker: "完整缓存",
-    headline: "一键把视频缓存到本机",
-    bullets: ["按账号实际返回的最高画质下载", "音视频在本机合并为单个 MP4，不转码", "关掉页面也会继续，断点自动续传"],
-    caption: "缓存页：画质、体积、进度与多任务徽标"
+    kicker: "完整缓存 · 播放提前加载",
+    headline: "一键缓存，播放更跟手",
+    bullets: ["按账号实际返回的最高画质下载，体积一目了然", "开始后可关闭页面，后台独立完成、断点续传", "播放时提前加载前方内容，实时看到效果"],
+    caption: "当前视频：画质与体积、缓存按钮、提前加载状态"
   },
   {
     file: "screenshot-2-assist.png",
-    tab: "assist",
+    tab: "settings",
     before: null,
-    kicker: "播放提前加载",
-    headline: "拖动进度条更跟手",
-    bullets: ["取得首个媒体范围后立即预热前方分段", "完整命中直接用本机数据回给播放器", "只改配色，原生进度条交互不变"],
-    caption: "播放页：提前加载开关与进度条配色"
+    kicker: "进度条配色",
+    headline: "一眼看出哪段已就绪",
+    bullets: ["提前加载的范围在原生进度条上单独着色", "按真实时间索引映射，不按字节比例估算", "只改配色，原生进度条交互不变"],
+    caption: "设置：进度条外观、浏览器自检与关于"
   },
   {
     file: "screenshot-3-library.png",
     tab: "library",
     before: null,
     kicker: "本地片库",
-    headline: "随时播放或导出文件",
-    bullets: ["列出已缓存视频的体积与状态", "再次打开原视频即用本地数据播放", "保存为文件或删除，释放空间"],
-    caption: "片库页：缓存列表、保存与删除"
+    headline: "随时播放、暂停或导出",
+    bullets: ["下载中的任务可暂停，随时继续，无需打开原视频", "再次打开原视频即用本地数据播放", "保存为文件，或删除后在提示里撤销"],
+    caption: "片库：进度、暂停 / 继续、保存与删除"
   }
 ];
 
@@ -81,7 +84,7 @@ const iconBase64 = (await readFile(path.join(root, "assets", "icon-128.png"))).t
 const iconUrl = `data:image/png;base64,${iconBase64}`;
 
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({ channel: "chromium" });
+const browser = await chromium.launch(chromiumLaunchOptions());
 try {
   const popupPage = await browser.newPage({
     viewport: { width: POPUP_WIDTH, height: POPUP_HEIGHT },
@@ -105,8 +108,8 @@ try {
       shellHeight: Math.ceil(document.querySelector(".app-shell").getBoundingClientRect().height),
       footerBottom: Math.round(document.querySelector(".app-footer").getBoundingClientRect().bottom)
     }));
-    if (fit.scrollHeight > POPUP_HEIGHT + 1) {
-      throw new Error(`${scene.file}：弹窗内容高 ${fit.scrollHeight}px，超过 ${POPUP_HEIGHT}px 会被裁断`);
+    if (fit.scrollHeight > CHROME_POPUP_MAX_HEIGHT + 1) {
+      throw new Error(`${scene.file}：弹窗内容高 ${fit.scrollHeight}px，超过 Chrome 弹窗上限 ${CHROME_POPUP_MAX_HEIGHT}px 会出现滚动条`);
     }
     if (fit.footerBottom > POPUP_HEIGHT + 1) {
       throw new Error(`${scene.file}：页脚底部 ${fit.footerBottom}px 超出视口`);

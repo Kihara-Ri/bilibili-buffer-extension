@@ -67,7 +67,7 @@ try {
   }); assert.deepEqual(sizes.save,sizes.remove);
   await page.waitForFunction(()=>document.querySelector('#toast').dataset.visible !== 'true');
   await page.locator('.app-shell').screenshot({path:path.join(shots,'library.png')});
-  await page.locator('#cache-tab').click();
+  await page.locator('#current-tab').click();
   const layout=await page.evaluate(()=>{
     const button=document.querySelector('#cache-button').getBoundingClientRect(),label=document.querySelector('#button-label').getBoundingClientRect(),speed=document.querySelector('#button-speed').getBoundingClientRect();
     return {label:document.querySelector('#button-label').textContent,speed:document.querySelector('#button-speed').textContent,hint:document.querySelector('#action-hint').textContent,nowrap:getComputedStyle(document.querySelector('#button-speed')).whiteSpace,noOverlap:label.right+4<=speed.left,inside:speed.right<=button.right&&speed.bottom<=button.bottom,progress:document.querySelector('#cache-button').style.getPropertyValue('--progress-ratio')};
@@ -91,10 +91,9 @@ try {
     });
   });
   assert(unitLabels[0].includes(' B/s')&&unitLabels[1].includes(' KB/s')&&unitLabels[2].includes(' MB/s')&&unitLabels[3].includes(' GB/s'));
-  await page.locator('#assist-tab').click();
-  // 外观编辑器默认折叠：先验证折叠态，再展开做控件交互。
-  assert(await page.evaluate(() => !document.querySelector('#assist-appearance').open && !document.querySelector('.assist-diagnostics').open), '外观与详细统计默认折叠');
-  await page.evaluate(() => { document.querySelector('#assist-appearance').open = true; document.querySelector('.assist-diagnostics').open = true; });
+  // 详细数据默认折叠、设置默认关闭；外观控件在设置里。
+  assert(await page.evaluate(() => !document.querySelector('.assist-diagnostics').open && document.querySelector('#settings-view').hidden), '详细数据默认折叠，设置默认关闭');
+  await page.locator('#settings-button').click();
   await page.locator('#assist-appearance-reset').click();
   await page.waitForTimeout(50);
   const reset=await page.evaluate(()=>({config:window.__popupTest.config,disabled:document.querySelector('#assist-preheat-controls').disabled,preview:getComputedStyle(document.querySelector('.preview-preheat')).backgroundColor}));
@@ -105,6 +104,9 @@ try {
   await page.locator('#assist-show-highlight').click();
   await page.locator('[data-assist-color][aria-checked="true"]').focus(); await page.keyboard.press('ArrowRight'); await page.waitForTimeout(30);
   assert.equal(await page.locator('[data-assist-color][aria-checked="true"]').count(),1);
+  // 统计检查必须在主视图可见时做，否则隐藏节点的尺寸为 0，溢出检查会被空过。
+  await page.locator('#settings-back').click();
+  await page.evaluate(() => { document.querySelector('.assist-diagnostics').open = true; });
   const statsStable = await page.evaluate(async () => {
     const nodes = [...document.querySelectorAll('.assist-metrics dd')];
     const focused = document.activeElement;
@@ -132,7 +134,7 @@ try {
   await page.evaluate(() => { window.__popupTest.assistStats = {cacheHitMB:1}; });
   await page.waitForTimeout(1000);
   assert.equal(await page.locator('#assist-hit').textContent(), '1.00 MB', '统计归零或回滚不得被单调钳制');
-  await page.evaluate(() => { document.querySelector('#assist-appearance').open = false; document.querySelector('.assist-diagnostics').open = false; });
+  await page.evaluate(() => { document.querySelector('.assist-diagnostics').open = false; });
   await page.locator('.app-shell').screenshot({path:path.join(shots,'playback.png')});
   const confirmedColor=await page.evaluate(()=>{window.__popupTest.failConfig=true; window.__popupTest.holdConfigRead=true; window.__popupTest.configDelay=80; return window.__popupTest.config.preheatColor;});
   await page.evaluate(()=>{const swatches=document.querySelectorAll('[data-assist-color]'); swatches[0].click(); swatches[3].click();});
@@ -148,10 +150,10 @@ try {
   assert.equal(await page.locator('[data-video-id="popup-live-b"]').count(),0,'已删除任务不能被旧消息或旧查询复活');
   await page.emulateMedia({reducedMotion:'reduce'}); await page.locator('#library-tab').click(); await save.hover();
   assert.equal(await save.locator('.download-arrow').evaluate(node=>getComputedStyle(node).animationName),'none');
-  // 浏览器自检区块：只在发现能力缺失时出现，重复检测不重建节点，恢复后收起。
+  // 浏览器自检：主视图只在能力缺失时出现提示条与齿轮红点；重复检测不重建节点，恢复后收起。
   const health = await page.evaluate(async()=>{
-    const panel=document.querySelector('#browser-health');
-    if(!panel.hidden) throw new Error('健康状态下不应显示自检区块');
+    const panel=document.querySelector('#health-banner'), dot=document.querySelector('#settings-alert');
+    if(!panel.hidden||!dot.hidden) throw new Error('健康状态下不应显示自检提示');
     window.__popupTest.healthFailure='offscreen 不可用';
     document.querySelector('#browser-health-refresh').click();
     await new Promise(resolve=>setTimeout(resolve,120));
@@ -161,17 +163,19 @@ try {
     document.querySelector('#browser-health-refresh').click();
     await new Promise(resolve=>setTimeout(resolve,120));
     const sameNode=first===document.querySelector('#browser-health-list li');
+    const alertShown=!panel.hidden&&!dot.hidden;
     const items=document.querySelectorAll('#browser-health-list li').length;
     window.__popupTest.healthFailure='';
     document.querySelector('#browser-health-refresh').click();
     await new Promise(resolve=>setTimeout(resolve,120));
-    return {hidden:panel.hidden,firstSignature,status,sameNode,items,focus:document.activeElement?.id};
+    return {hidden:panel.hidden&&dot.hidden,alertShown,firstSignature,status,sameNode,items,focus:document.activeElement?.id};
   });
   assert.equal(health.firstSignature,'offscreen',JSON.stringify(health));
   assert(health.status.includes('浏览器自检未通过')&&health.status.includes('153.0.8010.12'),JSON.stringify(health));
   assert.equal(health.items,1);
   assert(health.sameNode,'自检结论未变化时不能重建列表节点');
-  assert(health.hidden,'能力恢复后自检区块必须收起');
+  assert(health.alertShown,'能力缺失时主视图必须出现提示条与齿轮红点');
+  assert(health.hidden,'能力恢复后自检提示必须收起');
   for(const fixture of ['background-popup-integration','offscreen-integration','offscreen-merge-integration']){
     await page.goto(`${origin}/tests/${fixture}.html`);
     await page.waitForFunction(()=>document.querySelector('#result').textContent !== 'running',{},{timeout:45000});

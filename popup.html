@@ -17,77 +17,66 @@
             <p class="brand-subtitle">bilibili buffer</p>
           </div>
         </div>
-        <a class="github-link" href="https://github.com/Kihara-Ri/bilibili-buffer-extension" target="_blank" rel="noopener noreferrer" aria-label="GitHub 项目页面" title="GitHub 项目页面">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" fill="currentColor"/></svg>
-        </a>
+        <!-- 设置收纳低频内容：进度条配色、浏览器自检、关于。自检失败时齿轮带红点。 -->
+        <button id="settings-button" class="icon-button settings-button" type="button" aria-label="设置" title="设置" aria-controls="settings-view" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"/><path d="m19.4 13.5.1-1.5-.1-1.5 2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.6 7.6 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6-.1 1.5.1 1.5-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.6 7.6 0 0 0 2.6-1.5l2.4 1 2-3.4-2-1.6Z"/></svg>
+          <span id="settings-alert" class="alert-dot" hidden></span>
+        </button>
       </header>
 
       <nav id="panel-tabs" class="panel-tabs" role="tablist" aria-label="插件面板">
-        <button id="cache-tab" type="button" role="tab" data-panel-view="cache" aria-controls="cache-view" aria-selected="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>缓存</span>
-        </button>
-        <button id="assist-tab" type="button" role="tab" data-panel-view="assist" aria-controls="assist-view" aria-selected="false" tabindex="-1">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16v3m4-7v7m4-11v11m4-14v14m4-9v9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-          <span>播放</span>
-          <span id="assist-tab-indicator" class="tab-indicator" aria-hidden="true"></span>
-        </button>
+        <button id="current-tab" type="button" role="tab" data-panel-view="current" aria-controls="current-view" aria-selected="true">当前视频</button>
         <button id="library-tab" type="button" role="tab" data-panel-view="library" aria-controls="library-view" aria-selected="false" tabindex="-1">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v13H5zM8.5 5.5v13M12 9h4m-4 3h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>片库</span>
-          <span id="library-count" class="tab-count">0</span>
+          片库<span id="library-count" class="tab-count">0</span>
         </button>
       </nav>
 
+      <!-- 自检失败时在主视图顶部给一条可点的提示，详情在设置里。 -->
+      <p id="health-banner" class="health-banner" role="status" hidden>
+        <span>浏览器能力异常，部分功能不可用</span>
+        <button id="health-banner-open" class="text-button" type="button">查看</button>
+      </p>
+
       <div class="panel-stack">
-        <section id="cache-view" class="panel-view" role="tabpanel" aria-labelledby="cache-tab">
+        <section id="current-view" class="panel-view" role="tabpanel" aria-labelledby="current-tab">
           <section class="current-video" aria-labelledby="current-heading">
-            <div class="section-heading">
-              <div>
-                <p class="section-kicker">当前视频</p>
-                <h2 id="current-heading">正在识别视频</h2>
-              </div>
-              <span id="page-mark" class="page-mark" hidden></span>
-            </div>
-            <p id="current-detail" class="current-detail">
+            <h2 id="current-heading" class="current-title">正在识别视频</h2>
+            <p class="current-meta">
               <a id="current-owner" class="current-owner" href="#" hidden></a>
-              <span id="current-detail-separator" hidden> · </span>
               <span id="current-detail-text">请稍候…</span>
+              <span id="page-mark" class="page-mark" hidden></span>
             </p>
 
             <div id="format-controls" class="format-controls" hidden>
-              <div class="quality-row">
-                <span class="quality-label">缓存内容</span>
-                <div id="cache-mode" class="cache-mode" role="radiogroup" aria-label="缓存内容">
-                  <button id="mode-video" type="button" role="radio" aria-checked="true" data-cache-mode="video">视频 + 音频</button>
+              <div class="field-row">
+                <span class="field-label" id="cache-mode-label">内容</span>
+                <div id="cache-mode" class="segmented" role="radiogroup" aria-labelledby="cache-mode-label">
+                  <button id="mode-video" type="button" role="radio" aria-checked="true" data-cache-mode="video">视频</button>
                   <button id="mode-audio" type="button" role="radio" aria-checked="false" tabindex="-1" data-cache-mode="audio">仅音频</button>
                 </div>
               </div>
 
-              <div id="quality-row" class="quality-row" hidden>
-                <span class="quality-label">画质</span>
-                <div id="quality-picker" class="quality-picker">
-                  <button
-                    id="quality-trigger"
-                    class="quality-trigger"
-                    type="button"
-                    aria-haspopup="listbox"
-                    aria-expanded="false"
-                    aria-describedby="auth-note"
-                    popovertarget="quality-menu"
-                    disabled
-                  >
+              <div id="quality-row" class="field-row">
+                <span class="field-label">画质</span>
+                <div class="quality-picker">
+                  <button id="quality-trigger" class="quality-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-describedby="auth-note" popovertarget="quality-menu" disabled>
                     <span id="quality-trigger-label" class="quality-trigger-label">读取中…</span>
-                    <svg class="quality-caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <span id="cache-size" class="quality-trigger-size" aria-live="polite"></span>
+                    <svg class="caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg>
                   </button>
                   <div id="quality-menu" class="quality-menu" popover role="listbox" aria-label="缓存画质"></div>
                 </div>
               </div>
 
-              <div class="quality-row"><span class="quality-label">缓存大小</span><span id="cache-size" class="cache-size" aria-live="polite">正在估算…</span></div>
-              <p id="auth-note" class="auth-note" hidden></p>
+              <div id="audio-row" class="field-row" hidden>
+                <span class="field-label">音质</span>
+                <span id="audio-summary" class="audio-summary"></span>
+              </div>
+
+              <p id="auth-note" class="field-note" hidden></p>
             </div>
 
+            <!-- 圆角主按钮是缓存状态的唯一载体：空闲时是动作，下载时是进度条，完成时是结果。 -->
             <button id="cache-button" class="cache-button" type="button" disabled aria-describedby="action-hint">
               <span id="button-progress" class="button-progress" aria-hidden="true"></span>
               <span class="button-content">
@@ -95,108 +84,99 @@
                 <span id="button-speed" class="button-speed"></span>
               </span>
             </button>
-            <p id="action-hint" class="action-hint" role="status" aria-live="polite" hidden></p>
-          </section>
-        </section>
-
-        <section id="assist-view" class="panel-view" role="tabpanel" aria-labelledby="assist-tab" hidden>
-          <section id="assist-panel" class="assist-panel" aria-labelledby="assist-heading" hidden>
-            <div class="assist-heading-row">
-              <div>
-                <p class="section-kicker">播放页面</p>
-                <h2 id="assist-heading">提前加载</h2>
-              </div>
-              <button id="assist-toggle" class="assist-toggle" type="button" role="switch" aria-checked="false" aria-describedby="assist-status">
-                <span class="assist-toggle-track" aria-hidden="true"><span></span></span>
-                <span id="assist-toggle-label">关闭</span>
-              </button>
+            <div class="action-row">
+              <p id="action-hint" class="action-hint" role="status" aria-live="polite" hidden></p>
+              <button id="pause-button" class="text-button" type="button" hidden>暂停</button>
             </div>
-            <p id="assist-status" class="assist-status" role="status" aria-live="polite">等待视频加载</p>
-            <!--
-              概览只保留回答「有没有效果」的三个数字；其余诊断计数收进「详细统计」，
-              避免一屏堆满多数时间静止的 0 次读数。
-            -->
-            <dl class="assist-summary" aria-label="播放加速概览">
-              <div><dt>加速网速</dt><dd id="assist-speed">—</dd></div>
-              <div><dt>已命中缓存</dt><dd id="assist-hit">—</dd></div>
-              <div><dt>预热就绪</dt><dd id="assist-ready">—</dd></div>
+          </section>
+
+          <section id="assist-panel" class="preload" aria-labelledby="preload-heading" hidden>
+            <div class="preload-head">
+              <h3 id="preload-heading">提前加载</h3>
+              <span id="assist-status" class="status-pill" role="status" aria-live="polite" data-state="waiting">等待视频播放</span>
+              <button id="assist-toggle" class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="preload-heading" aria-describedby="assist-status"><span aria-hidden="true"></span></button>
+            </div>
+            <!-- 只保留回答「有没有效果」的三个数字；其余诊断收进「详细数据」。 -->
+            <dl class="assist-summary" aria-label="提前加载概览">
+              <div><dt>网速</dt><dd id="assist-speed">—</dd></div>
+              <div><dt>已就绪</dt><dd id="assist-ready">—</dd></div>
+              <div><dt>已命中</dt><dd id="assist-hit">—</dd></div>
             </dl>
-            <!--
-              进度条外观默认折叠：摘要行本身就是唯一的实时配色示意条，展开后只有
-              图例与配色控件，不重复标题、不画第二条进度条。网络策略（分片、槽位、
-              对冲）是页面侧常量，不提供手动选择。
-            -->
-            <details id="assist-appearance" class="assist-appearance">
-              <summary class="appearance-summary">
-                <span class="appearance-summary-label">进度条外观</span>
-                <span class="appearance-summary-preview timeline-preview" aria-hidden="true"><span class="preview-played"></span><span class="preview-native"></span><span class="preview-preheat"></span><span class="preview-empty"></span></span>
-                <svg class="disclosure-caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </summary>
-              <div class="appearance-body">
-                <div class="timeline-legend" aria-hidden="true"><span><i class="legend-played"></i>已播放</span><span><i class="legend-native"></i>播放器缓冲</span><span><i id="assist-color-preview" class="assist-color-preview"></i>提前加载</span></div>
-                <label class="appearance-control" for="assist-progress-color"><span>已播放颜色</span><input id="assist-progress-color" class="appearance-color-input" type="color" value="#00a1d6" aria-label="已播放颜色"></label>
-                <label class="appearance-control" for="assist-show-highlight"><span>单独标出提前加载</span><input id="assist-show-highlight" class="appearance-switch" type="checkbox" role="switch" checked aria-describedby="appearance-note"></label>
-                <fieldset id="assist-preheat-controls" class="preheat-controls">
-                  <legend>提前加载颜色</legend>
-                  <div class="assist-color-row"><div id="assist-colors" class="assist-color-palette" role="radiogroup" aria-label="提前加载颜色"></div>
-                    <label id="assist-custom-color-shell" class="assist-custom-color" title="自定义提前加载颜色"><input id="assist-custom-color" type="color" value="#ff8a1f" aria-label="自定义提前加载颜色"><span>自定义</span></label>
-                  </div>
-                </fieldset>
-                <p id="appearance-note" class="assist-appearance-note">只改变颜色，不影响提前加载。关闭区分后，缓冲区域统一显示为灰色。</p>
-                <div class="appearance-footer"><button id="assist-appearance-reset" type="button" class="appearance-reset">恢复默认</button></div>
-              </div>
-            </details>
-            <!-- 诊断计数默认折叠：关心排队、救援与节点归属时再展开。 -->
             <details class="assist-diagnostics">
-              <summary class="diagnostics-summary">
-                <span>详细统计</span>
-                <svg class="disclosure-caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <summary>
+                <span>详细数据</span>
+                <svg class="caret" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg>
               </summary>
-              <dl class="assist-metrics" aria-label="播放加速统计">
-                <div><dt>播放器缓冲</dt><dd id="assist-buffer">—</dd></div>
-                <div><dt>当前并发 / 上限</dt><dd id="assist-connections">—</dd></div>
-                <div><dt>已加速请求</dt><dd id="assist-accelerated">—</dd></div>
-                <div><dt>备用节点救援</dt><dd id="assist-rescues">—</dd></div>
-                <div><dt>原线路回退</dt><dd id="assist-fallbacks">—</dd></div>
-                <div class="assist-node"><dt>最近完成节点</dt><dd id="assist-node">等待连接</dd></div>
+              <dl class="assist-metrics" aria-label="提前加载详细数据">
+                <div><dt title="B 站播放器自身已缓冲、可直接播放的秒数">播放器缓冲</dt><dd id="assist-buffer">—</dd></div>
+                <div><dt title="正在进行的分片请求 / 页面内并发上限">并发 / 上限</dt><dd id="assist-connections">—</dd></div>
+                <div><dt title="由插件加速完成的播放器请求">加速请求</dt><dd id="assist-accelerated">—</dd></div>
+                <div><dt title="节点卡住时，备用节点上的副本先完成的次数">备用节点救援</dt><dd id="assist-rescues">—</dd></div>
+                <div><dt title="加速失败、交还 B 站播放器自己下载的次数">交还原生</dt><dd id="assist-fallbacks">—</dd></div>
+                <div class="assist-node"><dt title="最近一次完成下载的 CDN 节点">最近节点</dt><dd id="assist-node">等待连接</dd></div>
               </dl>
-              <p class="assist-metrics-note">网速包含当前播放请求与预热；只用播放清单自带的主备节点，多个分片并行下载，节点卡住时在备用节点对冲。已命中仅统计复用缓存；预热就绪取音视频连续就绪的交集；播放器缓冲是 B 站播放器自身的余量。</p>
             </details>
           </section>
         </section>
 
         <section id="library-view" class="panel-view" role="tabpanel" aria-labelledby="library-tab" hidden>
-          <section class="library" aria-labelledby="library-heading">
-            <div class="section-heading library-heading">
-              <div>
-                <p class="section-kicker">设备本地</p>
-                <h2 id="library-heading">片库</h2>
+          <p id="library-summary" class="library-summary">0 个视频</p>
+          <div id="video-list" class="video-list" aria-live="polite"></div>
+        </section>
+
+        <section id="settings-view" class="panel-view settings" aria-labelledby="settings-heading" hidden>
+          <div class="settings-head">
+            <button id="settings-back" class="icon-button" type="button" aria-label="返回" title="返回">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 5-5 5 5 5"/></svg>
+            </button>
+            <h2 id="settings-heading">设置</h2>
+          </div>
+
+          <section class="settings-group" aria-labelledby="appearance-heading">
+            <h3 id="appearance-heading">进度条外观</h3>
+            <div id="assist-appearance" class="appearance">
+              <div class="timeline-preview" aria-hidden="true"><span class="preview-played"></span><span class="preview-native"></span><span class="preview-preheat"></span><span class="preview-empty"></span></div>
+              <div class="timeline-legend" aria-hidden="true"><span><i class="legend-played"></i>已播放</span><span><i class="legend-native"></i>播放器缓冲</span><span><i id="assist-color-preview" class="legend-preheat"></i>提前加载</span></div>
+              <label class="setting-row" for="assist-progress-color"><span>已播放颜色</span><input id="assist-progress-color" class="color-input" type="color" value="#00a1d6"></label>
+              <label class="setting-row" for="assist-show-highlight"><span>单独标出提前加载</span><input id="assist-show-highlight" class="switch-input" type="checkbox" role="switch" checked aria-describedby="appearance-note"></label>
+              <fieldset id="assist-preheat-controls" class="preheat-controls">
+                <legend>提前加载颜色</legend>
+                <div class="swatch-row">
+                  <div id="assist-colors" class="swatches" role="radiogroup" aria-label="提前加载颜色"></div>
+                  <label id="assist-custom-color-shell" class="custom-color" title="自定义提前加载颜色"><input id="assist-custom-color" type="color" value="#ff8a1f" aria-label="自定义提前加载颜色"><span>自定义</span></label>
+                </div>
+              </fieldset>
+              <div class="setting-footer">
+                <p id="appearance-note" class="setting-note">只改颜色，不影响提前加载本身。</p>
+                <button id="assist-appearance-reset" type="button" class="text-button">恢复默认</button>
               </div>
-              <span id="library-summary" class="library-summary">0 B</span>
             </div>
-            <div id="video-list" class="video-list" aria-live="polite"></div>
+          </section>
+
+          <section id="browser-health" class="settings-group" aria-labelledby="browser-health-heading">
+            <div class="settings-group-head">
+              <h3 id="browser-health-heading">浏览器自检</h3>
+              <button id="browser-health-refresh" class="text-button" type="button">重新检测</button>
+            </div>
+            <p id="browser-health-status" class="health-status" role="status" aria-live="polite" data-state="checking">正在检测…</p>
+            <ul id="browser-health-list" class="health-list"></ul>
+            <p class="setting-note">插件图标点不动或弹窗打不开时，请到 <code>chrome://extensions</code> 确认「影哨」没有被停用。</p>
+          </section>
+
+          <section class="settings-group" aria-labelledby="about-heading">
+            <h3 id="about-heading">关于</h3>
+            <dl class="about-list">
+              <div><dt>版本</dt><dd id="about-version">—</dd></div>
+              <div><dt>项目主页</dt><dd><a class="github-link" href="https://github.com/Kihara-Ri/bilibili-buffer-extension" target="_blank" rel="noopener noreferrer" aria-label="GitHub 项目页面">GitHub</a></dd></div>
+              <div><dt>数据处理</dt><dd><a href="privacy.html" target="_blank" rel="noopener noreferrer">隐私说明</a></dd></div>
+            </dl>
           </section>
         </section>
       </div>
 
       <!--
-        浏览器自检只在发现能力缺失时出现；它属于扩展整体的状态，
-        因此放在三个面板之外，页面识别失败时也能看到。
-      -->
-      <section id="browser-health" class="browser-health" aria-labelledby="browser-health-heading" hidden>
-        <div class="browser-health-head">
-          <h3 id="browser-health-heading">浏览器自检</h3>
-          <button id="browser-health-refresh" class="browser-health-refresh" type="button">重新检测</button>
-        </div>
-        <p id="browser-health-status" class="browser-health-status" role="status" aria-live="polite"></p>
-        <ul id="browser-health-list" class="browser-health-list"></ul>
-        <p class="browser-health-note">如果插件图标点不动或弹窗打不开，请到 <code>chrome://extensions</code> 确认「影哨」没有被停用。</p>
-      </section>
-
-      <!--
         常驻的隐私入口。Chrome Web Store 2026 年的政策更新要求“安装后也要显著披露
-        数据处理方式”，所以这里给出一句常驻说明加一个本地隐私页面链接；页面随扩展
-        一起打包，离线可用，不需要联网。
+        数据处理方式”，所以每个视图底部都保留一句说明加本地隐私页面链接。
       -->
       <footer class="app-footer">
         <span class="app-footer-note">缓存与登录态只保存在本机</span>
@@ -204,7 +184,10 @@
       </footer>
     </main>
 
-    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite">
+      <span id="toast-text"></span>
+      <button id="toast-action" class="toast-action" type="button" hidden></button>
+    </div>
     <script type="module" src="src/popup.js"></script>
   </body>
 </html>

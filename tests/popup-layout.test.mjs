@@ -3,68 +3,80 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const html = await readFile(new URL("../popup.html", import.meta.url), "utf8");
+const between = (startMarker, endMarker) => {
+  const start = html.indexOf(startMarker);
+  return html.slice(start, html.indexOf(endMarker, start));
+};
 
-test("页眉主名带用途副标题，右侧提供 GitHub 入口", () => {
+test("页眉：主名带用途副标题，右侧是设置入口；GitHub 链接在设置的「关于」里", () => {
   assert.match(html, /<h1>影哨<\/h1>/);
   // 副标题只做指名性用途说明，不进入扩展名称本身。
   assert.match(html, /class="brand-subtitle">bilibili buffer<\/p>/);
-  const link = html.match(/<a class="github-link"[^>]*>/)?.[0] || "";
+  const masthead = between('<header class="masthead">', "</header>");
+  assert.match(masthead, /id="settings-button"[^>]*aria-controls="settings-view"/);
+  assert.doesNotMatch(masthead, /github/i);
+  const about = between('aria-labelledby="about-heading"', "</section>");
+  const link = about.match(/<a class="github-link"[^>]*>/)?.[0] || "";
   assert.match(link, /href="https:\/\/github\.com\/Kihara-Ri\/bilibili-buffer-extension"/);
   assert.match(link, /aria-label="GitHub 项目页面"/);
   assert.match(link, /rel="noopener noreferrer"/);
 });
 
-test("Popup 使用缓存、播放和片库三个互斥一级视图", () => {
-  const tabs = [...html.matchAll(/data-panel-view="(cache|assist|library)"/g)].map((match) => match[1]);
-  assert.deepEqual(tabs, ["cache", "assist", "library"]);
-  assert.match(html, /id="cache-view"[^>]*role="tabpanel"/);
-  assert.match(html, /id="assist-view"[^>]*role="tabpanel"[^>]*hidden/);
+test("一级导航只有「当前视频」「片库」两个页签；设置是独立的二级视图", () => {
+  const tabs = [...html.matchAll(/data-panel-view="(\w+)"/g)].map((match) => match[1]);
+  assert.deepEqual(tabs, ["current", "library"]);
+  assert.match(html, /id="current-view"[^>]*role="tabpanel"/);
   assert.match(html, /id="library-view"[^>]*role="tabpanel"[^>]*hidden/);
+  assert.match(html, /id="settings-view"[^>]*hidden/);
+  assert.doesNotMatch(html, /id="settings-view"[^>]*role="tabpanel"/);
+  assert.match(html, /id="library-count"/);
+  // 旧的「缓存 / 播放」页签与播放页不再存在。
+  assert.doesNotMatch(html, /id="(cache|assist)-(tab|view)"/);
 });
 
-test("缓存页提供视频 + 音频与仅音频两种缓存内容", () => {
+test("当前视频：内容二选一、画质选择内带体积、一句账号说明、主按钮与暂停", () => {
   assert.match(html, /id="cache-mode"[^>]*role="radiogroup"/);
   const modes = [...html.matchAll(/data-cache-mode="(video|audio)"/g)].map((match) => match[1]);
   assert.deepEqual(modes, ["video", "audio"]);
-  const videoButton = html.match(/<button[^>]*id="mode-video"[^>]*>/)?.[0] || "";
-  const audioButton = html.match(/<button[^>]*id="mode-audio"[^>]*>/)?.[0] || "";
-  assert.match(videoButton, /data-cache-mode="video"/);
-  assert.match(videoButton, /aria-checked="true"/);
-  assert.match(audioButton, /data-cache-mode="audio"/);
-  assert.match(audioButton, /aria-checked="false"/);
-  assert.match(html, /缓存内容/);
+  assert.match(html.match(/<button[^>]*id="mode-video"[^>]*>/)?.[0] || "", /aria-checked="true"/);
+  assert.match(html.match(/<button[^>]*id="mode-audio"[^>]*>/)?.[0] || "", /aria-checked="false"/);
+  // 体积跟在所选画质后面，不再单独占一行。
+  const trigger = between('id="quality-trigger"', "</button>");
+  assert.match(trigger, /id="cache-size"/);
+  assert.match(html, /id="audio-summary"/);
+  assert.match(html, /id="auth-note"/);
+  assert.match(html, /id="cache-button"/);
+  assert.match(html, /id="pause-button"[^>]*hidden/);
 });
 
-test("播放页概览紧凑，外观与详细统计分区折叠", () => {
-  assert.match(html, /id="assist-toggle"[^>]*role="switch"/);
-  assert.doesNotMatch(html, /data-assist-mode=/);
-  // 概览条只保留三个常驻数字，其余诊断计数必须留在折叠的详细统计里。
-  assert.match(html, /class="assist-summary"/);
-  for (const id of ["assist-speed", "assist-hit", "assist-ready"]) {
-    const metric = html.match(new RegExp(`<dd id="${id}"[^>]*>—</dd>`));
-    assert.ok(metric, `概览缺少 ${id}`);
-    assert.ok(html.indexOf('class="assist-summary"') < html.indexOf(`id="${id}"`), `${id} 应位于概览条内`);
+test("提前加载并入当前视频：开关、三个概览数字，其余诊断折叠在「详细数据」", () => {
+  const preload = between('id="assist-panel"', "</section>");
+  assert.match(preload, /id="assist-toggle"[^>]*role="switch"/);
+  const summary = between('class="assist-summary"', "</dl>");
+  for (const id of ["assist-speed", "assist-ready", "assist-hit"]) assert.match(summary, new RegExp(`<dd id="${id}"[^>]*>—</dd>`), `概览缺少 ${id}`);
+  for (const id of ["assist-buffer", "assist-connections", "assist-node"]) assert.doesNotMatch(summary, new RegExp(`id="${id}"`), `诊断 ${id} 不应出现在概览`);
+  const diagnostics = between('<details class="assist-diagnostics">', "</details>");
+  for (const id of ["assist-buffer", "assist-connections", "assist-accelerated", "assist-rescues", "assist-fallbacks", "assist-node"]) {
+    assert.match(diagnostics, new RegExp(`id="${id}"`), `详细数据缺少 ${id}`);
   }
-  const summaryStart = html.indexOf('class="assist-summary"');
-  const summaryEnd = html.indexOf("</dl>", summaryStart);
-  for (const id of ["assist-buffer", "assist-connections", "assist-node"]) {
-    assert.ok(!(html.indexOf(`id="${id}"`) > summaryStart && html.indexOf(`id="${id}"`) < summaryEnd), `诊断指标 ${id} 不应出现在概览条`);
+  // 诊断说明放在各指标的 title 里，不再堆一段长说明文字。
+  assert.doesNotMatch(html, /class="assist-metrics-note"/);
+  // 网络策略是页面侧常量，界面不提供选择。
+  assert.doesNotMatch(html, /id="assist-(cdn-mode|concurrency)"/);
+});
+
+test("设置：进度条外观（唯一一条预览）、浏览器自检、关于", () => {
+  const settings = between('id="settings-view"', "</main>");
+  assert.equal((settings.match(/class="timeline-preview"/g) || []).length, 1);
+  for (const id of ["assist-progress-color", "assist-show-highlight", "assist-colors", "assist-custom-color", "assist-appearance-reset", "browser-health-refresh", "browser-health-status", "about-version"]) {
+    assert.match(settings, new RegExp(`id="${id}"`), `设置缺少 ${id}`);
   }
-  // CDN 路线与并发上限由系统策略决定，界面不再提供选择。
-  assert.doesNotMatch(html, /id="assist-cdn-mode"/);
-  assert.doesNotMatch(html, /id="assist-concurrency"/);
-  // 外观折叠区：摘要行的示意条是唯一预览，展开后只有图例与控件，不重复标题与第二条进度条。
-  assert.match(html, /<details id="assist-appearance"/);
-  assert.match(html, /<summary class="appearance-summary">/);
-  assert.match(html, /class="appearance-summary-preview timeline-preview"/);
-  assert.doesNotMatch(html, /id="assist-timeline-preview"/);
-  assert.doesNotMatch(html, /id="appearance-heading"/);
-  assert.match(html, /class="timeline-legend"/);
-  assert.match(html, /id="assist-appearance-reset"/);
-  // 详细统计独立折叠，包含剩余指标与说明。
-  assert.match(html, /class="assist-diagnostics"/);
-  assert.match(html, /class="assist-metrics"/);
-  assert.match(html, /class="assist-metrics-note"/);
-  assert.match(html, /id="assist-tab-indicator"/);
-  assert.match(html, /id="library-count"/);
+  // 自检失败时主视图顶部有提示条，可直接跳到设置里的详情。
+  assert.match(html, /id="health-banner"[^>]*hidden/);
+  assert.match(html, /id="settings-alert"[^>]*hidden/);
+});
+
+test("每个视图底部常驻隐私说明，删除提示带撤销按钮", () => {
+  assert.match(html, /<footer class="app-footer">[\s\S]*href="privacy\.html"/);
+  assert.match(html, /id="toast-action"[^>]*hidden/);
 });

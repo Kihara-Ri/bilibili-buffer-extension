@@ -16,15 +16,16 @@
     <style>
       :root {
         color-scheme: light dark;
-        --ink: #1f2b33;
-        --ink-soft: #5b6b76;
-        --line: #dde5ea;
-        --surface: #f7fbfd;
-        --accent: #0f7fa8;
-        --accent-soft: #eaf5fa;
+        /* 与弹窗的「雾白 / 夜航」两套色板一致。 */
+        --ink: #1d2129;
+        --ink-soft: #5c6573;
+        --line: rgba(29, 33, 41, 0.1);
+        --surface: #f7f8fa;
+        --accent: #0088bb;
+        --accent-soft: rgba(0, 174, 236, 0.08);
       }
       @media (prefers-color-scheme: dark) {
-        :root { --ink: #e8eef2; --ink-soft: #9fb0ba; --line: #2c3a43; --surface: #131a1f; --accent: #56b6d8; --accent-soft: #1b2b33; }
+        :root { --ink: #e8ebf0; --ink-soft: #8a93a3; --line: rgba(255, 255, 255, 0.08); --surface: #0e121a; --accent: #6fdcff; --accent-soft: rgba(58, 210, 255, 0.08); }
       }
       * { box-sizing: border-box; }
       body {
@@ -32,7 +33,7 @@
         padding: 40px 20px 72px;
         background: var(--surface);
         color: var(--ink);
-        font: 15px/1.72 "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        font: 15px/1.72 "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", system-ui, sans-serif;
       }
       main { max-width: 760px; margin: 0 auto; }
       header { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }

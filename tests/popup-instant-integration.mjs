@@ -205,6 +205,11 @@ globalThis.chrome = {
         return { ok: true, config: assistConfig };
       }
       if (message.type === "SET_POPUP_SELECTION") return { ok: true, saved: true };
+      if (message.type === "PAUSE_CACHE" || message.type === "RESUME_CACHE") {
+        const video = libraryVideos.find((item) => item.id === message.videoId);
+        if (video) Object.assign(video, { status: message.type === "PAUSE_CACHE" ? "paused" : "downloading", updatedAt: Date.now() });
+        return { ok: true, paused: message.type === "PAUSE_CACHE", video: structuredClone(video) };
+      }
       if (message.type === "GET_CACHE_MODE") return { ok: true, mode: cacheMode };
       if (message.type === "SET_CACHE_MODE") {
         cacheMode = message.mode;
@@ -235,45 +240,51 @@ globalThis.chrome = {
 await import("../src/popup.js");
 await delay(180);
 observer.disconnect();
-const defaultCacheVisible = !document.querySelector("#cache-view").hidden &&
-  document.querySelector("#assist-view").hidden &&
-  document.querySelector("#library-view").hidden;
+const visible = (selector) => !document.querySelector(selector).hidden;
+
+// 一级结构：「当前视频」「片库」两个页签，设置是齿轮打开的二级视图。
+const defaultCurrentVisible = visible("#current-view") && !visible("#library-view") && !visible("#settings-view");
 document.querySelector("#quality-trigger").click();
 const qualityOpened = document.querySelector("#quality-menu").matches(":popover-open");
 document.querySelector("#library-tab").click();
 const qualityClosedOnViewChange = !document.querySelector("#quality-menu").matches(":popover-open");
-const libraryOnlyVisible = document.querySelector("#cache-view").hidden &&
-  document.querySelector("#assist-view").hidden &&
-  !document.querySelector("#library-view").hidden;
+const libraryOnlyVisible = !visible("#current-view") && visible("#library-view");
 document.querySelector("#library-tab").focus();
 document.querySelector("#library-tab").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
-const keyboardOpenedAssist = document.querySelector("#assist-tab").getAttribute("aria-selected") === "true" &&
-  !document.querySelector("#assist-view").hidden;
+const keyboardOpenedCurrent = document.querySelector("#current-tab").getAttribute("aria-selected") === "true" && visible("#current-view");
+
+// 提前加载开关就在「当前视频」里。
 document.querySelector("#assist-toggle").click();
 await delay(20);
 const disabledAssist = document.querySelector("#assist-toggle").getAttribute("aria-checked") === "false";
 document.querySelector("#assist-toggle").click();
 await delay(20);
-// 外观编辑器默认折叠（摘要行仍显示实时配色），交互前手动展开。
-const appearanceCollapsedByDefault = document.querySelector("#assist-appearance").open === false;
-document.querySelector("#assist-appearance").open = true;
+const diagnosticsCollapsedByDefault = document.querySelector(".assist-diagnostics").open === false;
+
+// 设置：覆盖页签与面板，Esc 返回并把焦点还给齿轮。
+document.querySelector("#settings-button").click();
+const settingsOpened = visible("#settings-view") && !visible("#panel-tabs") && !visible("#current-view") && !visible("#library-view")
+  && document.querySelector("#settings-button").getAttribute("aria-expanded") === "true";
 document.querySelector("[data-assist-color='#20c997']").click();
 await delay(20);
-document.querySelector("#cache-tab").click();
+document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+const settingsClosed = !visible("#settings-view") && visible("#panel-tabs") && visible("#current-view")
+  && document.activeElement === document.querySelector("#settings-button");
 
-// 缓存内容选择：默认视频 + 音频，切到仅音频后显示音频估算并保存偏好。
+// 缓存内容选择：默认视频，切到仅音频后显示音质估算并保存偏好。
 const defaultModeChecked = document.querySelector("[data-cache-mode='video']").getAttribute("aria-checked") === "true";
 document.querySelector("[data-cache-mode='audio']").click();
 await delay(40);
 const audioModeChecked = document.querySelector("[data-cache-mode='audio']").getAttribute("aria-checked") === "true";
 const audioModeSaved = cacheMode === "audio" && calls.includes("SET_CACHE_MODE");
-const audioSizeText = document.querySelector("#cache-size").textContent;
+const audioSizeText = document.querySelector("#audio-summary").textContent;
 const qualityHiddenInAudioMode = document.querySelector("#quality-row").hidden === true;
 document.querySelector("[data-cache-mode='video']").click();
 await delay(40);
 const videoSizeText = document.querySelector("#cache-size").textContent;
 const videoModeRestored = cacheMode === "video" && document.querySelector("[data-cache-mode='video']").getAttribute("aria-checked") === "true";
 
+document.querySelector("#settings-button").click();
 const colorInput = document.querySelector("#assist-progress-color");
 colorInput.value = "#2f80ed";
 colorInput.dispatchEvent(new Event("change", { bubbles: true }));
@@ -284,30 +295,24 @@ const appearanceSaved = assistConfig.progressColor === "#2f80ed" && assistConfig
 const selectedAssistMode = assistConfig.mode;
 const assistEnabled = document.querySelector("#assist-toggle").getAttribute("aria-checked") === "true";
 const selectedAssistColor = document.querySelector("[data-assist-color][aria-checked='true']")?.dataset.assistColor;
-// 复位折叠状态，让后续在同页运行的稳定性检查观察到的仍是默认收起态。
-document.querySelector("#assist-appearance").open = false;
+document.querySelector("#settings-back").click();
 
-// 画质阶梯：B 站声明但与当前账号返回不一致时，界面要说明差在哪一档。
+// 画质阶梯：普通账号拿不到大会员档时，用一句话说清差在哪一档。
 const ladderNote = document.querySelector("#auth-note").textContent;
-const ladderTitle = document.querySelector("#quality-trigger").title;
+const ladderTitle = document.querySelector("#auth-note").title;
 const ladder = {
   note: ladderNote,
   title: ladderTitle,
-  shown: ladderNote.includes("1 档未返回")
-    && ladderTitle.includes("B 站声明可用：1080P+（大会员） / 1080P")
-    && ladderTitle.includes("未返回：1080P+（大会员）")
+  shown: ladderNote === "已登录 · 1080P+ 需要大会员" && ladderTitle.includes("B 站声明可用：1080P+（大会员） / 1080P")
 };
 
 // 片库标签：仅音频缓存显示音轨说明，合并缓存保存按钮指向单个 MP4。
-const libraryTexts = [...document.querySelectorAll(".video-item")].map((item) => item.textContent);
-const audioOnlyRow = libraryTexts.find((text) => text.includes("只缓存音频的视频")) || "";
-const mergedRow = libraryTexts.find((text) => text.includes("已经合并成单文件的视频")) || "";
-const mergedSaveTitle = [...document.querySelectorAll(".video-item")]
-  .find((item) => item.textContent.includes("已经合并成单文件的视频"))
-  ?.querySelector(".save-button")?.title || "";
-const audioSaveTitle = [...document.querySelectorAll(".video-item")]
-  .find((item) => item.textContent.includes("只缓存音频的视频"))
-  ?.querySelector(".save-button")?.title || "";
+const rows = [...document.querySelectorAll(".video-item")];
+const rowText = (needle) => rows.find((item) => item.textContent.includes(needle));
+const audioOnlyRow = rowText("只缓存音频的视频")?.textContent || "";
+const mergedRow = rowText("已经合并成单文件的视频")?.textContent || "";
+const mergedSaveTitle = rowText("已经合并成单文件的视频")?.querySelector(".save-button")?.title || "";
+const audioSaveTitle = rowText("只缓存音频的视频")?.querySelector(".save-button")?.title || "";
 const libraryLabels = {
   audioOnlyRow: audioOnlyRow.replace(/\s+/g, " ").trim(),
   audioRowLabeled: audioOnlyRow.includes("仅音频") && audioOnlyRow.includes("Hi-Res 无损"),
@@ -318,8 +323,31 @@ const libraryLabels = {
   audioSaveDescribed: audioSaveTitle.includes("MP4 容器") && audioSaveTitle.includes("FLAC 无损")
 };
 
+// 片库任务控制：下载中的行提供暂停；删除先隐藏并可撤销，撤销后不发出删除请求。
+document.querySelector("#library-tab").click();
+const byId = (id) => document.querySelector(`.video-item[data-video-id="${id}"]`);
+const downloadingRow = byId("BV1library002:200:q112:chevc");
+const toggle = downloadingRow.querySelector(".toggle-button");
+const pauseOffered = !toggle.hidden && toggle.getAttribute("aria-label").startsWith("暂停") && downloadingRow.querySelector(".save-button").hidden;
+toggle.click();
+await delay(30);
+const pausedRow = downloadingRow.dataset.status === "paused" && toggle.getAttribute("aria-label").startsWith("继续") && calls.includes("PAUSE_CACHE");
+const completeRow = byId("BV1library001:100:q80:cavc");
+completeRow.querySelector(".delete-button").click();
+await delay(20);
+const hiddenOnDelete = !completeRow.isConnected && document.querySelector("#toast-action").textContent === "撤销" && document.querySelector("#library-count").textContent === "3";
+document.querySelector("#toast-action").click();
+await delay(20);
+const undoRestored = Boolean(byId("BV1library001:100:q80:cavc")?.isConnected) && document.querySelector("#library-count").textContent === "4" && !calls.includes("DELETE_VIDEO");
+const libraryActions = { pauseOffered, pausedRow, hiddenOnDelete, undoRestored };
+// 恢复初始状态，后续稳定性检查需要这一行仍处于下载中。
+toggle.click();
+await delay(30);
+document.querySelector("#current-tab").click();
+
 const result = {
   ok: videoSizeText === "10.0 MB" &&
+    Object.values(libraryActions).every(Boolean) &&
     libraryLabels.audioRowLabeled &&
     libraryLabels.mergedRowLabeled &&
     libraryLabels.saveTitleMerged &&
@@ -329,7 +357,7 @@ const result = {
     audioModeChecked &&
     audioModeSaved &&
     qualityHiddenInAudioMode &&
-    audioSizeText === "约 10.1 MB · Hi-Res 无损" &&
+    audioSizeText === "Hi-Res 无损 · 约 10.1 MB" &&
     videoModeRestored &&
     document.querySelector("#current-heading").textContent === "已恢复的视频标题" &&
     document.querySelector("#button-label").textContent === "缓存" &&
@@ -337,21 +365,24 @@ const result = {
     calls.includes("SET_ASSIST_CONFIG") &&
     appearanceSaved &&
     disabledAssist &&
-    appearanceCollapsedByDefault &&
+    diagnosticsCollapsedByDefault &&
+    settingsOpened &&
+    settingsClosed &&
     assistEnabled &&
     selectedAssistMode === "always" &&
     selectedAssistColor === "#20c997" &&
-    defaultCacheVisible &&
+    defaultCurrentVisible &&
     qualityOpened &&
     qualityClosedOnViewChange &&
     libraryOnlyVisible &&
-    keyboardOpenedAssist &&
+    keyboardOpenedCurrent &&
     document.querySelector("#library-count").textContent === "4",
   moduleLoadMs: Math.round(snapshotRequestedAt - openedAt),
   snapshotToReadyMs: Math.round((readyAt || performance.now()) - snapshotRequestedAt),
   libraryDelayMs: 120,
   cacheModeUi: { defaultModeChecked, audioModeChecked, audioModeSaved, audioSizeText, qualityHiddenInAudioMode, videoSizeText, videoModeRestored },
   libraryLabels,
+  libraryActions,
   ladder,
   calls,
   title: document.querySelector("#current-heading").textContent,
@@ -359,14 +390,7 @@ const result = {
   selectedAssistMode,
   assistEnabled,
   selectedAssistColor,
-  hierarchy: {
-    defaultCacheVisible,
-    qualityOpened,
-    qualityClosedOnViewChange,
-    libraryOnlyVisible,
-    keyboardOpenedAssist,
-    libraryCount: document.querySelector("#library-count").textContent
-  },
+  hierarchy: { defaultCurrentVisible, qualityOpened, qualityClosedOnViewChange, libraryOnlyVisible, keyboardOpenedCurrent, settingsOpened, settingsClosed, diagnosticsCollapsedByDefault, libraryCount: document.querySelector("#library-count").textContent },
   listenerInstalled: typeof listener === "function"
 };
 document.querySelector("#result").textContent = JSON.stringify(result, null, 2);
