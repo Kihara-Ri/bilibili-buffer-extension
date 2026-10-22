@@ -150,7 +150,7 @@ window.addEventListener("resize", () => {
 });
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.target !== "popup") return;
-  if (["CACHE_PROGRESS", "CACHE_RETRY", "CACHE_COMPLETE", "CACHE_ERROR", "CACHE_DELETED"].includes(message.type)) {
+  if (["CACHE_PROGRESS", "CACHE_RETRY", "CACHE_COMPLETE", "CACHE_ERROR", "CACHE_PAUSED", "CACHE_DELETED"].includes(message.type)) {
     if (message.video) {
       state.libraryRevision++;
       const deletedAt = state.deletedAt.get(message.video.id) || 0;

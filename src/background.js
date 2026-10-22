@@ -227,6 +227,13 @@ async function handleMessage(message, sender) {
     }
     case "DELETE_VIDEO":
       return unwrap(await sendToOffscreen({ type: "DELETE_VIDEO", videoId: message.videoId }));
+    case "PAUSE_CACHE": {
+      const result = unwrap(await sendToOffscreen({ type: "PAUSE_DOWNLOAD", videoId: message.videoId }));
+      void syncDownloadWatchdog();
+      return result;
+    }
+    case "RESUME_CACHE":
+      return { video: await resumeCache(message.videoId) };
     case "CACHE_PROGRESS":
       await handleCacheEvent(message);
       return { received: true };
@@ -236,6 +243,7 @@ async function handleMessage(message, sender) {
       return { received: true };
     case "CACHE_COMPLETE":
     case "CACHE_ERROR":
+    case "CACHE_PAUSED":
       await handleCacheEvent(message);
       void syncDownloadWatchdog();
       return { received: true };
@@ -479,6 +487,47 @@ async function refreshDownloadSource(video) {
   return { auth: playurl.auth, playurlData: playurl.data };
 }
 
+/**
+ * 用任务记录本身重新拉起下载，不需要原视频页：先按记录里的 bvid/cid/画质向 B 站重新取播放地址，
+ * 取不到时退回记录里保存的旧地址（签名可能仍有效）。看门狗恢复与片库里的「继续」共用这一条路径。
+ * @returns {Promise<{ok: boolean, error?: string}>}
+ */
+async function restartDownload(video, auth) {
+  try {
+    const requestedQuality = normalizeQualityId(video.requestedQuality ?? video.quality, AUTO_QUALITY);
+    const persistedCodec = getCodecFamily(video.tracks?.video?.codecs);
+    const fnval = video.mediaKind === "dash" || video.mediaKind === "audio" ? "4048" : "1";
+    const playurl = await requestPlayurl(video, requestedQuality, video.tabId, auth, fnval);
+    return await sendToOffscreen({
+      type: "START_DOWNLOAD",
+      video: {
+        ...video,
+        requestedCodec: normalizeCodecPreference(video.requestedCodec, persistedCodec === "other" ? "auto" : persistedCodec),
+        auth: playurl.auth,
+        playurlData: playurl.data
+      }
+    });
+  } catch (error) {
+    return sendToOffscreen({ type: "START_DOWNLOAD", video }).catch((fallbackError) => ({
+      ok: false,
+      error: toPublicError(fallbackError) || toPublicError(error)
+    }));
+  }
+}
+
+/** 片库里的「继续」：暂停或出错的任务清掉等待状态后重新拉起，不要求打开原视频页。 */
+async function resumeCache(videoId) {
+  const video = (await listVideos()).find((item) => item.id === videoId);
+  if (!video) throw new Error("缓存任务已不存在");
+  if (video.status === "complete") return video;
+  const resumed = { ...video, status: "downloading", error: "", nextRetryAt: 0, retryDelayMs: 0, autoRetryCount: 0, updatedAt: Date.now() };
+  await putVideo(resumed);
+  await ensureDownloadWatchdog();
+  const result = await restartDownload(resumed, await getBiliSessionState());
+  if (!result?.ok) throw new Error(result?.error || "无法继续缓存");
+  return resumed;
+}
+
 async function ensureDownloadWatchdog(nextRetryAt = 0) {
   await chrome.alarms.create(DOWNLOAD_WATCHDOG_ALARM, makeDownloadWatchdogSchedule(nextRetryAt));
 }
@@ -718,33 +767,8 @@ async function restoreActiveDownloadsNow() {
     const auth = interrupted.length ? await getBiliSessionState() : null;
     for (const video of interrupted) {
       if (activeIds.has(video.id) || !isDownloadRetryDue(video)) continue;
-      try {
-        const requestedQuality = normalizeQualityId(video.requestedQuality ?? video.quality, AUTO_QUALITY);
-        const persistedCodec = getCodecFamily(video.tracks?.video?.codecs);
-        const fnval = video.mediaKind === "dash" || video.mediaKind === "audio" ? "4048" : "1";
-        const playurl = await requestPlayurl(video, requestedQuality, video.tabId, auth, fnval);
-        const result = await sendToOffscreen({
-          type: "START_DOWNLOAD",
-          video: {
-            ...video,
-            requestedCodec: normalizeCodecPreference(
-              video.requestedCodec,
-              persistedCodec === "other" ? "auto" : persistedCodec
-            ),
-            auth: playurl.auth,
-            playurlData: playurl.data
-          }
-        });
-        if (!result?.ok) console.warn("[影哨] 自动续传失败：", result?.error);
-      } catch (error) {
-        const fallback = await sendToOffscreen({ type: "START_DOWNLOAD", video }).catch((fallbackError) => ({
-          ok: false,
-          error: toPublicError(fallbackError)
-        }));
-        if (!fallback?.ok) {
-          console.warn("[影哨] 无法从已保存的播放地址恢复任务：", fallback?.error || error);
-        }
-      }
+      const result = await restartDownload(video, auth);
+      if (!result?.ok) console.warn("[影哨] 无法恢复上次的缓存任务：", result?.error);
     }
     await syncDownloadWatchdog();
   } catch (error) {

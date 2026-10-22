@@ -36,11 +36,16 @@ globalThis.chrome = {
 
 const nativeFetch = globalThis.fetch;
 let transientFailures = 0;
+let mediaRequests = 0;
+// 暂停场景把每个分块拖慢，确保能在下载中途按下暂停。
+let slowMediaMs = 0;
 // 与原生 fetch 一样拒绝错误的 this：把 fetch 当作对象方法转交（options.fetchImpl(...)）
 // 在真实浏览器里会抛 Illegal invocation，箭头函数桩发现不了这类回归。
 globalThis.fetch = async function (url, init = {}) {
   if (this !== undefined && this !== globalThis) throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
   if (!String(url).includes(".test/")) return nativeFetch(url, init);
+  mediaRequests += 1;
+  if (slowMediaMs) await delay(slowMediaMs);
   const source = String(url).includes("/audio") ? audioBytes : videoBytes;
   const match = String(init.headers?.Range || "").match(/^bytes=(\d+)-(\d+)$/);
   if (!match) return new Response("Range required", { status: 400 });
@@ -152,6 +157,50 @@ try {
   await send({ target: "offscreen", type: "DELETE_VIDEO", videoId: raceId });
   await deleteVideoData(raceId).catch(() => {});
 
+  // 暂停 / 继续：暂停后不再发出新的 CDN 请求，记录落为 paused 且保留已落盘字节；
+  // 紧接着「继续」（不等暂停收尾）必须真正重新启动，而不是被当成重复启动忽略。
+  const pauseId = `BV1integration:102:q80:${Date.now()}`;
+  const pauseVideo = () => ({ ...makeRaceVideo(), id: pauseId, pageId: "BV1integration:102", cid: 102, title: "暂停与继续测试", playurlData: makePlayurlData("renewed.test") });
+  const readPause = async () => (await send({ target: "offscreen", type: "GET_VIDEO", videoId: pauseId })).video;
+  slowMediaMs = 150;
+  await send({ target: "offscreen", type: "START_DOWNLOAD", video: pauseVideo() });
+  await waitFor(async () => (await readPause())?.committedBytes > 0, 15000);
+  const paused = await send({ target: "offscreen", type: "PAUSE_DOWNLOAD", videoId: pauseId });
+  assert(paused.ok && paused.paused && paused.video?.status === "paused", `暂停结果不正确：${JSON.stringify(paused)}`);
+  assert(paused.video.committedBytes > 0, "暂停必须保留已落盘字节");
+  assert(broadcasts.some((message) => message.type === "CACHE_PAUSED" && message.video?.id === pauseId), "暂停没有广播 CACHE_PAUSED");
+  const requestsAtPause = mediaRequests;
+  await delay(400);
+  assert(mediaRequests === requestsAtPause, "暂停后仍在发出 CDN 请求");
+  assert((await send({ target: "offscreen", type: "GET_ACTIVE_DOWNLOADS" })).videoIds.every((videoId) => videoId !== pauseId), "暂停后任务仍登记为运行中");
+
+  const resumedOnce = await send({ target: "offscreen", type: "START_DOWNLOAD", video: pauseVideo() });
+  assert(resumedOnce.ok && resumedOnce.started, `暂停后的「继续」没有启动：${JSON.stringify(resumedOnce)}`);
+
+  // 竞态：用一个全新的任务，START 返回时分块请求都还在途（每块被拖慢 150 ms），
+  // 紧接着「暂停」再「继续」，第二个 START 必须等暂停收尾后真正启动。
+  const raceResumeId = `BV1integration:103:q80:${Date.now()}`;
+  const raceResumeVideo = () => ({ ...pauseVideo(), id: raceResumeId, pageId: "BV1integration:103", cid: 103 });
+  await send({ target: "offscreen", type: "START_DOWNLOAD", video: raceResumeVideo() });
+  const pausing = send({ target: "offscreen", type: "PAUSE_DOWNLOAD", videoId: raceResumeId });
+  const restarted = await send({ target: "offscreen", type: "START_DOWNLOAD", video: raceResumeVideo() });
+  const pausedResult = await pausing;
+  assert(pausedResult.paused, `下载中途的暂停没有生效：${JSON.stringify(pausedResult)}`);
+  assert(restarted.ok && restarted.started, `暂停收尾期间的「继续」被忽略：${JSON.stringify(restarted)}`);
+  slowMediaMs = 0;
+  await waitFor(async () => {
+    const video = await readPause();
+    if (video?.status === "error") throw new Error(video.error);
+    return video?.status === "complete";
+  }, 30000);
+  await waitFor(async () => (await send({ target: "offscreen", type: "GET_VIDEO", videoId: raceResumeId })).video?.status === "complete", 30000);
+  for (const taskId of [pauseId, raceResumeId]) {
+    const stored = new Uint8Array(await new Blob((await getChunks(taskId, "video")).map((chunk) => chunk.data)).arrayBuffer());
+    assert(equalBytes(stored, videoBytes), `暂停后继续得到的视频轨字节不正确：${taskId}`);
+    await send({ target: "offscreen", type: "DELETE_VIDEO", videoId: taskId });
+    await deleteVideoData(taskId).catch(() => {});
+  }
+
   document.querySelector("#result").textContent = JSON.stringify({
     ok: true,
     downloadedBytes: completed.downloadedBytes,
@@ -161,6 +210,7 @@ try {
     audioMetrics: completed.tracks.audio.metrics,
     progressEvents: broadcasts.filter((message) => message.type === "CACHE_PROGRESS").length,
     sourceRefreshRequests,
+    pauseResume: true,
     committedWatermarkVerified: true
   }, null, 2);
 } catch (error) {

@@ -99,6 +99,8 @@ async function handleMessage(message) {
       return createPlaybackUrl(message.videoId);
     case "DELETE_VIDEO":
       return deleteVideo(message.videoId);
+    case "PAUSE_DOWNLOAD":
+      return pauseDownload(message.videoId);
     default:
       throw new Error("未知的缓存指令");
   }
@@ -202,13 +204,21 @@ async function startDownload(video) {
   }
 
   const running = activeDownloads.get(video.id);
-  if (running) return { started: false, video: await getVideo(video.id) };
+  if (running) {
+    // 刚被暂停的任务可能还在收尾（中止在途请求、写入暂停状态）。「继续」要等它结束再启动，
+    // 否则会被当成重复启动而静默忽略，任务停在暂停状态。
+    if (!running.paused) return { started: false, video: await getVideo(video.id) };
+    await running.done;
+    if (activeDownloads.has(video.id)) return { started: false, video: await getVideo(video.id) };
+  }
 
   // 必须同步占位再进入异步校验：连点「开始缓存」或看门狗恢复与用户启动竞态时，
   // 两条 START_DOWNLOAD 会在 getVideo 的 IndexedDB 读窗口内交错。若占位晚于
   // await，后到的一条会再建一个下载器并覆盖 Map 注册；先结束的一方还会把另一方的
   // 注册删掉，产生不受删除/中止控制的孤儿下载器，甚至重建刚删除的数据。
-  const job = { controller: new AbortController(), deleted: false };
+  const job = { controller: new AbortController(), deleted: false, paused: false };
+  // done 在任务注销时兑现：暂停与「继续」据此等待旧任务完全收尾。
+  job.done = new Promise((resolve) => { job.finish = resolve; });
   activeDownloads.set(video.id, job);
   try {
     const existing = await getVideo(video.id);
@@ -219,7 +229,7 @@ async function startDownload(video) {
 
     // 创建順序只在首次加入任务时确定；续传/速度更新不能让片库重新排队。
     video = { ...video, createdAt: existing?.createdAt || video.createdAt || Date.now(), runStartedAt: Date.now() };
-    void downloadVideo(video, existing, job).finally(() => releaseDownloadJob(video.id, job));
+    void downloadVideo(video, existing, job).catch(() => {}).finally(() => releaseDownloadJob(video.id, job));
     const { auth: _auth, playurlData: _playurlData, ...publicVideo } = video;
     return { started: true, video: existing || publicVideo };
   } catch (error) {
@@ -231,6 +241,35 @@ async function startDownload(video) {
 /** 只撤销仍属于该任务的注册：任何交错路径都不能把别的 job 从 Map 里删掉。 */
 function releaseDownloadJob(videoId, job) {
   if (activeDownloads.get(videoId) === job) activeDownloads.delete(videoId);
+  job.finish?.();
+}
+
+/**
+ * 暂停：运行中的任务中止在途请求，等任务收尾后由 downloadVideo 写入暂停状态；
+ * 不在运行的任务（如正在等看门狗续传）直接落为暂停，看门狗只恢复 downloading，不会再拉起它。
+ * 已落盘的分块保留，「继续」时从 resumeBytes 续传。
+ */
+async function pauseDownload(videoId) {
+  const job = activeDownloads.get(videoId);
+  if (job) {
+    job.paused = true;
+    job.controller.abort(new DOMException("缓存已暂停", "AbortError"));
+    await job.done;
+    // 收尾阶段（如合并）不响应中止：暂停晚于最后一个分块时任务会直接完成，按真实结果回报。
+    const video = await getVideo(videoId) || null;
+    return { paused: video?.status === "paused", video };
+  }
+  const video = await getVideo(videoId);
+  if (!video || video.status === "complete") return { paused: false, video: video || null };
+  return { paused: true, video: await markPaused(video) };
+}
+
+async function markPaused(video) {
+  const { auth: _auth, playurlData: _playurlData, ...safeVideo } = video;
+  const paused = { ...safeVideo, status: "paused", stage: "", speed: 0, error: "", nextRetryAt: 0, retryDelayMs: 0, updatedAt: Date.now() };
+  await putVideo(paused);
+  broadcastProgress(paused, "CACHE_PAUSED");
+  return paused;
 }
 
 function toDashTrack(name, representation) {
@@ -442,6 +481,7 @@ async function downloadVideo(video, existing, job) {
       const error = caughtError;
       const current = await getVideo(video.id).catch(() => null) || currentExisting || safeVideo;
       const { auth: _currentAuth, playurlData: _currentPlayurl, ...safeCurrent } = current;
+      if (job.paused) { await markPaused(current); return; }
       const committed = committedBytesOf(current);
       if (committed > lastCommitted) { lastCommitted = committed; stalledFailures = 0; }
 
@@ -458,7 +498,8 @@ async function downloadVideo(video, existing, job) {
         await putVideo(waiting);
         broadcastProgress(waiting);
         await abortableDelay(delayMs, job.controller.signal).catch(() => {});
-        if (job.deleted || job.controller.signal.aborted) return;
+        if (job.deleted) return;
+        if (job.paused) { await markPaused(await getVideo(video.id).catch(() => null) || current); return; }
         // 每次续传前都刷新播放地址：签名过期、节点被拒都靠它恢复。刷新失败（如短暂断网）
         // 不终止任务，沿用旧地址再试一次，下一轮失败会再次进入这里。
         try {
