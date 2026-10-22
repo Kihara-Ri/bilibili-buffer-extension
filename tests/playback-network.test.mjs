@@ -259,3 +259,23 @@ test('救援次数只统计对冲副本胜出，普通的失败换节点不算',
   await network.get(primary, 0, 4, { signal: signal() });
   assert.equal(network.snapshot().rescues, 0);
 });
+
+test('并发峰值：请求结束后瞬时并发回到 0，窗口内峰值仍可见，窗口过后归零', async () => {
+  // 峰值窗口按 performance.now() 计；用可控时钟避免全套并行时真实等待超过窗口导致偶发失败。
+  const realNow = performance.now.bind(performance);
+  let offset = 0;
+  performance.now = () => realNow() + offset;
+  try {
+    const total = 64 * MiB;
+    const { fetch } = server(total, { wait: 10 });
+    const network = createNetwork({ fetch, peakWindowMs: 10000 });
+    assert.deepEqual([network.snapshot().active, network.snapshot().peak], [0, 0]);
+    network.prefetch(primary, 0, 4 * BACKGROUND_PIECE, { total });
+    await delay(80);
+    const idle = network.snapshot();
+    assert.equal(idle.active, 0, '请求已完成，瞬时并发为 0');
+    assert.equal(idle.peak, 4, '窗口内的最大并发仍要报告');
+    offset += 11000;
+    assert.equal(network.snapshot().peak, 0, '窗口过后峰值归零');
+  } finally { performance.now = realNow; }
+});

@@ -37,15 +37,22 @@
   /**
    * @param {{fetch: Function, onPiece?: (url: string, start: number, bytes: Uint8Array, total: number, contentType: string) => void,
    *   onPieceError?: (url: string, urgent: boolean) => void,
-   *   maxSlots?: number, backgroundSlots?: number, hedgeMs?: number, firstByteMs?: number, stallMs?: number}} options
+   *   maxSlots?: number, backgroundSlots?: number, peakWindowMs?: number, hedgeMs?: number, firstByteMs?: number, stallMs?: number}} options
    * @returns {object} register/get/prefetch/… 见文件末尾的返回值。
    */
-  function createNetwork({ fetch: fetcher, onPiece = () => {}, onPieceError = () => {}, maxSlots = 32, backgroundSlots = 12, hedgeMs = 800, firstByteMs = 8000, stallMs = 4000 } = {}) {
+  function createNetwork({ fetch: fetcher, onPiece = () => {}, onPieceError = () => {}, maxSlots = 32, backgroundSlots = 12, hedgeMs = 800, firstByteMs = 8000, stallMs = 4000, peakWindowMs = 10000 } = {}) {
     const groups = new Map(), totals = new Map(), health = new Map();
     /** @type {Map<string, object[]>} url → 在途分片（按起点有序、互不重叠） */
     const inflight = new Map();
     const waiting = [];
     let running = 0, runningBackground = 0, generation = 0, sequence = 0;
+    // 并发峰值：单个分片只占槽位几百毫秒，弹窗每秒取一次瞬时值几乎总是 0；
+    // 因此记下每次占槽后的并发数，快照时报告窗口内的最大值，让「刚忙过」可见。
+    const peaks = [];
+    const recentPeak = now => {
+      while (peaks.length && peaks[0].at < now - peakWindowMs) peaks.shift();
+      return peaks.reduce((max, entry) => Math.max(max, entry.n), running);
+    };
     const freshCounters = () => ({ receivedBytes: 0, hedgeWins: 0, urgentRanges: 0, urgentBytes: 0, backgroundBytes: 0, backgroundErrors: 0, fallbacks: 0, host: '' });
     let counters = freshCounters();
     let speed = 0, sampleAt = performance.now(), sampleBytes = 0;
@@ -60,6 +67,7 @@
         entry.signal.removeEventListener('abort', entry.cancel);
         const background = !entry.piece.urgent;
         running++; if (background) runningBackground++;
+        peaks.push({ at: performance.now(), n: running });
         let released = false;
         entry.resolve(() => {
           if (released) return; released = true;
@@ -368,7 +376,7 @@
         sampleAt = now; sampleBytes = counters.receivedBytes;
       }
       return {
-        active: running, limit: maxSlots, speed: Math.round(speed), receivedBytes: counters.receivedBytes,
+        active: running, peak: recentPeak(now), limit: maxSlots, speed: Math.round(speed), receivedBytes: counters.receivedBytes,
         rescues: counters.hedgeWins, host: counters.host, accelerated: counters.urgentRanges, acceleratedBytes: counters.urgentBytes,
         nativeFallbacks: counters.fallbacks, prefetching: backgroundPending(), prefetchBytes: counters.backgroundBytes, prefetchErrors: counters.backgroundErrors,
         queued: waiting.length, blocked: [...health.values()].filter(h => h.until > now).length

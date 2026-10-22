@@ -714,6 +714,7 @@
       activeTracks: [...tracks.values()].filter(track => track.active !== false).length,
       networkSpeed: transfer.speed,
       networkActive: transfer.active,
+      networkPeak: transfer.peak,
       networkLimit: transfer.limit,
       networkQueued: transfer.queued,
       networkHost: transfer.host,

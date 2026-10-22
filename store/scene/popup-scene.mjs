@@ -186,7 +186,7 @@ globalThis.chrome = {
     async create() {}
   },
   runtime: {
-    getManifest: () => ({ version: "2.11.0" }),
+    getManifest: () => ({ version: "2.11.1" }),
     onMessage: { addListener(callback) { listener = callback; } },
     async sendMessage(message) {
       switch (message.type) {

@@ -816,7 +816,7 @@ function renderAssist() {
     hit: live ? formatBytes(finite(stats.cacheHitMB) * 1024 * 1024) : "—",
     ready: live ? `${finite(stats.prefetchAheadSec).toFixed(0)} 秒` : "—",
     buffer: live ? `${finite(stats.bufferAheadSec).toFixed(1)} 秒` : "—",
-    connections: live ? `${finite(stats.networkActive)} / ${finite(stats.networkLimit)}` : "—",
+    connections: live ? `${Math.max(finite(stats.networkActive), finite(stats.networkPeak))} / ${finite(stats.networkLimit)}` : "—",
     rescues: live ? `${finite(stats.networkRescues)} 次` : "—",
     accelerated: live ? `${finite(stats.acceleratedRequests)} 次` : "—",
     fallbacks: live ? `${finite(stats.nativeFallbacks)} 次` : "—",
