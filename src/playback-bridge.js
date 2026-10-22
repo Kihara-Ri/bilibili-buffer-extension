@@ -6,14 +6,12 @@
   const DEFAULT_PREHEAT_COLOR = "#ff8a1f";
   const DEFAULTS = {
     mode: "always",
-    estimatorGuard: true,
     progressColor: "#00a1d6",
     showPreheatHighlight: true,
     preheatColor: DEFAULT_PREHEAT_COLOR
   };
   let config = { ...DEFAULTS };
   let lastStats = null;
-  let lastCommandResult = null;
 
   const markBridgeReady = () => {
     if (document.documentElement) document.documentElement.dataset.biliBufferAssistBridge = "2.5.0";
@@ -60,14 +58,12 @@
     }
     if (message.type === "stats" && message.payload && typeof message.payload === "object") {
       lastStats = message.payload;
-    } else if (message.type === "commandResult") {
-      lastCommandResult = { ...message.payload, at: Date.now() };
     }
   });
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "BILI_BUFFER_GET_ASSIST_STATE") {
-      sendResponse({ ok: true, config, stats: lastStats, commandResult: lastCommandResult });
+      sendResponse({ ok: true, config, stats: lastStats });
       return false;
     }
     if (message?.type === "BILI_BUFFER_SET_ASSIST_CONFIG") {
@@ -80,11 +76,6 @@
         })
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
       return true;
-    }
-    if (message?.type === "BILI_BUFFER_ASSIST_COMMAND") {
-      toPage("command", { name: message.name });
-      sendResponse({ ok: true, sent: true });
-      return false;
     }
     return false;
   });

@@ -13,7 +13,6 @@
 
   const CHANNEL = "bili-buffer-playback-assist-v1";
   const ESTIMATOR_KEY = "bilibili_dash_throughput_lru_v1";
-  const ESTIMATOR_BACKUP_KEY = "__bili_buffer_estimator_backup_v1";
   const MEDIA_RE = /^https?:\/\/[^/]*(?:bilivideo\.com|bilivideo\.cn|hdslb\.com|akamaized\.net)\//i;
   const MB = 1024 * 1024;
   const MAX_RANGE = 16 * MB;
@@ -33,13 +32,12 @@
     mode: "pending",
     slowTtfbMs: 800,
     leadSeconds: LEAD_SECONDS,
-    estimatorGuard: true,
     progressColor: "#00a1d6",
     showPreheatHighlight: true,
     preheatColor: DEFAULT_PREHEAT_COLOR
   };
   // 只接受这些由桥下发的用户配置；网络策略是内部常量，历史存储里的旧字段一律忽略。
-  const CONFIG_KEYS = ["estimatorGuard", "progressColor", "showPreheatHighlight", "preheatColor"];
+  const CONFIG_KEYS = ["progressColor", "showPreheatHighlight", "preheatColor"];
   const cfg = { ...DEFAULTS };
   const tracks = new Map();
   const observedVideos = new WeakSet();
@@ -262,7 +260,7 @@
       if (completed && bytes > 0 && Number.isFinite(totalMs) && totalMs > ttfbMs && ttfbMs <= threshold) {
         boundedPush(host.hotThroughputsKbps, bytes * 8 / (totalMs - ttfbMs));
       }
-      if (track.cold && cfg.estimatorGuard) queueEstimatorCleanup();
+      if (track.cold) queueEstimatorCleanup();
     }
     const parsed = primeTrackFromHeaders(track, range, contentRange, status);
     if (completed && status >= 200 && status < 300 && bytes > 0) {
@@ -625,7 +623,7 @@
   // ---- 估计器护栏 -----------------------------------------------------------------
 
   function sanitizeEstimator(raw) {
-    if (!cfg.estimatorGuard || cfg.mode !== "always") return raw;
+    if (cfg.mode !== "always") return raw;
     let parsed;
     try { parsed = JSON.parse(raw); } catch { return raw; }
     if (!parsed?.entries || typeof parsed.entries !== "object") return raw;
@@ -667,7 +665,7 @@
 
   let estimatorCleanupQueued = false;
   function queueEstimatorCleanup() {
-    if (estimatorCleanupQueued || !cfg.estimatorGuard || cfg.mode !== "always" || !nativeStorageSet) return;
+    if (estimatorCleanupQueued || cfg.mode !== "always" || !nativeStorageSet) return;
     estimatorCleanupQueued = true;
     queueMicrotask(() => {
       estimatorCleanupQueued = false;
@@ -678,42 +676,6 @@
         if (clean !== raw) nativeStorageSet.call(localStorage, ESTIMATOR_KEY, clean);
       } catch { /* 护栏失败不得影响播放器。 */ }
     });
-  }
-
-  function readEstimator() {
-    try {
-      const raw = localStorage.getItem(ESTIMATOR_KEY);
-      if (!raw) return { present: false, suspect: false, entries: [] };
-      const parsed = JSON.parse(raw);
-      const entries = Object.entries(parsed?.entries || {}).map(([key, entry]) => {
-        const host = String(key).split("|")[1] || key;
-        const floor = dynamicEstimatorFloor(host);
-        const p25 = Math.round(Number(entry?.p25Kbps) || 0);
-        return { host, p25, p50: Math.round(Number(entry?.p50Kbps) || 0), latencyMs: Math.round(Number(entry?.latencyMs) || 0), floor };
-      });
-      return { present: true, suspect: entries.some((entry) => entry.floor > 0 && entry.p25 > 0 && entry.p25 < entry.floor), entries };
-    } catch {
-      return { present: true, suspect: false, entries: [] };
-    }
-  }
-
-  function backupAndClearEstimator() {
-    try {
-      const raw = localStorage.getItem(ESTIMATOR_KEY);
-      if (raw) nativeStorageSet.call(localStorage, ESTIMATOR_BACKUP_KEY, JSON.stringify({ at: Date.now(), raw }));
-      localStorage.removeItem(ESTIMATOR_KEY);
-      return Boolean(raw);
-    } catch { return false; }
-  }
-
-  function restoreEstimator() {
-    try {
-      const backup = JSON.parse(localStorage.getItem(ESTIMATOR_BACKUP_KEY) || "null");
-      if (!backup?.raw) return false;
-      nativeStorageSet.call(localStorage, ESTIMATOR_KEY, backup.raw);
-      localStorage.removeItem(ESTIMATOR_BACKUP_KEY);
-      return true;
-    } catch { return false; }
   }
 
   function installEstimatorGuard() {
@@ -746,7 +708,6 @@
     return {
       at: Date.now(),
       mode: cfg.mode,
-      estimatorGuard: Boolean(cfg.estimatorGuard),
       requests: stats.requests,
       slowRequests: stats.slowRequests,
       requestErrors: stats.requestErrors,
@@ -777,7 +738,6 @@
       playedSec: stats.playedSec,
       bufferAheadSec: +currentBufferAhead().toFixed(1),
       pageHidden: document.hidden,
-      estimator: readEstimator(),
       hosts
     };
   }
@@ -1017,15 +977,8 @@
         for (const track of tracks.values()) { track.failures = 0; track.retryAt = 0; }
       }
       renderPreheatProgress();
-      if (cfg.estimatorGuard) queueEstimatorCleanup();
+      queueEstimatorCleanup();
       queuePump();
-    } else if (message.type === "command") {
-      const success = message.payload?.name === "clearEstimator"
-        ? backupAndClearEstimator()
-        : message.payload?.name === "restoreEstimator"
-          ? restoreEstimator()
-          : false;
-      window.postMessage({ channel: CHANNEL, dir: "page->ext", type: "commandResult", payload: { name: message.payload?.name, success } }, "*");
     }
   });
 

@@ -266,7 +266,7 @@ test('缺少 MutationObserver 等能力时观察器仍能加载并保持原生�
 
 test('默认配置与权限保持既有值，新增模块不引入新权限', () => {
   assert.equal(ASSIST_DEFAULTS.mode, 'always');
-  assert.deepEqual(Object.keys(sanitizeAssistConfig({})).sort(), ['estimatorGuard', 'mode', 'preheatColor', 'progressColor', 'showPreheatHighlight']);
+  assert.deepEqual(Object.keys(sanitizeAssistConfig({})).sort(), ['mode', 'preheatColor', 'progressColor', 'showPreheatHighlight']);
   assert.deepEqual(manifest.permissions, [
     'activeTab', 'alarms', 'cookies', 'declarativeNetRequestWithHostAccess', 'downloads', 'offscreen', 'storage', 'unlimitedStorage'
   ]);

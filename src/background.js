@@ -151,8 +151,6 @@ async function handleMessage(message, sender) {
       return { mode: await setCacheModePreference(message.mode) };
     case "SET_ASSIST_CONFIG":
       return { config: await setAssistConfig(message.patch) };
-    case "ASSIST_COMMAND":
-      return sendAssistCommand(message.tabId, message.name);
     case "GET_PAGE_INFO":
       return { pageInfo: await getPageInfo(message.url) };
     case "GET_QUALITY_OPTIONS": {
@@ -378,7 +376,7 @@ async function getAssistState(tabId) {
   if (!Number.isInteger(tabId)) return { config, stats: null };
   try {
     const state = await chrome.tabs.sendMessage(tabId, { type: "BILI_BUFFER_GET_ASSIST_STATE" });
-    return { config, stats: state?.stats || null, commandResult: state?.commandResult || null };
+    return { config, stats: state?.stats || null };
   } catch {
     return { config, stats: null };
   }
@@ -389,14 +387,6 @@ async function setAssistConfig(patch) {
   const config = sanitizeAssistConfig(patch, current);
   await chrome.storage.local.set({ [ASSIST_CONFIG_KEY]: config });
   return config;
-}
-
-async function sendAssistCommand(tabId, name) {
-  if (!Number.isInteger(tabId)) throw new Error("无法识别当前标签页");
-  if (!["clearEstimator", "restoreEstimator"].includes(name)) throw new Error("未知的播放辅助指令");
-  const result = await chrome.tabs.sendMessage(tabId, { type: "BILI_BUFFER_ASSIST_COMMAND", name });
-  if (!result?.ok) throw new Error(result?.error || "当前 B 站页面没有响应");
-  return { sent: true };
 }
 
 async function readPopupSnapshot(tabId, inputUrl) {

@@ -4,7 +4,7 @@ const calls = [];
 let readyAt = 0;
 let listener;
 let snapshotRequestedAt = 0;
-let assistConfig = { mode: "always", estimatorGuard: true, preheatColor: "#ff8a1f" };
+let assistConfig = { mode: "always", preheatColor: "#ff8a1f" };
 let cacheMode = "video";
 const libraryVideos = [
   {

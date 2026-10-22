@@ -154,7 +154,7 @@ const LIBRARY = [
   }
 ];
 
-const ASSIST_CONFIG = { mode: "always", estimatorGuard: true, preheatColor: "#ff8a1f", progressColor: "#00a1d6", showPreheatHighlight: true };
+const ASSIST_CONFIG = { mode: "always", preheatColor: "#ff8a1f", progressColor: "#00a1d6", showPreheatHighlight: true };
 const ASSIST_STATS = {
   activeTracks: 2,
   hosts: { "upos-sz-mirror08c.bilivideo.com": { ttfbP95: 412 } },

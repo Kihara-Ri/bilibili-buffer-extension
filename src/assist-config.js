@@ -13,7 +13,6 @@ export const PREHEAT_COLOR_PRESETS = Object.freeze([
 // （见 playback-observer.js / playback-network.js），不进存储，也就不会被旧版本的保存值卡住。
 export const ASSIST_DEFAULTS = Object.freeze({
   mode: "always",
-  estimatorGuard: true,
   progressColor: "#00a1d6",
   showPreheatHighlight: true,
   preheatColor: DEFAULT_PREHEAT_COLOR
@@ -34,7 +33,6 @@ export function sanitizeAssistConfig(patch, current = ASSIST_DEFAULTS) {
   // 只挑已知字段：历史存储里的 cdnMode / maxConcurrency / leadSeconds 等旧策略字段在此丢弃。
   const next = {
     mode: normalizeAssistMode(current?.mode),
-    estimatorGuard: current?.estimatorGuard !== false,
     progressColor: normalizePreheatColor(current?.progressColor, "#00a1d6"),
     showPreheatHighlight: current?.showPreheatHighlight !== false,
     preheatColor: normalizePreheatColor(current?.preheatColor)
@@ -42,7 +40,6 @@ export function sanitizeAssistConfig(patch, current = ASSIST_DEFAULTS) {
   if (patch && Object.hasOwn(patch, "mode")) {
     next.mode = normalizeAssistMode(patch.mode, next.mode);
   }
-  if (patch && typeof patch.estimatorGuard === "boolean") next.estimatorGuard = patch.estimatorGuard;
   if (patch && Object.hasOwn(patch, "preheatColor")) {
     next.preheatColor = normalizePreheatColor(patch.preheatColor, next.preheatColor);
   }
