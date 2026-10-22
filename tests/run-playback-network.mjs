@@ -26,8 +26,9 @@ try {
     await new Promise(r=>setTimeout(r,50));
     const internals=window.__biliBufferPlaybackAssistInternals;
     internals.cfg.mode='always';
-    // 直接排一个后台分片：主节点延迟 2.5 秒，对冲到备用节点后写回原 URL 的缓存。
-    internals.network.prefetch(primary,0,4,{total:4});
+    // 走真实规划器：轨道总长 4 字节、索引未知时规划器会先取文件头；主节点延迟 2.5 秒，
+    // 对冲到备用节点后写回原 URL 的缓存。（规划器会取消不属于任何轨道的后台分片，不能绕过它直接排片。）
+    const track=internals.trackFor(primary);track.size=4;internals.planPrefetch();
     await new Promise(r=>{const t=setInterval(()=>{if(!internals.network.backgroundPending()){clearInterval(t);r();}},20);});
     const response=await fetch(primary,{headers:{Range:'bytes=0-3'}});
     return {bytes:[...new Uint8Array(await response.arrayBuffer())],stats:internals.publicStats()};
@@ -41,7 +42,7 @@ try {
     const registrations=[];const original=i.network.register;i.network.register=p=>{registrations.push(p);return original(p);};
     await new Promise((resolve,reject)=>{const x=new XMLHttpRequest();x.open('GET','https://api.bilibili.com/x/player/wbi/playurl?cid=1');x.onload=resolve;x.onerror=reject;x.send();});
     const capturedBefore=registrations.length;
-    i.network.prefetch('https://a.bilivideo.com/browser.m4s',0,4,{total:4});
+    const t=i.trackFor('https://a.bilivideo.com/browser.m4s');t.size=4;i.planPrefetch();
     await new Promise(r=>{const t=setInterval(()=>{if(!i.network.backgroundPending()){clearInterval(t);r();}},20);});
     const rescue=i.publicStats().networkRescues;
     window.postMessage({channel:'bili-buffer-playback-assist-v1',dir:'ext->page',type:'config',payload:{mode:'off'}},'*');

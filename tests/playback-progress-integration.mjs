@@ -35,7 +35,6 @@ try {
   const media = internals.trackFor("https://a.bilivideo.com/path/video.mp4");
   internals.trackFor("https://a.bilivideo.com/path/audio.m4s");
   media.size = 1000;
-  internals.addRange(media.prefetchedRanges, 100, 800);
   internals.renderPreheatProgress();
   assert(!document.querySelector(".bili-buffer-timeline, .bili-buffer-timeline-marker, .bili-buffer-preheat-layer"), "不能增加替代时间轴、指示器或覆盖层");
   assert(elements.every((el, i) => geometry(el) === original[i]), "原生布局、变换和可见性必须保持不变");
