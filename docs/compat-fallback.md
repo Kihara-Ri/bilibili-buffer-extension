@@ -23,7 +23,6 @@
 | `MutationObserver` 缺失 | 视频元素补扫 | 观察器照常加载，1 秒定时器继续扫描 | 同上 |
 | Playwright/桥不可用、`chrome.runtime.sendMessage` 失败 | 复用读取 | 桥回未命中；页面等满超时后走网络 | 同上 |
 | `BiliPlaybackReuse` 模块整体缺失 | 持久源范围复用 | 观察器不尝试复用，直接走网络 | `tests/playback-reuse.test.mjs` |
-| 请求预算服务不可用 | 在线加速 | 交原生回退（离线走错误重试），不自发本地预算 | `tests/request-budget*.test.mjs` |
 | `window.fetch` / `XMLHttpRequest` 缺失 | 缓存适配器 | 适配器不安装，全部走原生 | `tests/playback-cache*.test.mjs` |
 
 ## 3. 失败上限与熔断
@@ -33,7 +32,6 @@
 | 页面 → 桥 → 镜像读取 | 1.5 秒 | 连续 3 次失败暂停 60 秒 | 任意一次成功清零计数 |
 | 桥 → 后台回包 | 1.4 秒（迟到即丢） | — | — |
 | 离线镜像写入 | 串行队列 | 同一下载任务连续 3 次失败即停写 | 新任务重新开始 |
-| 请求预算 RPC | 2 秒 / 15 秒总等待 | 失败即回退原生或重试 | 下一次请求重试 |
 | 缓存→网络回退 | 沿用节点超时与截止时间 | 403 短封、其他指数退避 | 健康度按成功请求恢复 |
 
 **取消语义**：观察器的 `loadPlayerRange` 先校验 `signal.aborted`、`cfg.mode` 与页面世代，
@@ -50,7 +48,7 @@
 - `ASSIST_DEFAULTS`：`mode=always`、`maxConcurrency=32`、`cdnMode=original`、`networkPolicyVersion=3`，
   与 2.8.0 以来一致；`sanitizeAssistConfig({})` 仍解析出同样的默认值。
 - `manifest.permissions` / `host_permissions` 未新增条目；热重载入口仍不在生产注入列表。
-- 新模块顺序固定为 `playback-cache → routes → network → request-budget-client → playback-reuse → observer`，
+- 新模块顺序固定为 `playback-cache → routes → network → playback-reuse → observer`，
   保证观察器读取 `BiliPlaybackReuse` 时它已就绪。
 
 ## 6. 验证

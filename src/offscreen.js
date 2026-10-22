@@ -53,8 +53,6 @@ const sendSourceRange = (request) => chrome.runtime.sendMessage({ target: "backg
 
 import { isRecoverableDownloadError, makeDownloadRetryState } from "./download-retry.js";
 import { startDevReloadPolling } from "./dev-reload.js";
-import "./request-budget-client.js";
-const budgetFetch = globalThis.BiliRequestBudget.createBudgetFetch((...args)=>fetch(...args), request => chrome.runtime.sendMessage({target:'background',type:'DOWNLOAD_BUDGET',request}));
 
 const CHUNK_SIZE = 4 * 1024 * 1024;
 // 合并后的单文件缓存使用独立的分块序列。
@@ -574,7 +572,7 @@ async function downloadProgressiveSource(video, existing, source, job) {
   let ranking;
   try {
     ranking = await rankRangeCandidates(source.urls, {
-      fetchImpl: budgetFetch,
+      fetchImpl: fetch,
       start: resumeBytes,
       totalBytes: source.expectedBytes,
       signal: job.controller.signal
@@ -608,7 +606,7 @@ async function downloadProgressiveSource(video, existing, source, job) {
   coordinator.setRanking("media", ranking);
   try {
     const result = await downloadByteRanges({
-      fetchImpl: budgetFetch,
+      fetchImpl: fetch,
       urls: ranking.urls,
       start: resumeBytes,
       totalBytes: ranking.totalBytes,
@@ -1063,7 +1061,7 @@ async function downloadTrackSource(video, existing, source, job) {
     try {
       const state = coordinator.getState(trackName);
       const ranking = await rankRangeCandidates(sourceTrack.urls, {
-        fetchImpl: budgetFetch,
+        fetchImpl: fetch,
         start: state.resumeBytes,
         totalBytes: state.totalBytes,
         signal: localController.signal
@@ -1073,7 +1071,7 @@ async function downloadTrackSource(video, existing, source, job) {
         ? trackName === "video" ? DEFAULT_RANGE_CONCURRENCY : 1
         : DEFAULT_RANGE_CONCURRENCY;
       const result = await downloadByteRanges({
-      fetchImpl: budgetFetch,
+      fetchImpl: fetch,
         urls: ranking.urls,
         start: state.resumeBytes,
         totalBytes: ranking.totalBytes,
@@ -1175,7 +1173,7 @@ async function fetchDashTrackCandidate(url, meta, job, trackName) {
   try {
     do {
       const requestedOffset = downloadedBytes;
-      const response = await budgetFetch(url, {
+      const response = await fetch(url, {
         credentials: "omit",
         headers: { Range: `bytes=${requestedOffset}-` },
         signal: job.controller.signal
@@ -1319,7 +1317,7 @@ async function fetchCandidate(url, meta, job) {
     do {
       const requestedOffset = downloadedBytes;
       const headers = requestedOffset > 0 ? { Range: `bytes=${requestedOffset}-` } : undefined;
-      const response = await budgetFetch(url, {
+      const response = await fetch(url, {
         credentials: "omit",
         headers,
         signal: job.controller.signal

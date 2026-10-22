@@ -277,7 +277,7 @@ test('默认配置与权限保持既有值，新增模块不引入新权限', ()
     'http://127.0.0.1/*', 'https://*.bilibili.com/*', 'https://*.bilivideo.com/*', 'https://*.bilivideo.cn/*', 'https://*.hdslb.com/*', 'https://*.akamaized.net/*'
   ]);
   assert.equal(manifest.content_scripts.some((entry) => entry.js.some((file) => file.includes('dev-reload'))), false);
-  // 复用模块必须与缓存适配器、请求预算一起在 document_start 注入，且早于观察器。
+  // 复用模块必须与缓存适配器一起在 document_start 注入，且早于观察器。
   const main = manifest.content_scripts.find((entry) => entry.world === 'MAIN');
   assert.ok(main.js.indexOf('src/playback-cache.js') < main.js.indexOf('src/playback-reuse.js'));
   assert.ok(main.js.indexOf('src/playback-reuse.js') < main.js.indexOf('src/playback-observer.js'));

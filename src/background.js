@@ -38,11 +38,9 @@ import {
   makeDownloadWatchdogSchedule
 } from "./download-retry.js";
 import { ASSIST_DEFAULTS, sanitizeAssistConfig } from "./assist-config.js";
-import { createBudgetService, budgetOwner } from "./request-budget.js";
 import { createSourceRepository, createSourceService, sourceRangeScope } from "./source-range-store.js";
 import { collectHealthChecks } from "./health-check.js";
 
-const requestBudget = createBudgetService(chrome.storage.session, async () => (await getAssistConfig()).maxConcurrency);
 // 离线已下载的源范围镜像：只接收逐字节校验过的 CDN 范围，供播放侧按「路径 + 总长」复用。
 const sourceRanges = createSourceService({
   repository: typeof indexedDB === "undefined" ? null : createSourceRepository(),
@@ -134,11 +132,6 @@ async function handleMessage(message, sender) {
       });
       if (!scope || (request.op === "write") !== (scope === "writer")) return {};
       return sourceRanges.handle(request, scope);
-    }
-    case "DOWNLOAD_BUDGET": {
-      const owner=budgetOwner(sender,chrome.runtime.id);
-      if(!owner) throw new Error("下载预算来源无效");
-      return requestBudget(message.request || {},owner);
     }
     case "GET_POPUP_SNAPSHOT": {
       const snapshot = await readPopupSnapshot(message.tabId, message.url);

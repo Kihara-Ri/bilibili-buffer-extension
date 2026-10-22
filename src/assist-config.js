@@ -69,7 +69,7 @@ export function sanitizeAssistConfig(patch, current = ASSIST_DEFAULTS) {
   }
   // 2.8.10 起 CDN 路线与并发上限退出用户配置：统一由系统策略决定（原线路优先、
   // 32 路全局上限内按收益自适应增减）。归一化时直接钉死，历史存储里的用户选择
-  // 随之失效；字段保留在配置形状里供预算服务与统计消费。
+  // 随之失效；字段保留在配置形状里供统计消费。
   next.maxConcurrency = ASSIST_DEFAULTS.maxConcurrency;
   next.cdnMode = ASSIST_DEFAULTS.cdnMode;
   next.networkPolicyVersion = 3;

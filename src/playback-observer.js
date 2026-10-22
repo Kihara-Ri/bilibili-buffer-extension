@@ -63,9 +63,8 @@
   const prefetchJobs = new Map();
   const urgentFlights = new Map();
   const nativeFetch = window.fetch;
-  const networkFetch = window.BiliRequestBudget
-    ? window.BiliRequestBudget.createBudgetFetch((...args) => nativeFetch.apply(window,args),window.BiliRequestBudget.createPageRpc())
-    : (...args) => nativeFetch.apply(window,args);
+  // 并发只在页面内约束（playback-network.js 的共享队列）；不再逐请求向 SW 申请跨标签租约。
+  const networkFetch = (...args) => nativeFetch.apply(window, args);
   const network = window.BiliPlaybackNetwork.createNetwork({ fetch: networkFetch });
   // 离线原始范围的读取器由 playback-reuse.js 提供；缺失时全部走网络，功能整体降级。
   const reuse = globalThis.BiliPlaybackReuse;

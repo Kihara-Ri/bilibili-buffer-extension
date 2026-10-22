@@ -73,7 +73,7 @@ export async function collectHealthChecks({
     },
     {
       id: "storage-session",
-      label: "会话存储（下载预算）",
+      label: "会话存储（弹窗快照）",
       run: async () => {
         if (typeof api?.storage?.session?.set !== "function") throw new Error("storage.session 不可用");
         await api.storage.session.set({ healthProbe: 1 });
