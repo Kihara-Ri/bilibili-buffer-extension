@@ -35,6 +35,7 @@ globalThis.chrome = {
 };
 
 const nativeFetch = globalThis.fetch;
+let transientFailures = 0;
 // 与原生 fetch 一样拒绝错误的 this：把 fetch 当作对象方法转交（options.fetchImpl(...)）
 // 在真实浏览器里会抛 Illegal invocation，箭头函数桩发现不了这类回归。
 globalThis.fetch = async function (url, init = {}) {
@@ -47,6 +48,12 @@ globalThis.fetch = async function (url, init = {}) {
   const end = Math.min(Number(match[2]), source.length - 1);
   if (!String(url).includes("renewed.test") && start >= 4 * MiB) {
     return new Response("expired", { status: 403 });
+  }
+  // 地址刷新后，视频轨 8 MiB 处的分块在所有节点上先连续失败 3 次（模拟海外链路抖动），
+  // 应在分块内重试消化，而不是让整个任务失败、交给看门狗等一分钟。
+  if (String(url).includes("renewed.test") && !String(url).includes("/audio") && start === 8 * MiB && transientFailures < 3) {
+    transientFailures += 1;
+    return new Response("busy", { status: 503 });
   }
   const isBackup = String(url).includes("backup.test");
   const rangeOrdinal = Math.floor(start / (4 * MiB));
@@ -102,11 +109,14 @@ try {
   assert(equalBytes(storedAudio, audioBytes), "音频轨落盘顺序或字节不正确");
   assert(completed.downloadedBytes === videoBytes.length + audioBytes.length, "聚合字节数不正确");
   assert(completed.codec === "av1", "自动编码没有选择同画质下码率最低的 AV1");
-  assert(completed.tracks.video.metrics.concurrency >= 1 && completed.tracks.video.metrics.concurrency <= 4, "视频轨并发应在 1 至 4 路以内");
-  assert(completed.tracks.audio.metrics.concurrency === 1, "音频轨应使用 1 路并发");
+  assert(completed.tracks.video.metrics.concurrency >= 1 && completed.tracks.video.metrics.concurrency <= 6, "视频轨并发应在 1 至 6 路以内");
+  assert(completed.tracks.audio.metrics.concurrency <= 2, "音频轨最多 2 路并发");
+  assert(transientFailures === 3, "抖动场景没有被触发");
+  assert(!broadcasts.some((message) => message.type === "CACHE_RETRY" || message.type === "CACHE_ERROR"), "分块级的短暂失败不应让任务失败或交给看门狗");
   assert(completed.tracks.video.metrics.cdnHost === "renewed.test", "刷新后没有切换到新视频 CDN");
   assert(completed.tracks.audio.metrics.cdnHost === "renewed.test", "刷新后没有切换到新音频 CDN");
-  assert(sourceRefreshRequests >= 1, "签名地址失效后没有刷新播放地址");
+  // 恰好一次：签名失效触发一次刷新；之后的链路抖动必须在分块内消化，不能再让任务失败去刷新。
+  assert(sourceRefreshRequests === 1, `签名失效应刷新恰好一次，实际 ${sourceRefreshRequests} 次`);
   const progress = broadcasts.filter(message => message.type === "CACHE_PROGRESS" && message.video?.status === "downloading");
   assert(progress.length > 0 && progress.every(({video}) => Number.isFinite(video.committedBytes) && video.committedBytes <= video.resumeBytes), "所有下载快照都必须区分确认落盘与在途水位");
   const watermark = new Map();

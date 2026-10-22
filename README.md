@@ -24,7 +24,7 @@
 **完整缓存（离线）**
 
 - 按当前账号实际可用的最高画质缓存，也可手动选档位；支持 AV1 / HEVC / AVC。
-- 视频、音频两条轨道分别下载后在本机重封装为单个 MP4，不做任何转码；支持断点续传、播放地址失效自动刷新与后台自动恢复。
+- 视频、音频两条轨道分别下载后在本机重封装为单个 MP4，不做任何转码；支持断点续传、播放地址失效自动刷新与后台自动恢复；开始缓存后可以关闭视频页，下载在扩展后台独立完成，链路抖动在分块内重试消化，不会每隔一段就停下来等一分钟。
 - 「仅音频」模式保留 B 站原始音质（Hi-Res 无损优先，其次杜比全景声、AAC），导出 `.flac` / `.m4a`。
 - 再次打开已缓存的视频自动切换为本地播放，保留原生控制条、弹幕与倍速；片库中可保存文件或删除缓存。
 
@@ -66,4 +66,4 @@ npm run test:chrome  # 下载与本机 Chrome 同版本的 Chrome for Testing，
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — 参考项目与许可声明
 - [store/](store/) — Chrome Web Store 提审资料
 
-当前版本 2.9.2。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。
+当前版本 2.10.0。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。

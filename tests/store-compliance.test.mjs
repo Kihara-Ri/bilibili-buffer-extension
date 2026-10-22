@@ -81,6 +81,10 @@ test("扩展 ID 与 key 一致，DNR 规则只作用于本扩展发起的请求"
   assert.equal(id, EXPECTED_ID, "换 key 会让 DNR 规则失效并改变扩展 ID");
   return readJson("rules/cdn-headers.json").then((rules) => {
     assert.deepEqual(checkDnrRules(rules, id), []);
+    // 播放页关闭后后台直接请求播放地址：扩展自己发往 api.bilibili.com 的请求也要带站内 Referer，
+    // 否则可能被风控拒绝（412 / -352），离线缓存就无法在不开页面时刷新地址。
+    const api = rules.find((rule) => rule.condition.requestDomains.includes("api.bilibili.com"));
+    assert.equal(api?.action.requestHeaders[0].value, "https://www.bilibili.com/");
     assert.ok(checkDnrRules(rules, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").some((m) => m.includes("未包含当前扩展 ID")));
     const wrong = structuredClone(rules);
     wrong[0].condition.initiatorDomains = ["www.bilibili.com"];

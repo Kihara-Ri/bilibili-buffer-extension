@@ -209,6 +209,7 @@ test("前段失败时不会提交后面已完成的乱序分块", async () => {
     totalBytes: data.length,
     rangeSize: 4,
     concurrency: 3,
+    retryBaseMs: 1,
     fetchImpl,
     onCommit: async (batch) => committed.push(...batch.map((entry) => entry.range.ordinal))
   }), /HTTP 503/);
@@ -273,7 +274,7 @@ function rangeResponse(data, start, end) {
 }
 
 
-test("默认四路下载保持并发上限并按序完整落盘", async () => {
+test("默认六路下载保持并发上限并按序完整落盘", async () => {
   const data = Uint8Array.from({ length: 32 }, (_, index) => index);
   let active = 0;
   let peak = 0;
@@ -290,7 +291,66 @@ test("默认四路下载保持并发上限并按序完整落盘", async () => {
     },
     onCommit: async (batch) => { for (const entry of batch) chunks.push(entry.data); }
   });
-  assert.equal(peak, 4);
-  assert.equal(result.metrics.concurrency, 4);
+  assert.equal(peak, 6);
+  assert.equal(result.metrics.concurrency, 6);
   assert.deepEqual(new Uint8Array(await new Blob(chunks).arrayBuffer()), data);
+});
+
+// ---- 离线缓存反复中断的复现：慢但持续的分块、单节点的短暂错误、签名被拒 ----
+
+/** 按固定间隔逐块吐出正文的 206 响应：模拟海外慢速但没有中断的连接。
+ * 与真实 fetch 一样，请求被中止后正文流随之报错。 */
+function trickleResponse(data, start, end, gapMs, signal, pieces = 6) {
+  const body = data.slice(start, end + 1), size = Math.ceil(body.length / pieces);
+  let sent = 0;
+  return new Response(new ReadableStream({
+    async pull(controller) {
+      await new Promise((resolve) => setTimeout(resolve, gapMs));
+      if (signal?.aborted) { controller.error(signal.reason); return; }
+      controller.enqueue(body.slice(sent, sent + size)); sent += size;
+      if (sent >= body.length) controller.close();
+    }
+  }), { status: 206, headers: { "Content-Range": `bytes ${start}-${end}/${data.length}` } });
+}
+
+test("慢但持续有数据的分块不会被总时长卡掉：超时只看停滞", async () => {
+  const data = Uint8Array.from({ length: 60 }, (_, index) => index);
+  const result = await downloadByteRanges({
+    urls: ["https://cdn.example/video"], start: 0, totalBytes: data.length, rangeSize: data.length, concurrency: 1,
+    // 正文共约 180 ms，但每 30 ms 都有新字节；60 ms 的停滞超时不应触发。
+    timeoutMs: 60,
+    fetchImpl: async (_url, init) => {
+      const [, start, end] = init.headers.Range.match(/bytes=(\d+)-(\d+)/).map(Number);
+      return trickleResponse(data, start, end, 30, init.signal);
+    },
+    onCommit: async () => {}
+  });
+  assert.equal(result.metrics.committedBytes, data.length);
+  assert.equal(result.metrics.retryCount, 0);
+});
+
+test("唯一节点的短暂错误在分块内重试，不让整个任务失败", async () => {
+  const data = Uint8Array.from({ length: 8 }, (_, index) => index);
+  let failures = 0;
+  const result = await downloadByteRanges({
+    urls: ["https://cdn.example/video"], start: 0, totalBytes: data.length, rangeSize: 4, concurrency: 1, retryBaseMs: 1,
+    fetchImpl: async (_url, init) => {
+      const [, start, end] = init.headers.Range.match(/bytes=(\d+)-(\d+)/).map(Number);
+      if (start === 4 && failures < 2) { failures += 1; return new Response("busy", { status: 503 }); }
+      return rangeResponse(data, start, end);
+    },
+    onCommit: async () => {}
+  });
+  assert.equal(result.metrics.committedBytes, data.length);
+  assert.equal(result.metrics.retryCount, 2);
+});
+
+test("所有地址都返回 403（签名失效）时立即交还上层刷新地址，不做无用重试", async () => {
+  const calls = [];
+  await assert.rejects(downloadByteRanges({
+    urls: ["https://a.example/video", "https://b.example/video"], start: 0, totalBytes: 8, rangeSize: 8, concurrency: 1, retryBaseMs: 1,
+    fetchImpl: async (url) => { calls.push(url); return new Response("forbidden", { status: 403 }); },
+    onCommit: async () => {}
+  }), /HTTP 403/);
+  assert.deepEqual(calls, ["https://a.example/video", "https://b.example/video"]);
 });

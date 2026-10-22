@@ -57,6 +57,9 @@ import { startDevReloadPolling } from "./dev-reload.js";
 // 原生 fetch 必须以 window 为 this 调用；作为 options.fetchImpl 传下去再以方法形式调用会抛
 // 「Illegal invocation」（2.8.13 的回归：离线缓存每次都在第一个请求就失败）。
 const networkFetch = (input, init) => fetch(input, init);
+// 任务内连续多少次「没有任何新落盘字节」的失败后才交给看门狗，以及每次的等待秒数。
+// 只要还在推进就一直在本进程内续传，不再动辄等一分钟。
+const IN_PROCESS_RETRY_DELAYS_MS = Object.freeze([2_000, 5_000, 15_000, 30_000, 60_000]);
 const CHUNK_SIZE = 4 * 1024 * 1024;
 // 合并后的单文件缓存使用独立的分块序列。
 const MERGED_TRACK = "merged";
@@ -395,10 +398,16 @@ function buildProgressiveSource({ data, video, selectedQuality, actualQuality, r
   };
 }
 
+/** 已确认落盘的字节数：判断一次失败前任务有没有推进。 */
+const committedBytesOf = (video) => Number(video?.resumeBytes ?? video?.downloadedBytes) || 0;
+
 async function downloadVideo(video, existing, job) {
   let currentVideo = video;
   let currentExisting = existing;
-  let sourceRefreshes = 0;
+  // 连续「零推进」失败次数：有新字节落盘就清零。只要还在推进，就在本进程内刷新地址后续传，
+  // 播放页关着也不影响（播放地址由后台直接向 B 站接口获取）；真正长时间断网才交给看门狗。
+  let stalledFailures = 0;
+  let lastCommitted = committedBytesOf(existing);
   while (!job.deleted) {
     const { auth: _auth, playurlData: _playurlData, ...safeVideo } = currentVideo;
     try {
@@ -420,6 +429,7 @@ async function downloadVideo(video, existing, job) {
         stage: "",
         progress: 1,
         speed: 0,
+        error: "",
         autoRetryCount: 0,
         nextRetryAt: 0,
         retryDelayMs: 0
@@ -429,34 +439,36 @@ async function downloadVideo(video, existing, job) {
       return;
     } catch (caughtError) {
       if (job.deleted) return;
-      let error = caughtError;
+      const error = caughtError;
       const current = await getVideo(video.id).catch(() => null) || currentExisting || safeVideo;
       const { auth: _currentAuth, playurlData: _currentPlayurl, ...safeCurrent } = current;
+      const committed = committedBytesOf(current);
+      if (committed > lastCommitted) { lastCommitted = committed; stalledFailures = 0; }
 
-      if (
-        error?.name !== "AbortError" &&
-        isRecoverableDownloadError(error) &&
-        sourceRefreshes < 2
-      ) {
+      if (error?.name !== "AbortError" && isRecoverableDownloadError(error) && stalledFailures < IN_PROCESS_RETRY_DELAYS_MS.length) {
+        const delayMs = IN_PROCESS_RETRY_DELAYS_MS[stalledFailures];
+        stalledFailures += 1;
+        const waiting = {
+          ...safeCurrent,
+          status: "downloading",
+          speed: 0,
+          error: `连接中断，${Math.round(delayMs / 1000)} 秒后刷新播放地址并续传`,
+          updatedAt: Date.now()
+        };
+        await putVideo(waiting);
+        broadcastProgress(waiting);
+        await abortableDelay(delayMs, job.controller.signal).catch(() => {});
+        if (job.deleted || job.controller.signal.aborted) return;
+        // 每次续传前都刷新播放地址：签名过期、节点被拒都靠它恢复。刷新失败（如短暂断网）
+        // 不终止任务，沿用旧地址再试一次，下一轮失败会再次进入这里。
         try {
           const refreshed = await refreshDownloadSource(safeCurrent);
-          sourceRefreshes += 1;
           currentVideo = { ...safeCurrent, auth: refreshed.auth, playurlData: refreshed.playurlData };
-          currentExisting = current;
-          const refreshing = {
-            ...safeCurrent,
-            status: "downloading",
-            speed: 0,
-            error: "连接中断，正在刷新播放地址并续传",
-            updatedAt: Date.now()
-          };
-          await putVideo(refreshing);
-          broadcastProgress(refreshing);
-          await abortableDelay(sourceRefreshes * 1000, job.controller.signal);
-          continue;
-        } catch (refreshError) {
-          error = refreshError;
+        } catch {
+          currentVideo = { ...safeCurrent, auth: currentVideo.auth, playurlData: currentVideo.playurlData };
         }
+        currentExisting = await getVideo(video.id).catch(() => null) || current;
+        continue;
       }
 
       const retry = error?.name === "AbortError" ? null : makeDownloadRetryState(safeCurrent, error);
@@ -1071,7 +1083,7 @@ async function downloadTrackSource(video, existing, source, job) {
       });
       coordinator.setRanking(trackName, ranking);
       const trackConcurrency = sourceEntries.length > 1
-        ? trackName === "video" ? DEFAULT_RANGE_CONCURRENCY : 1
+        ? trackName === "video" ? DEFAULT_RANGE_CONCURRENCY : 2
         : DEFAULT_RANGE_CONCURRENCY;
       const result = await downloadByteRanges({
       fetchImpl: networkFetch,

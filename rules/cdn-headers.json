@@ -25,5 +25,30 @@
         "xmlhttprequest"
       ]
     }
+  },
+  {
+    "id": 2,
+    "priority": 100,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        {
+          "header": "Referer",
+          "operation": "set",
+          "value": "https://www.bilibili.com/"
+        }
+      ]
+    },
+    "condition": {
+      "initiatorDomains": [
+        "ppoagkhgdcfchiodhgadpenibndbnhcj"
+      ],
+      "requestDomains": [
+        "api.bilibili.com"
+      ],
+      "resourceTypes": [
+        "xmlhttprequest"
+      ]
+    }
   }
 ]

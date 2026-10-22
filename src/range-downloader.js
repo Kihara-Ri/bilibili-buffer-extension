@@ -1,10 +1,16 @@
 import { parseContentRange } from "./utils.js";
 
-export const DEFAULT_RANGE_CONCURRENCY = 4;
+export const DEFAULT_RANGE_CONCURRENCY = 6;
 export const DEFAULT_RANGE_SIZE = 2 * 1024 * 1024;
 export const DEFAULT_PROBE_SIZE = 64 * 1024;
 export const DEFAULT_PROBE_TIMEOUT = 8_000;
-export const DEFAULT_RANGE_TIMEOUT = 30_000;
+// 分块只看「停滞」：首字节或正文连续这么久没有新字节才算卡住。
+// 不设总时长上限——海外单连接常只有几十 KB/s，2 MiB 分块正常也可能要一分钟，
+// 旧的 30 秒总超时会把仍在稳定传输的分块判死，进而让整个任务失败、等一分钟再续传。
+export const DEFAULT_RANGE_TIMEOUT = 20_000;
+// 单个分块的尝试次数：有别的地址就立刻换，同一地址重试按 1→8 秒退避。
+export const DEFAULT_RANGE_ATTEMPTS = 6;
+const DEFAULT_RETRY_BASE_MS = 1_000;
 
 export function buildByteRanges(start, totalBytes, rangeSize = DEFAULT_RANGE_SIZE) {
   const first = Math.max(0, Math.floor(Number(start) || 0));
@@ -154,16 +160,19 @@ export async function downloadByteRanges(options) {
     while (!fatalError) {
       try {
         const index=await takeRange();if(index<0)return;
-        const rankedUrls = rankDynamicCandidates(urls, candidateStats, options.slowTtfbMs);
+        const rank = () => rankDynamicCandidates(urls, candidateStats, options.slowTtfbMs);
+        const rankedUrls = rank();
         if (rankedUrls[0] !== preferredUrl) {
           preferredUrl = rankedUrls[0];
           metrics.cdnSwitchCount += 1;
         }
-        const result = await fetchRangeWithFallback(rankedUrls, rangeAt(index), {
+        const result = await fetchRangeWithFallback(rank, rangeAt(index), {
           fetchImpl,
           signal: controller.signal,
           totalBytes: options.totalBytes,
           timeoutMs: options.timeoutMs,
+          maxAttempts: options.maxAttempts,
+          retryBaseMs: options.retryBaseMs,
           slowTtfbMs: options.slowTtfbMs,
           candidateStats,
           metrics,
@@ -237,24 +246,40 @@ async function probeCandidate(url, options) {
   };
 }
 
-async function fetchRangeWithFallback(urls, range, options) {
-  let lastError;
-  for (let index = 0; index < urls.length; index += 1) {
-    const url = urls[index];
+/**
+ * 下载一个固定分块，在分块内部消化可恢复的故障，只有确实无法完成时才向上抛（导致整个任务重试）。
+ * - 每次尝试前按实时成绩重新排序候选：失败多的地址会被排到后面，下一次自然换节点；
+ * - 换到别的地址立即重试；只剩同一地址时按 1→8 秒退避，给节点或网络恢复的时间；
+ * - 403 表示该签名地址被拒，从本分块的候选里剔除；全部被拒就抛出，由上层刷新播放地址。
+ * @param {() => string[]} rank 返回当前排序后的候选地址
+ */
+async function fetchRangeWithFallback(rank, range, options) {
+  let lastError, lastUrl = null;
+  const rejected = new Set();
+  const maxAttempts = Math.max(1, Number(options.maxAttempts) || DEFAULT_RANGE_ATTEMPTS);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const url = rank().find((candidate) => !rejected.has(candidate));
+    if (!url) break;
+    if (attempt > 0 && url === lastUrl) {
+      await abortableDelay(Math.min(8_000, (Number(options.retryBaseMs) || DEFAULT_RETRY_BASE_MS) * 2 ** (attempt - 1)), options.signal);
+    }
+    lastUrl = url;
     let attemptBytes = 0;
-    const attempt = createAttemptSignal(options.signal, options.timeoutMs || DEFAULT_RANGE_TIMEOUT);
+    const idle = createAttemptSignal(options.signal, options.timeoutMs || DEFAULT_RANGE_TIMEOUT);
     options.metrics.requestCount += 1;
-    if (index > 0) options.metrics.retryCount += 1;
+    if (attempt > 0) options.metrics.retryCount += 1;
     try {
       const result = await readRange(url, range.start, range.end, {
         fetchImpl: options.fetchImpl,
-        signal: attempt.signal,
+        signal: idle.signal,
         expectedTotal: options.totalBytes,
         requireExactEnd: true,
         onReceive: (bytes) => {
+          idle.touch();
           attemptBytes += bytes;
           options.receive(bytes, { host: getHost(url), range });
-        }
+        },
+        onHeaders: idle.touch
       });
       recordCandidateSuccess(options.candidateStats?.get(url), result, options.slowTtfbMs);
       if (isSlowCandidateResult(options.candidateStats?.get(url), result, options.slowTtfbMs)) {
@@ -265,17 +290,23 @@ async function fetchRangeWithFallback(urls, range, options) {
       recordCandidateFailure(options.candidateStats?.get(url));
       if (attemptBytes) options.receive(-attemptBytes, { host: getHost(url), range, rollback: true });
       if (options.signal?.aborted) throw error;
-      if (attempt.didTimeout()) {
-        lastError = new Error("CDN 分块下载超时，已尝试切换备用节点");
-      } else {
-        if (error?.name === "AbortError") throw error;
-        lastError = error;
-      }
+      if (!idle.didTimeout() && error?.name === "AbortError") throw error;
+      lastError = idle.didTimeout() ? new Error("CDN 分块下载停滞超时，已多次重试") : error;
+      if (/HTTP 403/.test(String(error?.message))) rejected.add(url);
     } finally {
-      attempt.cleanup();
+      idle.cleanup();
     }
   }
   throw lastError || new Error("所有 CDN 地址均无法完成该分块");
+}
+
+function abortableDelay(ms, signal) {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { signal?.removeEventListener("abort", onAbort); resolve(); }, ms);
+    const onAbort = () => { clearTimeout(timer); reject(signal.reason); };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 async function readRange(url, start, end, options) {
@@ -286,6 +317,7 @@ async function readRange(url, start, end, options) {
     signal: options.signal
   });
   const headersAt = now();
+  options.onHeaders?.();
   if (!response.ok) {
     if (response.status === 403) throw new Error("CDN 拒绝了范围下载（HTTP 403）");
     if (response.status === 429) throw new Error("CDN 请求过于频繁（HTTP 429）");
@@ -461,18 +493,28 @@ function platformFetch(...args) {
   return globalThis.fetch(...args);
 }
 
+/**
+ * 尝试级信号：父信号取消时随之取消；timeoutMs 内没有任何活动（touch）就以 TimeoutError 中止。
+ * 测速探针只在开始时计时一次（不 touch），等价于总时长上限；分块下载每收到数据就 touch。
+ */
 function createAttemptSignal(parentSignal, timeoutMs) {
   const controller = new AbortController();
-  let timedOut = false;
+  const limit = Math.max(1, Number(timeoutMs) || DEFAULT_RANGE_TIMEOUT);
+  let timedOut = false, timer = null;
   const abortFromParent = () => controller.abort(parentSignal?.reason);
   if (parentSignal?.aborted) abortFromParent();
   else parentSignal?.addEventListener("abort", abortFromParent, { once: true });
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort(new DOMException("CDN 分块请求超时", "TimeoutError"));
-  }, Math.max(1, Number(timeoutMs) || DEFAULT_RANGE_TIMEOUT));
+  const touch = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new DOMException("CDN 分块请求停滞超时", "TimeoutError"));
+    }, limit);
+  };
+  touch();
   return {
     signal: controller.signal,
+    touch,
     didTimeout: () => timedOut,
     cleanup() {
       clearTimeout(timer);
