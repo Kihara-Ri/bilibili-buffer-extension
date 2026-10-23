@@ -618,6 +618,44 @@ async function requestPlayurl(video, requestedQuality, tabId, session, fnval = "
   };
 }
 
+/**
+ * 取视频元信息（标题 / UP 主 / 分 P / cid）。
+ *
+ * 为什么有两个端点：B 站网页端已迁到 `/x/web-interface/wbi/view`（无需签名即可用），
+ * 而老的 `/x/web-interface/view` 对不带网页端指纹的请求（包括扩展后台与自动化浏览器）
+ * 会稳定回 HTTP 412 风控页。老端点只保留作回退，新端点失败（被风控、字段改版）时才用。
+ * @param {{bvid?: string, aid?: number}} parsed 已解析的视频标识。
+ * @returns {Promise<{code: number, data: object}>}
+ */
+async function requestVideoView(parsed) {
+  const endpoints = [
+    "https://api.bilibili.com/x/web-interface/wbi/view",
+    "https://api.bilibili.com/x/web-interface/view"
+  ];
+  let lastError = new Error("无法识别当前视频");
+  for (const base of endpoints) {
+    const endpoint = new URL(base);
+    if (parsed.bvid) endpoint.searchParams.set("bvid", parsed.bvid);
+    if (parsed.aid) endpoint.searchParams.set("aid", String(parsed.aid));
+    try {
+      const response = await fetch(endpoint, {
+        cache: "no-store",
+        credentials: "include",
+        headers: { Accept: "application/json" }
+      });
+      if (!response.ok) throw new Error(`视频信息请求失败（HTTP ${response.status}）`);
+      const payload = await response.json();
+      if (payload.code !== 0 || !payload.data) {
+        throw new Error(payload.message || `无法识别当前视频（${payload.code}）`);
+      }
+      return payload;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 async function getPageInfo(inputUrl) {
   const parsed = parseBiliVideoUrl(inputUrl);
   if (!parsed.supported) {
@@ -629,19 +667,7 @@ async function getPageInfo(inputUrl) {
     return { supported: false, reason: parsed.reason, message: messages[parsed.reason] };
   }
 
-  const endpoint = new URL("https://api.bilibili.com/x/web-interface/view");
-  if (parsed.bvid) endpoint.searchParams.set("bvid", parsed.bvid);
-  if (parsed.aid) endpoint.searchParams.set("aid", String(parsed.aid));
-  const response = await fetch(endpoint, {
-    cache: "no-store",
-    credentials: "include",
-    headers: { Accept: "application/json" }
-  });
-  if (!response.ok) throw new Error(`视频信息请求失败（HTTP ${response.status}）`);
-  const payload = await response.json();
-  if (payload.code !== 0 || !payload.data) {
-    throw new Error(payload.message || `无法识别当前视频（${payload.code}）`);
-  }
+  const payload = await requestVideoView(parsed);
 
   const data = payload.data;
   const pages = Array.isArray(data.pages) && data.pages.length

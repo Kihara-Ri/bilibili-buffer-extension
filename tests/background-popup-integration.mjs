@@ -4,6 +4,7 @@ let messageListener;
 let installedListener;
 let cookieChangeListener;
 let viewRequests = 0;
+let legacyViewRequests = 0;
 let playurlRequests = 0;
 let extensionPlayurlRequests = 0;
 let offscreenCreates = 0;
@@ -76,7 +77,12 @@ globalThis.fetch = async (input, init) => {
   if (url === "http://127.0.0.1:17321/health") {
     return new Response(JSON.stringify({ ok: false }), { status: 200 });
   }
+  // 老端点对扩展后台请求稳定回 412（B 站风控），只有 wbi 端点可用；回归测试需保持这一现实。
   if (url.includes("/x/web-interface/view")) {
+    legacyViewRequests += 1;
+    return new Response("<html>412</html>", { status: 412 });
+  }
+  if (url.includes("/x/web-interface/wbi/view")) {
     viewRequests += 1;
     return new Response(JSON.stringify(makeViewPayload()), {
       status: 200,
@@ -102,6 +108,7 @@ try {
   assert(first.ok && first.snapshot?.selectedQuality === 112, "首次合并解析失败");
   assert(first.snapshot?.selectedCodec === "auto", "默认编码应为自动省流");
   assert(viewRequests === 1 && playurlRequests === 1, "首次打开应只请求一次视频信息和一次播放清单");
+  assert(legacyViewRequests === 0, "wbi 端点可用时不应再请求会被 412 的老端点");
 
   const reopened = await send({
     type: "GET_POPUP_SNAPSHOT",

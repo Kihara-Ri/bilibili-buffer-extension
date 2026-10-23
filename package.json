@@ -1,6 +1,6 @@
 {
   "name": "yingsao",
-  "version": "2.12.0",
+  "version": "2.12.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -17,6 +17,7 @@
     "test:network": "node tests/run-playback-network.mjs && node tests/run-playback-demand.mjs",
     "test:playback": "node tests/run-playback-cache-integration.mjs",
     "test:extension": "npm run build && node tests/run-playback-extension-smoke.mjs",
+    "test:live": "node scripts/live-cache.mjs",
     "test:chrome": "node scripts/test-chrome.mjs",
     "check": "node scripts/check-syntax.mjs && node scripts/check-browser-compat.mjs"
   },
