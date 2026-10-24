@@ -8,10 +8,10 @@ const between = (startMarker, endMarker) => {
   return html.slice(start, html.indexOf(endMarker, start));
 };
 
-test("页眉：主名带用途副标题，右侧是设置入口；GitHub 链接在设置的「关于」里", () => {
-  assert.match(html, /<h1>海内存知<\/h1>/);
-  // 副标题只做指名性用途说明，不进入扩展名称本身。
-  assert.match(html, /class="brand-subtitle">bilibili buffer<\/p>/);
+test("页眉：主名接着诗句下半句，右侧是设置入口；GitHub 链接在设置的「关于」里", () => {
+  // 名字取自「海内存知己，天涯若比邻」：主名与下半句在同一个 h1 里紧贴，整句可以一口气读完。
+  assert.match(html, /<h1 class="brand-title"><span class="brand-name">海内存知<\/span><span class="brand-verse">己，天涯若比邻<\/span><\/h1>/);
+  assert.doesNotMatch(html, /brand-subtitle|bilibili buffer/);
   const masthead = between('<header class="masthead">', "</header>");
   assert.match(masthead, /id="settings-button"[^>]*aria-controls="settings-view"/);
   assert.doesNotMatch(masthead, /github/i);

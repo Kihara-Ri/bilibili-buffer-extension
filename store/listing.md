@@ -3,8 +3,8 @@
 本文件是开发者仪表盘（[Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole)）里要逐项粘贴的内容。
 **正文以本文件为准**；改完扩展后请同步这里，`npm test` 会校验摘要与 `manifest.json` 是否一致。
 
-- 对应版本：2.12.5
-- 提交包：`dist/haineicunzhi-2.12.5.zip`
+- 对应版本：2.12.6
+- 提交包：`dist/haineicunzhi-2.12.6.zip`
 - 提交前校验：`npm run check && npm test && npm run build`
 
 ---
@@ -50,6 +50,8 @@
 ### Detailed description
 
 ```
+海内存知己，天涯若比邻——把远在天涯的视频，提前存到身边。
+
 海内存知把 B 站视频提前缓存到本机，之后可以离线播放或另存为文件。它只在你点击按钮或打开开关后工作，不修改网页内容，也没有服务器。
 
 【播放提前加载】

@@ -217,6 +217,16 @@ try {
   assert(chips.length===4&&chips.every(chip=>!chip.problems.length),JSON.stringify(chips));
   // 页眉图标引用的是打包内的矢量母版：路径写错或资源缺失时 <img> 只会静默显示破图。
   assert(await page.evaluate(()=>{const icon=document.querySelector('.brand-icon'); return icon.complete&&icon.naturalWidth>0;}),'页眉图标没有加载出来');
+  // 页眉诗句：「海内存知」与「己，天涯若比邻」同字号、同一行、紧贴（「知己」不能被拆开），
+  // 只靠字重与颜色区分；整句不折行、不压住设置按钮。
+  const verse=await page.evaluate(()=>{
+    const name=document.querySelector('.brand-name'),rest=document.querySelector('.brand-verse'),gear=document.querySelector('#settings-button');
+    const ink=(node)=>{const range=document.createRange(); range.selectNodeContents(node); return range.getClientRects();};
+    const n=ink(name),r=ink(rest),ns=getComputedStyle(name),rs=getComputedStyle(rest),g=gear.getBoundingClientRect();
+    return {lines:[n.length,r.length],gap:r[0].left-n[0].right,baseline:Math.abs(r[0].bottom-n[0].bottom),
+      size:[ns.fontSize,rs.fontSize],weight:[+ns.fontWeight,+rs.fontWeight],color:[ns.color,rs.color],clear:r[r.length-1].right<g.left-4};
+  });
+  assert(verse.lines.join()==='1,1'&&verse.gap>=-0.5&&verse.gap<3&&verse.baseline<1&&verse.size[0]===verse.size[1]&&verse.weight[0]>verse.weight[1]&&verse.color[0]!==verse.color[1]&&verse.clear,JSON.stringify(verse));
   // 账号说明只能在「 · 」处折行：档位名（如 1080P+）不能被单独挤到下一行。
   const note=await page.evaluate(()=>{
     const node=document.querySelector('#auth-note');

@@ -152,9 +152,11 @@ svg { flex: none; }
 }
 .brand-lockup { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .brand-icon { width: 20px; height: 20px; }
-.brand-title { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
-.brand-title h1 { font-size: 15px; font-weight: 650; letter-spacing: 0.06em; }
-.brand-subtitle { color: var(--ink-soft); font-size: 9.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; }
+/* 主名与诗句同字号、同字距、不留间隙：缩小字号或加间距会让「己」脱离上半句，读成「名字 + 副标题」。
+   区分只靠字重与颜色（--ink-soft 在浅/深色下都约 4.5:1），不用 opacity——它随底色漂移。 */
+.brand-title { font-size: 15px; letter-spacing: 0.06em; white-space: nowrap; }
+.brand-name { font-weight: 650; }
+.brand-verse { color: var(--ink-soft); font-weight: 400; }
 
 .icon-button {
   position: relative;

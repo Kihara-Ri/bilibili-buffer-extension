@@ -166,7 +166,10 @@ async function composeFrame(browser, scene, popup, iconUrl, panelHeight, file) {
     .copy { width: 430px; flex: none; }
     .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 38px; }
     .brand img { width: 44px; height: 44px; }
-    .brand span { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; color: #17607c; }
+    /* 名字取自「海内存知己，天涯若比邻」：「己」紧贴主名接住上半句，下半句另起一行；主名加粗、诗句减弱。 */
+    .brand-name { font-size: 19px; line-height: 1.25; font-weight: 700; color: #17607c; white-space: nowrap; }
+    .brand-name span, .brand-verse { font-weight: 400; color: #6f8c99; }
+    .brand-verse { font-size: 14px; line-height: 1.4; letter-spacing: 0.04em; }
     .kicker { font-size: 14px; font-weight: 700; letter-spacing: 0.16em; color: #0f7fa8; margin-bottom: 14px; }
     h1 { font-size: 42px; line-height: 1.24; font-weight: 780; letter-spacing: -0.025em; margin-bottom: 30px; }
     ul { list-style: none; display: grid; gap: 16px; }
@@ -187,7 +190,7 @@ async function composeFrame(browser, scene, popup, iconUrl, panelHeight, file) {
     .panel-caption { margin-top: 16px; text-align: center; font-size: 13px; color: #7b929e; }
   </style></head><body>
     <div class="copy">
-      <div class="brand"><img src="${iconUrl}" alt=""><span>海内存知</span></div>
+      <div class="brand"><img src="${iconUrl}" alt=""><div><div class="brand-name">海内存知<span>己</span></div><div class="brand-verse">天涯若比邻</div></div></div>
       <p class="kicker">${scene.kicker}</p>
       <h1>${scene.headline}</h1>
       <ul>${scene.bullets.map((item) => `<li>${item}</li>`).join("")}</ul>
@@ -231,12 +234,16 @@ async function composePromo(browser, iconUrl, file) {
       color: #ffffff;
     }
     img { width: 104px; height: 104px; filter: drop-shadow(0 8px 18px rgba(4,44,64,0.34)); }
-    h1 { font-size: 30px; font-weight: 780; letter-spacing: -0.02em; }
-    p { font-size: 14px; color: rgba(255,255,255,0.86); }
+    .title { text-align: center; }
+    /* 诗句排法与截图一致：「己」紧贴主名、减弱，「天涯若比邻」另起一行。减弱色在深底上仍约 6:1。 */
+    h1 { font-size: 30px; line-height: 1.2; font-weight: 780; letter-spacing: 0.02em; }
+    h1 span, .verse { font-weight: 400; color: #9cc3d6; }
+    .verse { font-size: 15px; letter-spacing: 0.12em; margin-top: 4px; }
+    .tagline { font-size: 12.5px; color: rgba(255,255,255,0.78); }
   </style></head><body>
     <img src="${iconUrl}" alt="">
-    <h1>海内存知</h1>
-    <p>提前加载 · 缓存到本机 · 离线播放</p>
+    <div class="title"><h1>海内存知<span>己</span></h1><p class="verse">天涯若比邻</p></div>
+    <p class="tagline">提前加载 · 缓存到本机 · 离线播放</p>
   </body></html>`);
   await page.screenshot({ path: file });
   await page.close();
