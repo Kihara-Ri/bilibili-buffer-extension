@@ -243,6 +243,21 @@ try {
     return {left:tabs.left-shell.left,right:shell.right-tabs.right,scroll:document.documentElement.scrollWidth,wide:wide.slice(0,5)};
   });
   assert(Math.abs(gutters.left-gutters.right)<0.5&&gutters.scroll<=360&&!gutters.wide.length,JSON.stringify(gutters));
+  // Windows 上 Chrome 弹窗高度封顶 600px：展开「提前加载 · 详情」、画质折行时内容会超高，
+  // 经典滚动条（15px）一出现就把内容向左挤。视口压到 600 并强制溢出，仍然不允许有滚动条占宽或让内容位移。
+  await page.setViewportSize({width:360,height:600});
+  const beforeTabs=await page.evaluate(()=>document.querySelector('#panel-tabs').getBoundingClientRect().left);
+  if(await page.locator('#assist-details-toggle').getAttribute('aria-expanded')!=='true') await page.locator('#assist-details-toggle').click();
+  await page.evaluate(()=>{const spacer=document.createElement('div');spacer.id='overflow-spacer';spacer.style.height='400px';document.querySelector('.app-shell').append(spacer);});
+  await page.waitForTimeout(350);
+  const bar=await page.evaluate(()=>({overflow:document.documentElement.scrollHeight>document.documentElement.clientHeight,gutter:window.innerWidth-document.documentElement.clientWidth,left:document.querySelector('#panel-tabs').getBoundingClientRect().left}));
+  assert(bar.overflow,'测试前提：内容必须超过 600px');
+  assert.equal(bar.gutter,0,'弹窗超高时也不能出现占宽的滚动条');
+  // Playwright 无头模式默认隐藏滚动条（上面的 gutter 恒为 0），所以另外校验样式本身：Windows 的经典滚动条只能靠它禁掉。
+  assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).scrollbarWidth),'none','html 必须隐藏滚动条');
+  assert.equal(bar.left,beforeTabs,'内容不能因滚动条被挤向左侧');
+  await page.evaluate(()=>document.querySelector('#overflow-spacer').remove());
+  await page.setViewportSize({width:360,height:900});
   for(const fixture of ['background-popup-integration','offscreen-integration','offscreen-merge-integration']){
     await page.goto(`${origin}/tests/${fixture}.html`);
     await page.waitForFunction(()=>document.querySelector('#result').textContent !== 'running',{},{timeout:45000});
