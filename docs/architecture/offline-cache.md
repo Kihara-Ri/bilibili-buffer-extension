@@ -1,6 +1,6 @@
 # 完整缓存（离线片库）
 
-> 适用版本：v2.13.0 · 最后核对：2026-10-24
+> 适用版本：v2.14.1 · 最后核对：2026-10-25
 > 对应实现：`src/background.js`（识别与取地址）、`src/offscreen.js`（下载、合并、本地播放）、
 > `src/range-downloader.js`、`src/download-retry.js`、`src/db.js`、`src/mp4-merge.js`、
 > `src/media-selection.js`、`src/utils.js`、`src/content.js`。
@@ -201,6 +201,8 @@ stateDiagram-v2
 
 - **暂停**（`PAUSE_CACHE`）：Offscreen 中止该任务的在途请求，等任务完全收尾后写入 `status: "paused"` 并广播 `CACHE_PAUSED`。看门狗只恢复 `downloading` 的任务，不会拉起已暂停的任务。合并、抽取音轨这类收尾阶段不响应中止：暂停晚于最后一块时任务直接完成，`PAUSE_DOWNLOAD` 按真实结果回报。
 - **继续**（`RESUME_CACHE`）：后台用记录里的 bvid / cid / 画质重新请求播放地址（取不到时退回记录里保存的地址），与看门狗恢复共用 `restartDownload`。旧任务仍在收尾时，新的 `START_DOWNLOAD` 会等它注销后再启动，而不是被当成重复启动忽略。
+
+- **删除**（`DELETE_VIDEO`）：先中止在途任务并**等它完全收尾**，再删除记录与分块。收尾阶段还会写库（进行中的分块事务、失败路径的安全水位快照），先删后收尾会让记录带着旧水位复活，下次缓存从删除前的位置「续传」而前面的分块已经不在（2.14.1 修复）。删除返回后立刻重新缓存会从 0 开始。
 
 关闭弹窗和原视频页都不影响下载：下载在 Offscreen 里进行，Referer 由 DNR 补；需要刷新地址时，后台在视频页已关闭的情况下直接用 Chrome 的 B 站会话请求，取得同画质、同编码的新地址后从 `resumeBytes` 续传。
 

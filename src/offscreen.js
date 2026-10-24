@@ -207,8 +207,8 @@ async function startDownload(video) {
   const running = activeDownloads.get(video.id);
   if (running) {
     // 刚被暂停的任务可能还在收尾（中止在途请求、写入暂停状态）。「继续」要等它结束再启动，
-    // 否则会被当成重复启动而静默忽略，任务停在暂停状态。
-    if (!running.paused) return { started: false, video: await getVideo(video.id) };
+    // 否则会被当成重复启动而静默忽略，任务停在暂停状态。刚被删除的任务同理：删除后立刻重新缓存。
+    if (!running.paused && !running.deleted) return { started: false, video: await getVideo(video.id) };
     await running.done;
     if (activeDownloads.has(video.id)) return { started: false, video: await getVideo(video.id) };
   }
@@ -1810,6 +1810,9 @@ async function deleteVideo(videoId) {
   if (job) {
     job.deleted = true;
     job.controller.abort();
+    // 在途任务被中止后还会收尾：正在进行的分块事务、persistSafeState 的安全水位快照都会写库。
+    // 先删数据再让它收尾，记录就会带着旧水位「复活」，下次缓存从删除前的位置续传，前面的分块却已不在。
+    await job.done;
   }
   await deleteVideoData(videoId);
   chrome.runtime.sendMessage({ target: "background", type: "CACHE_DELETED", videoId, tabId: deletedVideo?.tabId }).catch(() => {});

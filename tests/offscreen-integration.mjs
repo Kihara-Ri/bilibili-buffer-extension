@@ -187,6 +187,24 @@ try {
   const pausedResult = await pausing;
   assert(pausedResult.paused, `下载中途的暂停没有生效：${JSON.stringify(pausedResult)}`);
   assert(restarted.ok && restarted.started, `暂停收尾期间的「继续」被忽略：${JSON.stringify(restarted)}`);
+  // 下载中途删除：在途任务收尾时会写一次「安全水位」快照。若删除不等任务收尾就清数据，
+  // 这次写入会把记录连同旧水位写回来，重新缓存时从删除前的位置「续传」，而前面的分块已经没了。
+  const deleteId = `BV1integration:104:q80:${Date.now()}`;
+  const deleteVideo = () => ({ ...pauseVideo(), id: deleteId, pageId: "BV1integration:104", cid: 104 });
+  const readDeleted = async () => (await send({ target: "offscreen", type: "GET_VIDEO", videoId: deleteId })).video;
+  await send({ target: "offscreen", type: "START_DOWNLOAD", video: deleteVideo() });
+  await waitFor(async () => (await readDeleted())?.committedBytes > 0, 15000);
+  const deleted = await send({ target: "offscreen", type: "DELETE_VIDEO", videoId: deleteId });
+  assert(deleted.ok && deleted.deleted, `删除失败：${JSON.stringify(deleted)}`);
+  await delay(400);
+  assert(!(await readDeleted()), "删除后在途任务的收尾写入把记录写回来了");
+  assert((await getChunks(deleteId, "video")).length === 0, "删除后仍残留视频分块");
+  const restartedAfterDelete = await send({ target: "offscreen", type: "START_DOWNLOAD", video: deleteVideo() });
+  assert(restartedAfterDelete.ok && restartedAfterDelete.started, `删除后立即重新缓存被当成重复启动：${JSON.stringify(restartedAfterDelete)}`);
+  const firstRun = broadcasts.find((message) => message.video?.id === deleteId && message.video.runStartedAt === restartedAfterDelete.video?.runStartedAt);
+  assert(!firstRun || firstRun.video.resumeBytes === 0, "删除后重新缓存必须从 0 开始");
+  await send({ target: "offscreen", type: "DELETE_VIDEO", videoId: deleteId });
+
   slowMediaMs = 0;
   await waitFor(async () => {
     const video = await readPause();
