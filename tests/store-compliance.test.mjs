@@ -173,6 +173,20 @@ test("弹窗常驻隐私入口，且隐私页面会随发布包一起分发", as
   assert.ok(verify.includes('"privacy.html"'), "发布校验必须确认 privacy.html 存在于包内");
 });
 
+test("以 GPL-3.0 开源：许可证全文入库、package.json 声明一致，并随发布包分发", async () => {
+  const license = await readText("LICENSE");
+  assert.match(license, /GNU GENERAL PUBLIC LICENSE\s+Version 3, 29 June 2007/);
+  const pkg = JSON.parse(await readText("package.json"));
+  assert.equal(pkg.license, "GPL-3.0-only");
+  // GPL 要求分发二进制（这里是商店 zip）时附带许可证文本。
+  const build = await readText("scripts/build-release.mjs");
+  assert.ok(build.includes('"LICENSE"'), "发布构建必须把 LICENSE 复制进包里");
+  const verify = await readText("scripts/verify-release.mjs");
+  assert.ok(verify.includes('"LICENSE"'), "发布校验必须确认 LICENSE 存在于包内");
+  const readme = await readText("README.md");
+  assert.match(readme, /GPL-3\.0/, "README 要写明许可证");
+});
+
 test("商店文案与清单保持一致，且覆盖全部权限与素材", async () => {
   const listing = await readText("store/listing.md");
   assert.ok(listing.includes(manifest.description), "listing.md 的摘要必须与 manifest 的 description 一致");

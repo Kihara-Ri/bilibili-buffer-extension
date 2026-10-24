@@ -12,7 +12,8 @@ await rm(unpacked, { recursive: true, force: true });
 await mkdir(unpacked, { recursive: true });
 // privacy.html 会随包发布：弹窗底部的“隐私说明”指向本地副本，
 // 这样即使离线也能看到完整的隐私政策，不必依赖外部网址。
-for (const entry of ["THIRD_PARTY_NOTICES.md", "assets", "rules", "src", "manifest.json", "offscreen.html", "popup.css", "popup.html", "privacy.html"]) {
+// LICENSE 同样随包：GPL-3.0 要求分发（商店 zip 即分发）时附带许可证全文。
+for (const entry of ["LICENSE", "THIRD_PARTY_NOTICES.md", "assets", "rules", "src", "manifest.json", "offscreen.html", "popup.css", "popup.html", "privacy.html"]) {
   await cp(path.join(root, entry), path.join(unpacked, entry), { recursive: true });
 }
 

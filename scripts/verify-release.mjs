@@ -92,7 +92,8 @@ const referenced = [
   ...(manifest.declarative_net_request?.rule_resources || []).map((entry) => entry.path),
   "offscreen.html",
   "popup.css",
-  "privacy.html"
+  "privacy.html",
+  "LICENSE"
 ].filter(Boolean);
 for (const entry of new Set(referenced)) {
   await expect(

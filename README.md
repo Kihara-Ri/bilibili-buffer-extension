@@ -15,6 +15,7 @@
 [![用户](https://img.shields.io/chrome-web-store/users/bjegpandnhmeinmennpfpkholhmbllam?label=%E7%94%A8%E6%88%B7&color=0d425d)](https://chromewebstore.google.com/detail/bjegpandnhmeinmennpfpkholhmbllam)
 [![Release](https://img.shields.io/github/v/release/Kihara-Ri/bilibili-buffer-extension?label=Release&color=e9a15b)](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-1587c6)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-12303d)](LICENSE)
 
 [**官网**](https://haineicunzhi.kihara.cn) · [**添加到 Chrome**](https://chromewebstore.google.com/detail/bjegpandnhmeinmennpfpkholhmbllam) · [隐私说明](https://haineicunzhi.kihara.cn/privacy.html) · [投喂作者](https://haineicunzhi.kihara.cn/#tip)
 
@@ -94,6 +95,10 @@ npm run test:live    # 联网：真实 Chromium 加载扩展，对真实 B 站�
 
 > [!NOTE]
 > 在 WSL 里开发时请安装 **Linux 版 Node（≥ 22.2）** 再用 npm。Windows 版 npm 通过 `cmd.exe` 执行脚本，而 `cmd.exe` 不支持 `\\wsl.localhost\...` 作为工作目录，会静默退回 `C:\Windows`；`npm test` 因此会直接报「找不到 scripts/run-tests.mjs」。暂时只有 Windows 版 Node 时，可以绕过 npm 直接运行脚本，例如 `node.exe scripts/run-tests.mjs`。
+
+## 许可证
+
+[GPL-3.0](LICENSE)。可以自由使用、修改和再分发；基于本项目再发布的版本也须以 GPL-3.0 开源。参考项目的许可声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 文档
 
