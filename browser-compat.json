@@ -24,6 +24,12 @@
       "build": "155.0.8059.84",
       "verifiedAt": "2026-10-22",
       "evidence": "本机 Chrome 155.0.8059.85（Windows），Chrome for Testing 无完全同构建，用同主版本 155.0.8059.84 由 npm run test:chrome 自动获取并重跑：test:playback / test:network / test:popup / test:extension 全部通过（扩展版本 2.9.0）。"
+    },
+    {
+      "major": 156,
+      "build": "156.0.8078.47",
+      "verifiedAt": "2026-10-24",
+      "evidence": "本机 Chrome 156.0.8078.47（macOS arm64），由 npm run test:chrome 自动获取同构建 Chrome for Testing 并重跑：test:playback / test:network / test:popup / test:extension 全部通过（扩展版本 2.12.2）。"
     }
   ]
 }
