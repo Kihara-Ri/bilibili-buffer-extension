@@ -1,7 +1,7 @@
 # Chrome Web Store 提审文案
 
 本文件是开发者仪表盘（[Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole)）里要逐项粘贴的内容。
-**正文以本文件为准**；改完扩展后请同步这里，`npm test` 会校验摘要与 `manifest.json` 是否一致。
+**正文以本文件为准**；改完扩展后请同步这里，`npm test` 会校验中英文摘要与 `_locales` 是否一致。
 
 - 对应版本：2.13.0
 - 提交包：`dist/haineicunzhi-2.13.0.zip`
@@ -15,6 +15,8 @@
 
 当前名称为 **海内存知**（2.12.2 起；此前 2.8.11–2.12.1 叫「影哨」，更早叫「Bili 缓冲站」）：取自「海内存知己，天涯若比邻」，断成「海（外）· 内存 · 知（己）」——面向海外用户、把视频提前存进本机内存的知己；下半句「天涯若比邻」正对应 CDN 远在天涯、数据已缓存到身边。不含 Bili / B 站关键词，非官方身份最清晰。
 商店政策 [Impersonation & Intellectual Property](https://developer.chrome.com/docs/webstore/program-policies/impersonation-and-intellectual-property) 第 1、5 条禁止暗示“获得对方授权或由对方出品”，第 6 条说明可能因此降低曝光。最终是否通过由商店审核决定。
+
+2.13.0 起清单名称走 `_locales`：中文（简 / 繁）环境显示「海内存知」，其余语言显示英文名 **Kindred Afar**（取「知己」与「天涯」：远方的知己）。英文名同样不含 Bilibili 字样。
 
 名称已同步 `manifest.json`、`popup.html`、`README.md`、隐私页与图标内嵌文案。由于名称不再含「bilibili / B 站」，搜索曝光依赖 **Summary 与详细描述**：两者已保留「B 站」指名性描述（说明适用于哪个网站，不暗示授权），详情页首段的非官方免责声明必须保留。
 
@@ -35,12 +37,14 @@
 
 | 字段 | 填写内容 |
 | --- | --- |
-| **Item name** | `海内存知`（4 字，上限 75 字；更名背景见 0.1） |
-| **Summary** | 与 `manifest.json` 的 `description` 完全一致，见下方 |
+| **Item name** | 由清单 `_locales/<语言>/messages.json` 的 `extName` 决定，仪表盘里不能单独改：中文 `海内存知`，英文 `Kindred Afar`（更名背景见 0.1） |
+| **Summary** | 同样取自 `_locales` 的 `extDescription`，中文见下方，英文见 1.1 |
 | **Category** | `Productivity` |
-| **Language** | `Chinese (Simplified)` |
+| **Language** | 默认语言随 `default_locale` 为 `English`；中文在仪表盘 **Store listing** 右上角的语言下拉里选 `Chinese (Simplified)` / `Chinese (Traditional)` 分别填写 |
 
-### Summary（≤132 字，与 manifest 一致）
+商店按访客的语言显示对应的 listing，没有填写的语言回落到默认语言（英文）。所以三套都要填：英文（1.1）、简体中文（本节）、繁体中文（与简体相同即可）。
+
+### Summary（≤132 字，与 `_locales/zh_CN` 一致）
 
 ```
 提前加载 B 站 CDN 后续内容，并把最高可用画质的音视频合并缓存到本地播放，也可只缓存保留原始音质的音频。
@@ -79,6 +83,52 @@
 · 只使用当前账号本来就有的观看与画质权限，不绕过会员、付费、地区或内容授权限制。
 · 需要 Chrome 116 或更高版本。
 · 本扩展不是哔哩哔哩官方产品，与哔哩哔哩没有隶属或授权关系；请只缓存你有权观看的内容，并遵守平台条款与版权要求。
+```
+
+### 1.1 English listing
+
+在 **Store listing** 右上角语言切到 `English` 后填写。截图与宣传图用 `store/assets/en/` 下的同名文件。
+
+#### Summary（≤132 characters, same as `_locales/en`）
+
+```
+Prefetches Bilibili videos ahead of playback to cut buffering, and caches the best available quality locally for offline viewing.
+```
+
+#### Detailed description
+
+```
+Kindred Afar — far apart, yet near. It brings Bilibili videos from distant servers onto your own device.
+
+Kindred Afar prefetches Bilibili videos ahead of playback and caches them locally, so you can watch offline or save them as files. It only works after you click Cache or turn on Prefetch, never changes the page content, and has no server.
+
+[Prefetch while you watch]
+· As soon as the player makes its first media request, the extension warms up the init segment and index, then picks the segments ahead of the current position.
+· When a request is fully covered, the player gets the data from your device; on any gap or mismatch it falls back to the original request.
+· The native progress bar stays as is; only the prefetched part gets its own color, which you can change or turn off.
+
+[Cache full videos to your device]
+· Caches the quality your account actually gets, defaulting to the best available; audio-only is also available.
+· Video and audio are downloaded separately and remuxed locally into one MP4, without re-encoding. Audio-only keeps Bilibili's original container and codec (Hi-Res lossless / Dolby Atmos / AAC).
+· Up to 6 parallel connections for video and 2 for audio, in fixed 2 MiB chunks. Short glitches are retried within a chunk; expired signatures, HTTP 403, rate limits or brief disconnects refresh the address and resume from the last saved chunk.
+· Downloads keep going after you close the popup, switch tabs or close the video page; if Chrome suspends the background, a watchdog picks the task back up.
+
+[Library and export]
+· Every task is listed in the library with progress, size and status. Pause and resume without reopening the video; save finished items as files; undo a delete from the toast.
+· Open a cached video again and it plays from local data, keeping the native controls, playback speed, progress and danmaku in sync.
+
+[Privacy]
+· No server. Nothing is collected or uploaded; no analytics, tracking or ad SDKs.
+· Only after you click Cache or turn on Prefetch does it request the same Bilibili video CDN data you would get by watching normally.
+· Sign-in state is only used to tell whether you are signed in; cookie values are never read.
+· All caches and settings stay in your own Chrome profile; delete the cache or uninstall the extension to remove them.
+
+[Scope and limits]
+· Works on standard BV / av videos, multi-part videos and Watch Later pages with a bvid; bangumi, interactive videos and courses are not supported yet.
+· Uses only the viewing and quality rights your account already has; it does not bypass Premium, paid, regional or licensing restrictions.
+· Requires Chrome 116 or later.
+· The interface follows Chrome's language: Chinese for Chinese, English for everything else.
+· This extension is not an official Bilibili product and is not affiliated with or endorsed by Bilibili. Only cache content you are allowed to watch, and follow the platform's terms and copyright rules.
 ```
 
 ### Additional fields
@@ -149,7 +199,7 @@
 
 ## 3. Graphic assets
 
-素材由脚本生成，规格见 `store/README.md`。全部放在 `store/assets/` 下。
+素材由脚本生成，规格见 `store/README.md`。中文放在 `store/assets/`，英文 listing 用 `store/assets/en/` 下的同名文件（`screenshot-1-cache.png`、`screenshot-2-assist.png`、`screenshot-3-library.png`、`promo-440x280.png`、`marquee-1400x560.png`）。
 
 | 素材 | 文件 | 尺寸 | 是否必需 |
 | --- | --- | --- | --- |
@@ -192,9 +242,10 @@
 - [ ] `npm run check` 通过（遍历式语法检查）
 - [ ] `npm test` 全部通过（含商店合规测试）
 - [ ] `npm run build` 通过，且末尾的 `npm run verify` 输出“发布包检查通过”
-- [ ] `manifest.json` 与 `store/listing.md` 中的名称 / 摘要一致
+- [ ] `_locales` 与 `store/listing.md` 中的中英文名称 / 摘要一致
+- [ ] 英文、简体中文、繁体中文三套 listing 都已填写，英文用 `store/assets/en/` 的素材
 - [ ] 0.1 的名称与商标问题已决定并同步到清单、图标、README
 - [ ] `privacy.html` 已可通过公网网址访问，且内容与第 2 节一致
-- [ ] `store/assets/` 下的截图与小促销图是最新版本界面
+- [ ] `store/assets/` 与 `store/assets/en/` 下的截图与宣传图是最新版本界面
 - [ ] 用 `dist/unpacked` 在本地 `chrome://extensions` 里实际加载一次，确认能正常打开弹窗
 - [ ] 记录本次提交包 SHA-256（`npm run verify` 会打印）

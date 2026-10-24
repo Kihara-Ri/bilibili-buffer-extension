@@ -222,6 +222,10 @@ test("商店文案与清单保持一致，且覆盖全部权限与素材", async
   for (const asset of ["screenshot-1-cache.png", "screenshot-2-assist.png", "screenshot-3-library.png", "promo-440x280.png"]) {
     assert.ok(listing.includes(asset), `listing.md 未登记素材：${asset}`);
   }
+  // 商店按访客语言显示 listing：英文摘要必须与 _locales/en 一致，英文素材目录必须登记
+  const enStrings = localizedManifestStrings(manifest, locales).find((entry) => entry.locale === "en");
+  assert.ok(listing.includes(enStrings.description), "listing.md 的英文摘要必须与 _locales/en 一致");
+  assert.ok(listing.includes("store/assets/en/"), "listing.md 未登记英文素材目录");
 });
 
 test("商店图片素材存在且尺寸符合商店要求", async () => {
@@ -229,8 +233,9 @@ test("商店图片素材存在且尺寸符合商店要求", async () => {
     ["store/assets/screenshot-1-cache.png", 1280, 800],
     ["store/assets/screenshot-2-assist.png", 1280, 800],
     ["store/assets/screenshot-3-library.png", 1280, 800],
-    ["store/assets/promo-440x280.png", 440, 280]
-  ];
+    ["store/assets/promo-440x280.png", 440, 280],
+    ["store/assets/marquee-1400x560.png", 1400, 560]
+  ].flatMap((entry) => [entry, [entry[0].replace("store/assets/", "store/assets/en/"), entry[1], entry[2]]]);
   for (const [file, width, height] of expected) {
     const buffer = await readFile(new URL(file, root));
     const size = readPngSize(buffer);
