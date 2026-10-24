@@ -155,6 +155,117 @@ try {
     return result;
   })();
 
+  // 顶栏小瓶：水位＝阅读进度；滚动时摇一下，减少动态时不摇。
+  {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(`${origin}/`);
+    const read = () => page.evaluate(() => document.querySelector(".bar-bottle").style.getPropertyValue("--read"));
+    assert.equal(await read(), "0.00", "页首时顶栏小瓶应几乎是空的");
+    await page.evaluate(() => { document.documentElement.style.scrollBehavior = "auto"; scrollTo(0, document.documentElement.scrollHeight); });
+    await page.waitForTimeout(150);
+    assert.equal(await read(), "1.00", "读到页尾时顶栏小瓶应装满");
+    assert.ok(await page.evaluate(() => document.querySelector(".bar-bottle").classList.contains("is-rocking")), "滚动时小瓶应摇一下");
+    // 水面真的在动：同一块水在页首与页尾的位置不同
+    const water = await page.evaluate(() => getComputedStyle(document.querySelector(".bar-water")).transform);
+    assert.notEqual(water, "none");
+    await page.close();
+    const calmBar = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
+    await calmBar.goto(`${origin}/`);
+    await calmBar.evaluate(() => scrollTo(0, 900));
+    await calmBar.waitForTimeout(150);
+    assert.ok(!(await calmBar.evaluate(() => document.querySelector(".bar-bottle").classList.contains("is-rocking"))), "减少动态时小瓶不应摇");
+    await calmBar.close();
+  }
+
+  // 时差钟：用固定时区（都不实行夏令时）验证文案与时间。
+  const clocks = {};
+  for (const [pathname, timezoneId, pattern] of [
+    ["/", "Asia/Tokyo", /^B 站那里比你慢 1 小时/],
+    ["/", "Asia/Shanghai", /^你和 B 站在同一个时区/],
+    ["/en/", "Asia/Kolkata", /^Bilibili is 2\.5 hours ahead of you/],
+    ["/en/", "Pacific/Honolulu", /^Bilibili is 18 hours ahead of you/]
+  ]) {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, timezoneId });
+    await page.goto(`${origin}${pathname}`);
+    const clock = await page.evaluate(() => ({
+      hidden: document.querySelector(".clock").hidden,
+      local: document.querySelector('[data-clock="local"]').textContent,
+      bilibili: document.querySelector('[data-clock="bilibili"]').textContent,
+      note: document.querySelector("[data-clock-note]").textContent,
+      expectedLocal: new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date()),
+      expectedBeijing: new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Shanghai" }).format(new Date())
+    }));
+    assert.equal(clock.hidden, false, `${timezoneId}：有脚本时应显示时差钟`);
+    assert.equal(clock.local, clock.expectedLocal, `${timezoneId}：本地时间不对 ${JSON.stringify(clock)}`);
+    assert.equal(clock.bilibili, clock.expectedBeijing, `${timezoneId}：北京时间不对 ${JSON.stringify(clock)}`);
+    assert.match(clock.note, pattern, `${timezoneId}：时差说明不对 ${JSON.stringify(clock)}`);
+    clocks[timezoneId] = clock.note;
+    await page.close();
+  }
+
+  // 发一条弹幕：文字只走 textContent，不发请求、不改地址；飘完自动移除。
+  {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(`${origin}/`);
+    // 先滚到输入框并等懒加载图片（如投喂二维码）加载完，之后再统计请求
+    await page.locator("#danmaku-input").scrollIntoViewIfNeeded();
+    await page.waitForLoadState("networkidle");
+    const requests = [];
+    page.on("request", (request) => requests.push(request.url()));
+    const before = page.url();
+    await page.fill("#danmaku-input", "<b>海外党</b>报到");
+    await page.press("#danmaku-input", "Enter");
+    const sent = await page.evaluate(() => {
+      const item = document.querySelector(".danmaku-mine");
+      return { text: item?.textContent, children: item?.children.length, distance: item?.style.getPropertyValue("--distance"), input: document.querySelector("#danmaku-input").value, status: document.querySelector("[data-danmaku-status]").textContent };
+    });
+    assert.equal(sent.text, "<b>海外党</b>报到", "弹幕文字应原样显示");
+    assert.equal(sent.children, 0, "弹幕文字不得被当成 HTML 解析");
+    assert.match(sent.distance, /^\d+px$/);
+    assert.equal(sent.input, "");
+    assert.match(sent.status, /已发送/);
+    assert.equal(page.url(), before, "发弹幕不应改变地址");
+    assert.deepEqual(requests, [], `发弹幕不应发出任何请求：${requests.join(", ")}`);
+    await page.evaluate(() => document.querySelector(".danmaku-mine").dispatchEvent(new AnimationEvent("animationend")));
+    assert.equal(await page.evaluate(() => document.querySelectorAll(".danmaku-mine").length), 0, "飘完应移除");
+    // 空白不发送；连发 8 条最多同时留 6 条
+    await page.fill("#danmaku-input", "   ");
+    await page.press("#danmaku-input", "Enter");
+    assert.equal(await page.evaluate(() => document.querySelectorAll(".danmaku-mine").length), 0);
+    for (let index = 0; index < 8; index += 1) {
+      await page.fill("#danmaku-input", `第 ${index} 条`);
+      await page.press("#danmaku-input", "Enter");
+    }
+    assert.equal(await page.evaluate(() => document.querySelectorAll(".danmaku-mine").length), 6);
+    await page.close();
+  }
+
+  // 页尾靠岸：页面很长时瓶子先在海里，滚到页尾才上岸；减少动态时直接在岸上。
+  {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(`${origin}/en/`);
+    assert.ok(await page.evaluate(() => document.querySelector(".shore").classList.contains("is-waiting")), "页尾不在视口时瓶子应先在海里");
+    await page.locator(".shore").scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => !document.querySelector(".shore").classList.contains("is-waiting"));
+    await page.close();
+    const calmShore = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
+    await calmShore.goto(`${origin}/`);
+    assert.ok(!(await calmShore.evaluate(() => document.querySelector(".shore").classList.contains("is-waiting"))), "减少动态时瓶子应直接在岸上");
+    await calmShore.close();
+  }
+
+  // 404：不存在的路径返回「瓶子漂丢了」，状态码 404，样式正常加载。
+  {
+    const page = await browser.newPage({ viewport: { width: 375, height: 812 } });
+    const response = await page.goto(`${origin}/no/such/page`);
+    assert.equal(response.status(), 404);
+    const lost = await page.evaluate(() => ({ title: document.querySelector("h1").textContent, styled: getComputedStyle(document.body).backgroundColor !== "rgba(0, 0, 0, 0)", bottle: document.querySelector(".hero-bottle").naturalWidth > 0, scrollWidth: document.documentElement.scrollWidth }));
+    assert.equal(lost.title, "这只瓶子漂丢了");
+    assert.ok(lost.styled && lost.bottle, `404 页样式或图标没加载 ${JSON.stringify(lost)}`);
+    assert.equal(lost.scrollWidth, 375, "404 页不应横向滚动");
+    await page.close();
+  }
+
   // 中文首页的英文入口：浏览器语言不含中文才显示，中文浏览器里不打扰。
   for (const [locale, shown] of [["en-US", true], ["zh-CN", false]]) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, locale });
@@ -183,7 +294,7 @@ try {
   }
   assert.notEqual(backgrounds.light, backgrounds.dark, "深色模式没有生效");
 
-  console.log(JSON.stringify({ ok: true, ...results, reducedMotion: true, backgrounds, barColors }, null, 2));
+  console.log(JSON.stringify({ ok: true, ...results, reducedMotion: true, backgrounds, barColors, clocks }, null, 2));
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

@@ -161,3 +161,34 @@ test("隐私页页眉用现在的漂流瓶图标，而不是更名前的电视�
   await stat(new URL("assets/icon-master.svg", root));
   await stat(path.join(out, "assets", "icon-master.svg"));
 });
+
+test("小巧思的静态结构：顶栏小瓶、时差钟、发弹幕、页尾靠岸（中英两页）", () => {
+  for (const html of [page, enPage]) {
+    const topbar = html.slice(html.indexOf('<header class="topbar">'), html.indexOf("</header>"));
+    assert.match(topbar, /<svg class="bar-bottle"[^>]*aria-hidden="true"/, "顶栏图标应为可变水位的内联小瓶");
+    assert.match(topbar, /<g clip-path="url\(#bar-glass\)"><rect class="bar-water"/, "水面要放在被裁剪的 g 里，否则裁剪区域会跟着水面移动");
+    assert.doesNotMatch(topbar, /icon-small\.svg/);
+    // 没有脚本时：时差钟与发弹幕表单都隐藏（表单原生提交会把文字带进地址栏）
+    assert.match(html, /<div class="clock" role="group" aria-label="[^"]+" hidden>/);
+    assert.match(html, /<form class="danmaku-send" hidden>/);
+    assert.match(html, /<label class="visually-hidden" for="danmaku-input">[^<]+<\/label>\s*<input id="danmaku-input"[^>]*maxlength="24"/);
+    assert.match(html, /role="status" aria-live="polite" data-danmaku-status/);
+    const footer = html.slice(html.indexOf('<footer class="footer">'));
+    assert.match(footer, /<div class="shore">[\s\S]*<svg class="shore-art"[^>]*aria-hidden="true"[\s\S]*<p class="shore-caption">[^<]+<\/p>/);
+  }
+});
+
+test("404 页：瓶子漂丢了，资源用根路径，能回到中英文首页", async () => {
+  const lost = await readFile(path.join(out, "404.html"), "utf8");
+  assert.match(lost, /这只瓶子漂丢了/);
+  assert.match(lost, /lang="en">This bottle drifted off course/);
+  assert.match(lost, /<meta name="robots" content="noindex">/);
+  assert.match(lost, /<a class="button button-primary" href="\/">/);
+  assert.match(lost, /href="\/en\/" hreflang="en"/);
+  const local = [...lost.matchAll(/\s(?:src|href)="(\/[^"]*)"/g)].map((match) => match[1]).filter((url) => !url.endsWith("/"));
+  assert.ok(local.length >= 3);
+  for (const url of local) {
+    assert.ok(url.startsWith("/"), `404 页的资源必须用根路径：${url}`);
+    await stat(path.join(out, url));
+  }
+});

@@ -29,6 +29,117 @@ if (topbar && hero) {
   update();
 }
 
+// 顶栏小瓶：水位＝本页读了多少。滚动时摇一下，但一次摇摆播完之前不重新开始，
+// 否则连续滚动会让动画每帧重启、看起来在抽搐。减少动态偏好下只涨水位、不摇。
+const barBottle = document.querySelector(".bar-bottle");
+if (barBottle) {
+  let frame = 0;
+  let last = "";
+  const update = () => {
+    frame = 0;
+    const scrollable = document.documentElement.scrollHeight - innerHeight;
+    const value = (scrollable > 0 ? Math.min(1, Math.max(0, scrollY / scrollable)) : 1).toFixed(2);
+    if (value !== last) barBottle.style.setProperty("--read", (last = value));
+  };
+  addEventListener("scroll", () => {
+    if (!frame) frame = requestAnimationFrame(update);
+    if (!reducedMotion.matches && !barBottle.classList.contains("is-rocking")) barBottle.classList.add("is-rocking");
+  }, { passive: true });
+  barBottle.addEventListener("animationend", () => barBottle.classList.remove("is-rocking"));
+  addEventListener("resize", () => { if (!frame) frame = requestAnimationFrame(update); });
+  update();
+}
+
+// 「天涯」一节的时差钟：访问者本地时间 vs 北京时间（B 站服务器所在，1991 年起不实行夏令时，固定 UTC+8）。
+// 只用本机时区计算，不请求任何服务。每分钟整点刷新，文字不变就不写，避免无谓的重排。
+const clock = document.querySelector(".clock");
+if (clock) {
+  const english = document.documentElement.lang === "en";
+  const BEIJING_OFFSET = 480;
+  const timeFormat = (timeZone) => new Intl.DateTimeFormat(english ? "en-GB" : "zh-CN", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone });
+  const dayFormat = (timeZone) => new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone });
+  const fields = { local: clock.querySelector('[data-clock="local"]'), bilibili: clock.querySelector('[data-clock="bilibili"]'), note: clock.querySelector("[data-clock-note]") };
+  const write = (element, text) => { if (element.textContent !== text) element.textContent = text; };
+  const hoursText = (minutes) => {
+    const hours = Math.abs(minutes) / 60;
+    const number = Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace(/\.0$/, "");
+    return english ? `${number} hour${hours === 1 ? "" : "s"}` : `${number} 小时`;
+  };
+  const note = (now) => {
+    const diff = BEIJING_OFFSET + now.getTimezoneOffset();
+    const localDay = dayFormat(undefined).format(now);
+    const beijingDay = dayFormat("Asia/Shanghai").format(now);
+    let text;
+    if (diff === 0) text = english ? "You're in the same time zone as Bilibili" : "你和 B 站在同一个时区";
+    else if (english) text = `Bilibili is ${hoursText(diff)} ${diff > 0 ? "ahead of" : "behind"} you`;
+    else text = `B 站那里比你${diff > 0 ? "快" : "慢"} ${hoursText(diff)}`;
+    if (beijingDay > localDay) text += english ? ", already tomorrow there" : "，那边已经是明天了";
+    if (beijingDay < localDay) text += english ? ", still yesterday there" : "，那边还是昨天";
+    text += english ? "." : "。";
+    // 深夜（本地 0–4 点）多一句：海外党看 B 站，经常就是这个钟点。
+    if (now.getHours() < 5) text += english ? " Up late? The danmaku has night owls too." : "夜深了，弹幕里也有和你一样没睡的人。";
+    return text;
+  };
+  const tick = () => {
+    const now = new Date();
+    write(fields.local, timeFormat(undefined).format(now));
+    write(fields.bilibili, timeFormat("Asia/Shanghai").format(now));
+    write(fields.note, note(now));
+    setTimeout(tick, 60_000 - (now.getSeconds() * 1000 + now.getMilliseconds()) + 50);
+  };
+  tick();
+  clock.hidden = false;
+}
+
+// 「知己」一节：发一条自己的弹幕。只在本页飘过一次，不发请求、不写存储；文字一律走 textContent。
+// 放进人最少的那条轨道；同时最多 6 条，再多就先移除最早的一条。
+const danmakuForm = document.querySelector(".danmaku-send");
+const danmakuBoard = document.querySelector(".danmaku");
+if (danmakuForm && danmakuBoard) {
+  const english = document.documentElement.lang === "en";
+  const input = danmakuForm.querySelector("input");
+  const status = danmakuForm.querySelector("[data-danmaku-status]");
+  const lanes = [...danmakuBoard.querySelectorAll(".danmaku-lane")];
+  danmakuForm.hidden = false;
+  danmakuForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = input.value.trim().slice(0, 24);
+    if (!text) return;
+    const mine = [...danmakuBoard.querySelectorAll(".danmaku-mine")];
+    if (mine.length >= 6) mine[0].remove();
+    const counts = lanes.map((lane) => mine.filter((item) => item.dataset.lane === String(lanes.indexOf(lane))).length);
+    const laneIndex = counts.indexOf(Math.min(...counts));
+    const item = document.createElement("span");
+    item.className = "danmaku-mine";
+    item.dataset.lane = String(laneIndex);
+    item.textContent = text;
+    item.style.top = `${lanes[laneIndex].offsetTop}px`;
+    danmakuBoard.append(item);
+    if (reducedMotion.matches) {
+      item.classList.add("is-static");
+      setTimeout(() => item.remove(), 4000);
+    } else {
+      item.style.setProperty("--distance", `${danmakuBoard.clientWidth + item.offsetWidth}px`);
+      item.addEventListener("animationend", () => item.remove());
+    }
+    input.value = "";
+    status.textContent = english ? `Sent: ${text}. It only shows on your screen.` : `已发送：${text}。只在你的屏幕上飘过。`;
+  });
+}
+
+// 页尾靠岸：页尾还没进入视口时先把瓶子放回海里（.is-waiting），滚到页尾再推上岸，只播一次。
+// 页尾一开始就在视口里（页面很矮）、不支持 IntersectionObserver 或减少动态时，瓶子直接在岸上。
+const shore = document.querySelector(".shore");
+if (shore && "IntersectionObserver" in window && !reducedMotion.matches) {
+  const observer = new IntersectionObserver((entries) => {
+    if (!entries.some((entry) => entry.isIntersecting)) return;
+    shore.classList.remove("is-waiting");
+    observer.disconnect();
+  }, { threshold: 0.6 });
+  if (shore.getBoundingClientRect().top > innerHeight) shore.classList.add("is-waiting");
+  observer.observe(shore);
+}
+
 // 中文首页：浏览器偏好语言里没有中文的访客（多半从商店主页链接过来）看到一行英文入口。
 // 只提示不跳转：自动跳转会让想看中文的人无法停留，也会干扰搜索引擎按 hreflang 收录。
 const langHint = document.querySelector(".lang-hint");

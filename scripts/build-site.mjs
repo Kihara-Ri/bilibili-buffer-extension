@@ -10,6 +10,7 @@ import { STORE_EXTENSION_ID } from "./lib/release-checks.mjs";
  * 输出纯静态文件到 dist/site/：
  * - site/ 下的页面源码，占位符 {{VERSION}} {{CHANGELOG}} 等在这里填入，版本与更新记录永远来自仓库本身；
  *   中文首页 site/index.html 输出到 /，英文页 site/en/index.html 输出到 /en/，两页用 hreflang 互指；
+ *   site/404.html 是 GitHub Pages 对不存在路径返回的页面（瓶子漂丢了），资源用根路径；
  * - privacy.html：商店「隐私权政策网址」指向它，旧的 github.io 地址由 GitHub 自动跳转到自定义域名；
  * - demo/：真实弹窗演示。复用 store/scene 场景夹具（真实 popup.html / popup.css / popup.js，chrome.* 换成固定数据），
  *   只复制弹窗实际 import 到的模块，后台、Offscreen 与热更新代码不会出现在网站上。
@@ -87,7 +88,7 @@ export async function buildSite(out = path.join(root, "dist", "site")) {
 
   const values = { SITE_URL, STORE_URL, REPO_URL, ALIPAY_URL, VERSION: manifest.version, CHANGELOG: changelog.html };
   // 更新记录只有中文：英文页同样列出版本与标题，摘要里注明 in Chinese。
-  for (const page of ["index.html", "en/index.html"]) {
+  for (const page of ["index.html", "en/index.html", "404.html"]) {
     const template = await readFile(path.join(root, "site", page), "utf8");
     const html = template.replace(/\{\{(\w+)\}\}/g, (whole, key) => {
       if (!(key in values)) throw new Error(`site/${page} 里有未知占位符 ${whole}`);
@@ -144,7 +145,10 @@ export async function serveSite(out, port = 0) {
       response.writeHead(200, { "Content-Type": `${types[path.extname(file)] || "application/octet-stream"}; charset=utf-8` });
       response.end(data);
     } catch {
-      response.writeHead(404).end("not found");
+      // 与 GitHub Pages 一致：不存在的路径返回 404.html，状态码仍是 404。
+      const fallback = await readFile(path.join(out, "404.html")).catch(() => null);
+      if (fallback) response.writeHead(404, { "Content-Type": "text/html; charset=utf-8" }).end(fallback);
+      else response.writeHead(404).end("not found");
     }
   });
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));

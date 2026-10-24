@@ -32,7 +32,17 @@
     <a class="skip-link" href="#far">跳到正文</a>
     <header class="topbar">
       <a class="topbar-brand" href="#top" aria-label="海内存知 首页">
-        <img src="assets/icon-small.svg" alt="" width="22" height="22">
+        <svg class="bar-bottle" viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
+          <!-- 与扩展的小尺寸图标同一造型；水位＝本页已读多少（site.js 写 --read），对应「存」一节里水位＝已缓存。 -->
+          <clipPath id="bar-glass"><path transform="translate(16 16.5) rotate(38) scale(0.95) translate(-16 -16)" d="M13 4.5H19V8.5Q19 10 20.5 11Q24.5 13 24.5 17.5V26Q24.5 30 20.5 30H11.5Q7.5 30 7.5 26V17.5Q7.5 13 11.5 11Q13 10 13 8.5Z"/></clipPath>
+          <g transform="translate(16 16.5) rotate(38) scale(0.95) translate(-16 -16)">
+            <path fill="#2BB3E6" d="M13 4.5H19V8.5Q19 10 20.5 11Q24.5 13 24.5 17.5V26Q24.5 30 20.5 30H11.5Q7.5 30 7.5 26V17.5Q7.5 13 11.5 11Q13 10 13 8.5Z"/>
+            <rect x="11.5" y="1" width="9" height="5" rx="1.5" fill="#E9A15B"/>
+          </g>
+          <!-- 裁剪放在外层 g：clip-path 写在被平移的元素上会跟着一起移动。 -->
+          <g clip-path="url(#bar-glass)"><rect class="bar-water" x="0" y="0" width="32" height="32" fill="#1587C6"/></g>
+          <path fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.2" stroke-linejoin="round" d="M10.2 14.9L17 19.4L10.2 23.9Z"/>
+        </svg>
         <span>海内存知</span>
       </a>
       <nav class="topbar-links" aria-label="页面导航">
@@ -76,6 +86,11 @@
           <p>B 站的视频节点大多在国内。人在海外时，每一段数据都要跨洋往返；播放器只缓冲眼前几秒，网速一抖就开始转圈。</p>
         </div>
         <!-- 两条进度条用的正是扩展里的配色：蓝＝已播放、灰＝播放器缓冲、橙＝提前加载。 -->
+        <!-- 时差钟：用访问者自己的时区对比北京时间，在本机计算，不发任何请求。没有脚本时保持隐藏。 -->
+        <div class="clock" role="group" aria-label="两地时间" hidden>
+          <p class="clock-pair"><span class="clock-item"><span class="clock-label">你那里</span><time class="clock-time" data-clock="local">--:--</time></span><span class="clock-item"><span class="clock-label">B 站那里</span><time class="clock-time" data-clock="bilibili">--:--</time></span></p>
+          <p class="clock-note" data-clock-note></p>
+        </div>
         <div class="compare" role="img" aria-label="对比：直接播放时缓冲只领先几秒并卡住；开启海内存知后，前方一大段已提前加载">
           <div class="compare-row">
             <span class="compare-label">直接播放</span>
@@ -172,6 +187,15 @@
           <h2>天涯亦有<em class="key">知己</em></h2>
           <p>B 站是我们自己的地方：同样的梗、同样的弹幕、同样的知识底子。人在海外，最懂你的还是这里的同胞。海内存知做的，只是让这段距离不再转圈。</p>
         </div>
+        <!-- 发一条弹幕：输入的文字只用 textContent 放进本页，不提交、不进地址栏、不存储。
+             没有脚本时表单保持隐藏，免得原生提交把文字带进 URL。 -->
+        <form class="danmaku-send" hidden>
+          <label class="visually-hidden" for="danmaku-input">发一条弹幕</label>
+          <input id="danmaku-input" name="danmaku" maxlength="24" autocomplete="off" enterkeyhint="send" placeholder="比如：海外党报到">
+          <button class="button button-send" type="submit">发送</button>
+          <p class="danmaku-hint">只在你自己的屏幕上飘过，不上传、不保存。</p>
+          <p class="visually-hidden" role="status" aria-live="polite" data-danmaku-status></p>
+        </form>
       </section>
 
       <section id="privacy" class="section section-tint">
@@ -225,6 +249,24 @@
     </main>
 
     <footer class="footer">
+      <!-- 靠岸：首屏的漂流瓶在海上出发，页尾在沙滩上靠岸。滚到页尾时瓶子从左边被浪推上岸（site.js），
+           没有脚本或减少动态时直接停在岸上。纯装饰，读屏只读下面的一句话。 -->
+      <div class="shore">
+        <svg class="shore-art" viewBox="0 0 240 72" aria-hidden="true">
+          <path class="shore-foam" d="M0 50Q20 44 40 50T80 50" />
+          <path class="shore-foam shore-foam-2" d="M8 58Q26 53 44 58T80 57" />
+          <path class="shore-sand" d="M60 56Q120 44 180 50T240 48V72H60Q50 62 60 56Z"/>
+          <g class="shore-bottle">
+            <!-- 瓶子平躺在沙上（瓶口朝左上）；水面保持水平，与图标一致：裁剪在外层 g，水面是一块水平矩形。 -->
+            <clipPath id="shore-glass"><path transform="translate(150 38) rotate(-80) scale(1.15) translate(-16 -17)" d="M13 4.5H19V8.5Q19 10 20.5 11Q24.5 13 24.5 17.5V26Q24.5 30 20.5 30H11.5Q7.5 30 7.5 26V17.5Q7.5 13 11.5 11Q13 10 13 8.5Z"/></clipPath>
+            <path transform="translate(150 38) rotate(-80) scale(1.15) translate(-16 -17)" fill="#2BB3E6" d="M13 4.5H19V8.5Q19 10 20.5 11Q24.5 13 24.5 17.5V26Q24.5 30 20.5 30H11.5Q7.5 30 7.5 26V17.5Q7.5 13 11.5 11Q13 10 13 8.5Z"/>
+            <rect transform="translate(150 38) rotate(-80) scale(1.15) translate(-16 -17)" x="11.5" y="1" width="9" height="5" rx="1.5" fill="#E9A15B"/>
+            <g clip-path="url(#shore-glass)"><rect x="120" y="40" width="70" height="20" fill="#1587C6"/></g>
+            <path fill="#fff" stroke="#fff" stroke-width="1.2" stroke-linejoin="round" d="M150 34L158 38.6L150 43.2Z"/>
+          </g>
+        </svg>
+        <p class="shore-caption">漂流瓶到岸了。</p>
+      </div>
       <p class="footer-verse"><span class="verse-name">海内存知</span><span class="verse-soft">己，天涯若比邻</span></p>
       <p class="footer-links">
         <a href="{{STORE_URL}}" rel="noopener">Chrome 应用商店</a>

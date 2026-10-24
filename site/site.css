@@ -96,6 +96,11 @@ p { text-wrap: pretty; }
 .topbar-brand, .topbar-links a, .github-link, .lang-switch { transition: color 160ms ease, box-shadow 160ms ease, background-color 160ms ease; }
 main { isolation: isolate; }
 .topbar-brand { display: flex; align-items: center; gap: 8px; color: var(--bar-ink); text-decoration: none; font-weight: 650; letter-spacing: 0.06em; white-space: nowrap; }
+/* 顶栏小瓶：水位随阅读进度上涨（--read 0→1），滚动时轻轻摇一下。水面是一块整矩形，被瓶身轮廓裁剪。 */
+.bar-bottle { flex: none; overflow: visible; transform-origin: 50% 80%; }
+.bar-water { transform: translateY(calc(29px - var(--read, 0) * 24px)); transition: transform 200ms ease-out; }
+.bar-bottle.is-rocking { animation: rock 1.1s ease-in-out; }
+@keyframes rock { 0%, 100% { transform: rotate(0deg); } 30% { transform: rotate(-9deg); } 65% { transform: rotate(5deg); } }
 .topbar-links { display: flex; gap: 22px; margin-left: auto; margin-right: 14px; }
 .topbar-links a { color: var(--bar-ink-soft); text-decoration: none; font-size: 15px; }
 .topbar-links a:hover { color: var(--bar-ink); }
@@ -166,6 +171,15 @@ h2 { font-family: var(--serif); font-size: clamp(30px, 4.4vw, 44px); line-height
 h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
 .section-foot { max-width: 680px; margin: 32px auto 0; text-align: center; color: var(--ink-soft); }
 
+/* ---------- 天涯：时差钟 ---------- */
+.clock { max-width: 760px; margin: -12px auto 28px; text-align: center; }
+.clock-pair { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 40px; }
+.clock-item { display: inline-flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+.clock-label { font-size: 14px; color: var(--ink-soft); }
+.clock-time { font-family: var(--serif); font-size: clamp(30px, 4vw, 40px); font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+.clock-item + .clock-item .clock-time { color: var(--accent); }
+.clock-note { margin-top: 4px; font-size: 15px; color: var(--ink-soft); }
+
 /* ---------- 天涯：进度条对比 ---------- */
 .compare { max-width: 760px; margin: 0 auto; padding: 28px clamp(18px, 4vw, 36px); border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 24px 48px -32px rgba(8, 40, 58, 0.35); }
 .compare-row { display: grid; grid-template-columns: minmax(120px, max-content) 1fr; align-items: center; gap: 16px; padding: 12px 0; }
@@ -212,7 +226,19 @@ h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
 
 /* ---------- 知己 ---------- */
 /* 知己：三条弹幕轨道从右往左飘，速度各不相同；两端渐隐，避免弹幕在容器边缘被硬切。 */
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .friend { overflow: hidden; }
+/* 自己发的弹幕：像 B 站一样给自己的弹幕加一圈描边，飘一次就消失。--distance 由脚本按轨道宽度写入。 */
+.danmaku { position: relative; }
+.danmaku-mine { position: absolute; left: 100%; z-index: 1; padding: 0 8px; border: 1px solid var(--accent); border-radius: 4px; background: var(--bg); box-shadow: 0 0 0 3px var(--bg); font-size: 15px; font-weight: 600; line-height: 1.6; white-space: nowrap; color: var(--ink); animation: fly 9s linear forwards; }
+.danmaku-mine.is-static { left: 50%; transform: translateX(-50%); animation: none; }
+@keyframes fly { to { transform: translateX(calc(-1 * var(--distance, 1200px))); } }
+.danmaku-send { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; max-width: 520px; margin: 28px auto 0; }
+.danmaku-send[hidden] { display: none; }
+.danmaku-send input { flex: 1 1 220px; min-width: 0; min-height: 46px; padding: 0 18px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); font: inherit; }
+.danmaku-send input:focus-visible { outline: 2px solid var(--sky); outline-offset: 1px; }
+.button-send { background: var(--sky); color: #04263a; border: 0; cursor: pointer; font-family: inherit; }
+.danmaku-hint { flex-basis: 100%; text-align: center; font-size: 13px; color: var(--ink-soft); }
 .friend .section-head { margin-bottom: 0; }
 .danmaku { display: grid; gap: 10px; max-width: 1080px; margin: 0 auto 36px; -webkit-mask: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); mask: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); }
 .danmaku-lane { overflow: hidden; }
@@ -241,6 +267,16 @@ h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
 .scope li { padding: 18px 22px; border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--line); color: var(--ink-soft); }
 .scope b { color: var(--ink); margin-right: 4px; }
 .footer { padding: 56px var(--gutter) 64px; background: var(--sea-deep); color: rgba(255, 255, 255, 0.8); text-align: center; }
+/* 页尾靠岸：沙滩色取瓶塞琥珀的浅调，瓶子平躺在沙上。.is-waiting 时停在左边海里，进入视口后被推上岸。 */
+.shore { margin: -8px auto 18px; max-width: 280px; }
+.shore-art { width: 100%; height: auto; overflow: visible; }
+.shore-sand { fill: #d9b98a; fill-opacity: 0.85; }
+.shore-foam { fill: none; stroke: rgba(255, 255, 255, 0.45); stroke-width: 2; stroke-linecap: round; }
+.shore-foam-2 { stroke-opacity: 0.6; animation: lap 4s ease-in-out infinite; }
+.shore-bottle { transition: transform 1.8s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.8s ease; transform-box: view-box; }
+.shore.is-waiting .shore-bottle { transform: translate(-110px, 10px) rotate(-14deg); opacity: 0; }
+.shore-caption { margin-top: 2px; font-size: 13px; letter-spacing: 0.06em; color: var(--verse-soft); }
+@keyframes lap { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(6px); } }
 .footer-verse { font-family: var(--serif); font-size: 24px; letter-spacing: 0.04em; color: #fff; }
 .footer-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 22px; margin-top: 18px; }
 .footer-links a { color: #fff; }
@@ -315,3 +351,9 @@ h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
   .food-card, .food-card .food { transition: none; }
   .food-card:hover, .food-card:hover .food { transform: none; }
 }
+
+/* ---------- 404：瓶子漂丢了 ---------- */
+.lost { min-height: 100vh; display: grid; place-content: center; padding-bottom: 150px; }
+.lost h1 { font-family: var(--serif); font-size: clamp(34px, 6vw, 56px); line-height: 1.25; }
+.lost .hero-bottle { animation: bob 6s ease-in-out infinite, wander 18s ease-in-out infinite; }
+@keyframes wander { 0%, 100% { translate: -24px 0; } 50% { translate: 24px 0; } }
