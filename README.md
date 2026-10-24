@@ -35,8 +35,7 @@
 2. 打开 `chrome://extensions/`，开启右上角「开发者模式」。
 3. 把 zip 直接拖进页面，或用「加载已解压的扩展程序」选择仓库目录。
 
-> [!WARNING]
-> 手动安装的扩展可能在 Chrome 升级后被停用；插件「没反应」时，先到 `chrome://extensions` 确认它没有被停用。
+> **注意**：手动安装的扩展可能在 Chrome 升级后被停用；插件「没反应」时，先到 `chrome://extensions` 确认它没有被停用。
 
 </details>
 
