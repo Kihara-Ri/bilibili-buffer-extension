@@ -55,8 +55,9 @@ npm run store:assets
 3. **上传**
    - 打开 [开发者仪表盘](https://chrome.google.com/webstore/devconsole) → `Add new item`，
      上传 `dist/haineicunzhi-<version>.zip`。
-   - 上传后 `Package` 页点 `View public key`，确认它的 ID 与
-     `rules/cdn-headers.json` 里的 `initiatorDomains` 一致。**不一致就必须停下**：
+   - 上传后核对商品 ID：已发布商品的 ID 是 `bjegpandnhmeinmennpfpkholhmbllam`，
+     它必须出现在 `rules/cdn-headers.json` 每条规则的 `initiatorDomains` 里（与本地开发 ID 并列；
+     `npm run build` 的发布校验会检查两者）。**ID 对不上就必须停下**：
      防盗链 `Referer` 规则会失效，缓存会开始大面积 403。
      本地可以直接核对：`node -e 'const c=require("crypto");const k=require("./manifest.json").key;const d=c.createHash("sha256").update(Buffer.from(k,"base64")).digest().subarray(0,16);console.log([...d].map(b=>String.fromCharCode(97+(b>>4))+String.fromCharCode(97+(b&15))).join(""))'`
    - 若想让商店沿用本地开发 ID，保持 `manifest.json` 里的 `key` 不变即可；
@@ -106,7 +107,7 @@ npm run store:assets
 - 图标：16/32/48/128 齐全、尺寸正确、四角透明、图形留白符合 Chrome 图标规范；
 - 权限：只允许白名单内的权限、`host_permissions` 全为 https 且不含本地地址；
 - 代码：无开发态热更新残留、无 `eval` / `new Function` / `importScripts` / 内联脚本 / 远程脚本；
-- 规则：DNR 的 `initiatorDomains` 与 `key` 推导出的扩展 ID 一致；
+- 规则：DNR 的 `initiatorDomains` 同时包含 `key` 推导出的开发 ID 与商店 ID；
 - 压缩包：`manifest.json` 在根目录、无 `.DS_Store` / `_metadata` / 多层嵌套目录、版本一致；
 - 打印包体大小与 SHA-256。
 

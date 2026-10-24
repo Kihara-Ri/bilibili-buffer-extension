@@ -27,6 +27,13 @@ export const ALLOWED_PERMISSIONS = new Set([
   "unlimitedStorage" // 允许 IndexedDB 保存超出默认配额的视频缓存
 ]);
 
+/**
+ * Chrome Web Store 给已发布商品分配的扩展 ID（开发者后台商品页可见）。
+ * 它与 manifest.key 推导出的开发 ID 不同：商店安装版和本地加载版是两个 ID，
+ * DNR 规则的 initiatorDomains 必须同时放行，否则商店用户的请求补不上 Referer。
+ */
+export const STORE_EXTENSION_ID = "bjegpandnhmeinmennpfpkholhmbllam";
+
 const SEMVER = /^\d+\.\d+\.\d+(\.\d+)?$/;
 
 /**
@@ -94,7 +101,13 @@ export function checkHostPermissions(manifest) {
   return failures;
 }
 
-export function checkDnrRules(rules, extensionId) {
+/**
+ * @param {Array<object>} rules rules/cdn-headers.json 的内容
+ * @param {string | string[]} extensionIds 每条规则都必须放行的扩展 ID（开发 ID 与商店 ID）
+ * @returns {string[]} 失败说明，空数组表示通过
+ */
+export function checkDnrRules(rules, extensionIds) {
+  const requiredIds = [extensionIds].flat();
   const failures = [];
   if (!Array.isArray(rules) || rules.length === 0) {
     failures.push("rules/cdn-headers.json 为空");
@@ -102,10 +115,12 @@ export function checkDnrRules(rules, extensionId) {
   }
   for (const rule of rules) {
     const initiators = rule.condition?.initiatorDomains || [];
-    if (!initiators.includes(extensionId)) {
-      failures.push(
-        `DNR 规则 ${rule.id} 的 initiatorDomains 未包含当前扩展 ID ${extensionId}；换 key 后必须同步规则`
-      );
+    for (const extensionId of requiredIds) {
+      if (!initiators.includes(extensionId)) {
+        failures.push(
+          `DNR 规则 ${rule.id} 的 initiatorDomains 未包含当前扩展 ID ${extensionId}；换 key 或商店 ID 变化后必须同步规则`
+        );
+      }
     }
     for (const domain of initiators) {
       // DNR 的 initiatorDomains 对扩展自身请求匹配的是扩展 ID 这个“主机名”。

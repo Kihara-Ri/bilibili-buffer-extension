@@ -9,7 +9,8 @@ import {
   checkManifestFields,
   checkPackagedText,
   checkZipEntries,
-  extensionIdFromKey
+  extensionIdFromKey,
+  STORE_EXTENSION_ID
 } from "./lib/release-checks.mjs";
 import { readZip } from "./lib/zip.mjs";
 
@@ -100,7 +101,7 @@ for (const entry of new Set(referenced)) {
 if (manifest.key) {
   const derivedId = extensionIdFromKey(manifest.key);
   try {
-    failures.push(...checkDnrRules(await readJson(path.join(unpacked, "rules", "cdn-headers.json")), derivedId));
+    failures.push(...checkDnrRules(await readJson(path.join(unpacked, "rules", "cdn-headers.json")), [derivedId, STORE_EXTENSION_ID]));
   } catch (error) {
     failures.push(`无法读取 rules/cdn-headers.json：${error.message}`);
   }

@@ -14,7 +14,8 @@
     },
     "condition": {
       "initiatorDomains": [
-        "ppoagkhgdcfchiodhgadpenibndbnhcj"
+        "ppoagkhgdcfchiodhgadpenibndbnhcj",
+        "bjegpandnhmeinmennpfpkholhmbllam"
       ],
       "requestDomains": [
         "bilivideo.com",
@@ -41,7 +42,8 @@
     },
     "condition": {
       "initiatorDomains": [
-        "ppoagkhgdcfchiodhgadpenibndbnhcj"
+        "ppoagkhgdcfchiodhgadpenibndbnhcj",
+        "bjegpandnhmeinmennpfpkholhmbllam"
       ],
       "requestDomains": [
         "api.bilibili.com"

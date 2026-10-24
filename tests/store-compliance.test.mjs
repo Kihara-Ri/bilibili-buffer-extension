@@ -10,6 +10,7 @@ import {
   checkPackagedText,
   checkZipEntries,
   extensionIdFromKey,
+  STORE_EXTENSION_ID,
   toReleaseManifest
 } from "../scripts/lib/release-checks.mjs";
 
@@ -27,6 +28,8 @@ const pkg = await readJson("package.json");
 // 由 scripts/lib/release-checks.mjs 的 toReleaseManifest 负责剔除。
 const releaseManifest = toReleaseManifest(manifest);
 const EXPECTED_ID = "ppoagkhgdcfchiodhgadpenibndbnhcj";
+/** Chrome Web Store 上已发布商品的 ID（开发者后台商品页显示）。 */
+const STORE_ID = "bjegpandnhmeinmennpfpkholhmbllam";
 
 test("清单字段满足商店与 manifest 的硬性上限", () => {
   assert.deepEqual(checkManifestFields(manifest, pkg), []);
@@ -90,6 +93,19 @@ test("扩展 ID 与 key 一致，DNR 规则只作用于本扩展发起的请求"
     wrong[0].condition.initiatorDomains = ["www.bilibili.com"];
     assert.ok(checkDnrRules(wrong, id).some((m) => m.includes("站点域名")));
   });
+});
+
+test("商店版扩展 ID 也在 DNR 规则里：从 Chrome Web Store 安装的用户同样要补 Referer", async () => {
+  // 商店给已发布商品分配的 ID 与本地 key 推导出的开发 ID 不同；只放行开发 ID 时，
+  // 商店用户发往 CDN / api 的请求不带站内 Referer，会被 403 或风控拒绝。
+  const rules = await readJson("rules/cdn-headers.json");
+  for (const rule of rules) {
+    assert.ok(rule.condition.initiatorDomains.includes(STORE_ID), `DNR 规则 ${rule.id} 未放行商店版 ID ${STORE_ID}`);
+  }
+  assert.equal(STORE_EXTENSION_ID, STORE_ID);
+  assert.deepEqual(checkDnrRules(rules, [extensionIdFromKey(manifest.key), STORE_EXTENSION_ID]), []);
+  const devOnly = structuredClone(rules).map((rule) => ({ ...rule, condition: { ...rule.condition, initiatorDomains: [extensionIdFromKey(manifest.key)] } }));
+  assert.ok(checkDnrRules(devOnly, [extensionIdFromKey(manifest.key), STORE_EXTENSION_ID]).some((m) => m.includes(STORE_ID)));
 });
 
 test("发布包内容检查能识破远程代码、内联脚本与开发态残留", () => {
