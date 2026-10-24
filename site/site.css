@@ -180,6 +180,18 @@ h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
 .demo figcaption { margin-top: 12px; text-align: center; font-size: 13px; color: var(--ink-soft); }
 
 /* ---------- 知己 ---------- */
+/* 知己：三条弹幕轨道从右往左飘，速度各不相同；两端渐隐，避免弹幕在容器边缘被硬切。 */
+.friend { overflow: hidden; }
+.friend .section-head { margin-bottom: 0; }
+.danmaku { display: grid; gap: 10px; max-width: 1080px; margin: 0 auto 36px; -webkit-mask: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); mask: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); }
+.danmaku-lane { overflow: hidden; }
+.danmaku-track { display: flex; width: max-content; animation: drift 38s linear infinite; }
+.danmaku-lane-2 .danmaku-track { animation-duration: 52s; animation-delay: -17s; }
+.danmaku-lane-3 .danmaku-track { animation-duration: 44s; animation-delay: -29s; }
+.danmaku-track span { padding-right: 28px; font-size: 15px; white-space: nowrap; color: var(--ink-soft); }
+.danmaku-lane-1 span:nth-child(3n + 1), .danmaku-lane-3 span:nth-child(4n + 2) { color: var(--accent); }
+.danmaku-lane-2 span:nth-child(3n + 2) { color: var(--amber-ink); }
+
 .promises { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; max-width: 1080px; margin: 0 auto; }
 
 /* ---------- 投喂 ---------- */

@@ -42,6 +42,16 @@ test("各节标题把导航关键字写进句子里：不再单独放一行小�
   }
 });
 
+test("「知己」一节讲自己人更懂自己人，隐私承诺单独成节", () => {
+  const start = page.indexOf('id="friend"');
+  const friend = page.slice(start, page.indexOf("</section>", start));
+  assert.match(friend, /同胞/);
+  assert.match(friend, /class="danmaku" aria-hidden="true"/, "弹幕只是装饰，读屏应跳过");
+  assert.doesNotMatch(friend, /class="promises"/);
+  const privacy = page.slice(page.indexOf('id="privacy"'));
+  assert.match(privacy, /<h2>只有你知道<\/h2>[\s\S]*class="promises"/);
+});
+
 test("更新记录折叠在页尾，第一条就是当前版本：发版时忘了写开发日志会在这里失败", () => {
   assert.equal(result.versions[0], manifest.version);
   const footer = page.slice(page.indexOf('<footer class="footer">'));
