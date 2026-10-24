@@ -12,7 +12,7 @@ const server = createServer(async (req, res) => {
     const file = path.resolve(root, '.' + new URL(req.url, 'http://test').pathname);
     if (!file.startsWith(root)) throw new Error('outside root');
     const data = await readFile(file);
-    res.setHeader('Content-Type', file.endsWith('.html') ? 'text/html' : file.endsWith('.css') ? 'text/css' : 'text/javascript'); res.end(data);
+    res.setHeader('Content-Type', file.endsWith('.html') ? 'text/html' : file.endsWith('.css') ? 'text/css' : file.endsWith('.svg') ? 'image/svg+xml' : file.endsWith('.png') ? 'image/png' : 'text/javascript'); res.end(data);
   } catch { res.writeHead(404).end(); }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -215,6 +215,8 @@ try {
     });
   });
   assert(chips.length===4&&chips.every(chip=>!chip.problems.length),JSON.stringify(chips));
+  // 页眉图标引用的是打包内的矢量母版：路径写错或资源缺失时 <img> 只会静默显示破图。
+  assert(await page.evaluate(()=>{const icon=document.querySelector('.brand-icon'); return icon.complete&&icon.naturalWidth>0;}),'页眉图标没有加载出来');
   // 账号说明只能在「 · 」处折行：档位名（如 1080P+）不能被单独挤到下一行。
   const note=await page.evaluate(()=>{
     const node=document.querySelector('#auth-note');

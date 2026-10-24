@@ -1,8 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img" aria-labelledby="title desc">
-  <title id="title">海内存知 · 提前一格小尺寸图标</title>
-  <desc id="desc">蓝色播放主体与两段青色缓冲块，针对 16 和 32 像素优化。</desc>
-  <!-- 小尺寸主体适当放大；两道 2 单位间隙在 16 像素下仍各占一整像素，避免三段粘连。 -->
-  <path fill="#159DCF" d="M2 4Q2 2 4 3.5L15 11Q16 11.7 16 13V19Q16 20.3 15 21L4 28.5Q2 30 2 28Z"/>
-  <path fill="#20B7D6" d="M18 10Q18 9 19 9.7L22 12Q23 12.7 23 14V18Q23 19.3 22 20L19 22.3Q18 23 18 22Z"/>
-  <path fill="#20B7D6" d="M25 13Q25 12 26 12.7L29 15Q30 16 29 17L26 19.3Q25 20 25 19Z"/>
+  <title id="title">海内存知 · 漂流瓶小尺寸图标</title>
+  <desc id="desc">倾斜的蓝色漂流瓶、瓶内水位与白色播放键，针对 16 和 32 像素优化。</desc>
+  <!-- 16/32 像素下海浪只剩一条糊边，干脆去掉；瓶身尽量放大到只留 1 像素边距，
+       去掉玻璃高光，播放三角相对放大，保证 16 像素时仍能看出「瓶 + 播放」。 -->
+  <g transform="translate(16 16.5) rotate(38) scale(0.95) translate(-16 -16)">
+    <path fill="#2BB3E6" d="M13 4.5H19V8.5Q19 10 20.5 11Q24.5 13 24.5 17.5V26Q24.5 30 20.5 30H11.5Q7.5 30 7.5 26V17.5Q7.5 13 11.5 11Q13 10 13 8.5Z"/>
+    <rect x="11.5" y="1" width="9" height="5" rx="1.5" fill="#E9A15B"/>
+  </g>
+  <!-- 水位简化为一条水平直线（小尺寸下波纹看不出来），下半瓶用深一档的蓝。 -->
+  <clipPath id="glass">
+    <path transform="translate(16 16.5) rotate(38) scale(0.95) translate(-16 -16)" d="M13 4.5H19V8.5Q19 10 20.5 11Q24.5 13 24.5 17.5V26Q24.5 30 20.5 30H11.5Q7.5 30 7.5 26V17.5Q7.5 13 11.5 11Q13 10 13 8.5Z"/>
+  </clipPath>
+  <rect clip-path="url(#glass)" x="0" y="19" width="32" height="13" fill="#1587C6"/>
+  <path fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1.2" stroke-linejoin="round" d="M10.2 14.9L17 19.4L10.2 23.9Z"/>
 </svg>

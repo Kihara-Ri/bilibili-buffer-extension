@@ -69,7 +69,8 @@ const server = createServer(async (request, response) => {
     const file = path.resolve(root, "." + decodeURIComponent(new URL(request.url, "http://local").pathname));
     if (!file.startsWith(root)) throw new Error("outside root");
     const data = await readFile(file);
-    const type = file.endsWith(".html") ? "text/html" : file.endsWith(".css") ? "text/css" : file.endsWith(".png") ? "image/png" : "text/javascript";
+    // SVG 必须给 image/svg+xml：弹窗页眉的 <img> 直接引用矢量图标，按 JS 类型返回会显示成破图。
+    const type = file.endsWith(".html") ? "text/html" : file.endsWith(".css") ? "text/css" : file.endsWith(".png") ? "image/png" : file.endsWith(".svg") ? "image/svg+xml" : "text/javascript";
     response.writeHead(200, { "Content-Type": `${type}; charset=utf-8` });
     response.end(data);
   } catch {

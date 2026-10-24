@@ -1,8 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
-  <title id="title">海内存知 · 提前一格</title>
-  <desc id="desc">蓝色播放主体与前方两段青色缓冲块，表示提前加载、连续播放。</desc>
-  <!-- 三段轮廓沿播放方向收拢；纯填充保证缩放稳定。画布四周至少留 16 像素透明边距。 -->
-  <path fill="#159DCF" d="M16 24Q16 12 26 19L62 45Q66 48 66 53V75Q66 80 62 83L26 109Q16 116 16 104Z"/>
-  <path fill="#20B7D6" d="M74 43Q74 37 79 41L88 48Q92 51 92 55V73Q92 77 88 80L79 87Q74 91 74 85Z"/>
-  <path fill="#20B7D6" d="M100 55Q100 50 104 53L110 59Q114 64 110 69L104 75Q100 78 100 73Z"/>
+  <title id="title">海内存知 · 漂流瓶</title>
+  <desc id="desc">浮在海浪上的蓝色漂流瓶，瓶里盛着半瓶水、装着一个白色播放键：视频漂洋过海，已经存在你身边。</desc>
+  <!-- 取意「海内存知己，天涯若比邻」：漂流瓶是跨海寄给知己的信，瓶子本身又是「存」。
+       瓶身整体倾斜 38° 显出漂浮感；播放三角不随瓶身旋转，始终水平朝右，否则会读成「下载箭头」。
+       纯填充、无描边以外的效果；画布四周至少留 16 像素透明边距。 -->
+  <!-- 海浪正好横跨 16–112，撑满 96×96 的图形区；倾斜后瓶塞角最靠边，所以只把瓶子与播放键
+       以中心缩到 0.93，让瓶塞也落在 16 像素边距以内。 -->
+  <g transform="translate(64 64) scale(0.93) translate(-64 -64)">
+    <g transform="translate(9 -4) rotate(38 64 60)">
+      <path fill="#2BB3E6" d="M55 26H73V40Q73 45 78 48Q90 55 90 69V96Q90 108 78 108H50Q38 108 38 96V69Q38 55 50 48Q55 45 55 40Z"/>
+    </g>
+    <!-- 瓶内水位 = 已缓存的部分（呼应缓存按钮里的进度填充）。水面在画布坐标里保持水平、
+         不随瓶身倾斜，才像真的盛着水；用瓶身轮廓裁剪，不溢出玻璃。 -->
+    <clipPath id="glass">
+      <path transform="translate(9 -4) rotate(38 64 60)" d="M55 26H73V40Q73 45 78 48Q90 55 90 69V96Q90 108 78 108H50Q38 108 38 96V69Q38 55 50 48Q55 45 55 40Z"/>
+    </clipPath>
+    <path clip-path="url(#glass)" fill="#1587C6" d="M0 72Q16 66 32 72T64 72T96 72T128 72V128H0Z"/>
+    <g transform="translate(9 -4) rotate(38 64 60)">
+      <!-- 玻璃高光：半透明白条，只在 48/128 这类大尺寸上可见。 -->
+      <path fill="#FFFFFF" fill-opacity="0.4" d="M44 72Q44 64 50 60V94Q50 99 47 99Q44 99 44 94Z"/>
+      <rect x="52" y="14" width="24" height="16" rx="5" fill="#E9A15B"/>
+    </g>
+    <path fill="#FFFFFF" stroke="#FFFFFF" stroke-width="5" stroke-linejoin="round" d="M52 63L68 73L52 83Z"/>
+  </g>
+  <!-- 海浪压住瓶底，瓶子是「浮在海上」而不是「立在线上」。 -->
+  <path fill="#0E6FB0" d="M16 98Q28 88 40 98T64 98T88 98T112 98V104Q112 112 104 112H24Q16 112 16 104Z"/>
 </svg>
