@@ -150,3 +150,14 @@ test("中文首页的英文入口默认隐藏，由脚本按浏览器语言显�
   assert.match(page, /<p class="lang-hint" lang="en" hidden><a href="en\/" hreflang="en">/);
   assert.match(await readFile(path.join(out, "site.js"), "utf8"), /navigator\.languages/);
 });
+
+test("隐私页页眉用现在的漂流瓶图标，而不是更名前的电视机图标", async () => {
+  const privacy = await readFile(new URL("privacy.html", root), "utf8");
+  const header = privacy.slice(privacy.indexOf("<header>"), privacy.indexOf("</header>"));
+  assert.match(header, /<img src="assets\/icon-master\.svg"[^>]*alt=""/);
+  // 旧图标「提前一格」是内联 SVG：天线 + 电视机身 + B 站粉播放键
+  assert.doesNotMatch(privacy, /#fb7299|M27 5 38 15/, "隐私页仍残留旧图标");
+  // 扩展包内与官网上，页面相对路径都指向同一个图标文件
+  await stat(new URL("assets/icon-master.svg", root));
+  await stat(path.join(out, "assets", "icon-master.svg"));
+});
