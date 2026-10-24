@@ -565,7 +565,7 @@ function renderAuthNote(ladder) {
     text = "未登录：只能缓存公开画质"; tone = "warning"; title = "在当前 Chrome 登录 B 站后可缓存更高画质";
   }
   note.hidden = !text || isAudioMode() && tone !== "warning";
-  setText(note, text);
+  setSegmentedText(note, text);
   note.dataset.tone = tone;
   note.title = [title, ladder?.title].filter(Boolean).join("\n");
 }
@@ -1117,6 +1117,24 @@ function setAttr(element, name, value) {
 
 function setText(element, text) {
   if (element.textContent !== text) element.textContent = text;
+}
+
+/**
+ * 按「 · 」分段写入，每段作为整体折行：右对齐的短说明优先在分隔点折行，
+ * 否则「已登录大会员 · 本视频没有 1080P+」会把「1080P+」单独挤到第二行。
+ * 段落不能设成 nowrap：不含分隔点的长警告会变成一条不可断的长串，撑出右侧边距（见 popup.css）。
+ * 文本不变时不重建节点（textContent 与原句一致，可直接比较）。
+ * @param {HTMLElement} element
+ * @param {string} text
+ */
+function setSegmentedText(element, text) {
+  if (element.textContent === text) return;
+  element.replaceChildren(...text.split(" · ").flatMap((part, index) => {
+    const segment = document.createElement("span");
+    segment.className = "text-segment";
+    segment.textContent = part;
+    return index ? [" · ", segment] : [segment];
+  }));
 }
 
 function showToast(message, { action = "", onAction = null, duration = 1800 } = {}) {

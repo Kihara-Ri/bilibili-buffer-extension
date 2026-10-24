@@ -187,6 +187,50 @@ try {
   assert(health.sameNode,'自检结论未变化时不能重建列表节点');
   assert(health.alertShown,'能力缺失时主视图必须出现提示条与齿轮红点');
   assert(health.hidden,'能力恢复后自检提示必须收起');
+  // 画质卡片在四档并排、带 VIP/登录 标记时最挤：商店场景就是这种数据（4K 约 312 MB + VIP）。
+  // 标记不能压住体积或档位文字，也不能被卡片或相邻控件遮挡。
+  await page.goto(origin + '/store/scene/popup-scene.html');
+  await page.waitForFunction(()=>globalThis.__storeScene&&document.querySelectorAll('.quality-option-tag').length>0);
+  const chips=await page.evaluate(()=>{
+    const hit=(a,b)=>a.left<b.right-0.5&&b.left<a.right-0.5&&a.top<b.bottom-0.5&&b.top<a.bottom-0.5;
+    const modeRow=document.querySelector('.mode-row').getBoundingClientRect();
+    const all=[...document.querySelectorAll('.quality-option')];
+    return all.map((option,index)=>{
+      const box=option.getBoundingClientRect(),label=option.querySelector('.quality-option-label'),size=option.querySelector('.quality-option-size'),tag=option.querySelector('.quality-option-tag');
+      const ink=(node)=>{const range=document.createRange(); range.selectNodeContents(node); return range.getBoundingClientRect();};
+      // 文字的实际墨迹范围：档位/体积是块级网格项，盒子横跨整张卡片，用盒子判断会把空白处也算成重叠。
+      const lr=ink(label),sr=ink(size),tr=tag?.getBoundingClientRect();
+      const problems=[];
+      if(size.scrollWidth>size.clientWidth||sr.right>box.right-1)problems.push('体积溢出卡片');
+      if(lr.right>box.right-1)problems.push('档位溢出卡片');
+      if(tr){
+        if(hit(tr,sr))problems.push('标记压住体积');
+        if(hit(tr,lr))problems.push('标记压住档位');
+        if(tr.top<modeRow.bottom)problems.push('标记伸进上方控件');
+        if(all.some((other,j)=>j!==index&&hit(tr,other.getBoundingClientRect())))problems.push('标记压住相邻卡片');
+        const at=document.elementFromPoint(tr.left+tr.width/2,tr.top+tr.height/2);
+        if(!tag.contains(at))problems.push('标记被遮挡');
+      }
+      return {text:option.textContent,problems};
+    });
+  });
+  assert(chips.length===4&&chips.every(chip=>!chip.problems.length),JSON.stringify(chips));
+  // 账号说明只能在「 · 」处折行：档位名（如 1080P+）不能被单独挤到下一行。
+  const note=await page.evaluate(()=>{
+    const node=document.querySelector('#auth-note');
+    const line=parseFloat(getComputedStyle(node).lineHeight);
+    return {text:node.textContent,segments:[...node.querySelectorAll('.text-segment')].map(segment=>Math.round(segment.getBoundingClientRect().height/line))};
+  });
+  assert(note.text.includes(' · ')&&note.segments.length>1&&note.segments.every(lines=>lines===1),JSON.stringify(note));
+  // 左右边距必须对称：一整句不含「 · 」的长警告曾被当成一个不换行的段，把整列撑出右侧 16px 边距。
+  await page.goto(origin + '/store/scene/popup-scene.html?auth=limited');
+  await page.waitForFunction(()=>globalThis.__storeScene&&document.querySelector('#auth-note').textContent.includes('登录状态受限'));
+  const gutters=await page.evaluate(()=>{
+    const shell=document.querySelector('.app-shell').getBoundingClientRect(),tabs=document.querySelector('#panel-tabs').getBoundingClientRect();
+    const wide=[...document.querySelectorAll('#current-view *')].filter(node=>node.getClientRects().length).map(node=>({node:node.id||node.className,right:node.getBoundingClientRect().right})).filter(item=>item.right>tabs.right+0.5);
+    return {left:tabs.left-shell.left,right:shell.right-tabs.right,scroll:document.documentElement.scrollWidth,wide:wide.slice(0,5)};
+  });
+  assert(Math.abs(gutters.left-gutters.right)<0.5&&gutters.scroll<=360&&!gutters.wide.length,JSON.stringify(gutters));
   for(const fixture of ['background-popup-integration','offscreen-integration','offscreen-merge-integration']){
     await page.goto(`${origin}/tests/${fixture}.html`);
     await page.waitForFunction(()=>document.querySelector('#result').textContent !== 'running',{},{timeout:45000});

@@ -177,6 +177,13 @@ const ASSIST_STATS = {
 };
 
 let listener = () => {};
+// 「关于」里的版本号读真实 manifest，避免商店截图停在写死的旧版本。
+const MANIFEST = await fetch(new URL("../../manifest.json", import.meta.url)).then((response) => response.json());
+// ?auth=limited 模拟「检测到登录 Cookie 但读不到页面登录态」：账号说明是一整句不含「 · 」的长警告，
+// 测试用它检查长说明不会把整列撑出右侧边距。默认是商店截图用的大会员状态。
+const SCENE_AUTH = new URLSearchParams(location.search).get("auth") === "limited"
+  ? { viaPageSession: false, hasSessionCookie: true }
+  : { viaPageSession: true, vipActive: true };
 let library = structuredClone(LIBRARY);
 let assistConfig = { ...ASSIST_CONFIG };
 let cacheMode = "video";
@@ -189,7 +196,7 @@ globalThis.chrome = {
     async create() {}
   },
   runtime: {
-    getManifest: () => ({ version: "2.11.1" }),
+    getManifest: () => MANIFEST,
     onMessage: { addListener(callback) { listener = callback; } },
     async sendMessage(message) {
       switch (message.type) {
@@ -207,7 +214,7 @@ globalThis.chrome = {
               selectedQuality: 120,
               defaultCodec: "auto",
               selectedCodec: "auto",
-              auth: { viaPageSession: true, vipActive: true },
+              auth: SCENE_AUTH,
               savedAt: Date.now()
             }
           };
@@ -226,7 +233,7 @@ globalThis.chrome = {
         case "SET_POPUP_SELECTION":
           return { ok: true, saved: true };
         case "REFRESH_POPUP_DATA":
-          return { ok: true, pageInfo: CURRENT_VIDEO, qualities: QUALITIES, cacheSizeInfo: CACHE_SIZE_INFO, auth: { viaPageSession: true, vipActive: true } };
+          return { ok: true, pageInfo: CURRENT_VIDEO, qualities: QUALITIES, cacheSizeInfo: CACHE_SIZE_INFO, auth: SCENE_AUTH };
         case "START_CACHE":
           return { ok: true, video: { ...library[1], status: "downloading" } };
         case "SAVE_VIDEO":
@@ -270,6 +277,9 @@ globalThis.__storeScene = {
     // 2.11 起「缓存」「播放」合并为「当前视频」；设置是齿轮打开的二级视图。
     if (view === "settings") {
       if (document.querySelector("#settings-view").hidden) document.querySelector("#settings-button").click();
+      // element.click() 是脚本点击，Chrome 会把随后移到返回按钮的焦点当作键盘焦点画出焦点环；
+      // 真实用户用鼠标点开设置时看不到它，截图里也不该有。
+      document.activeElement?.blur();
     } else {
       const target = view === "library" ? "library" : "current";
       document.querySelector(`[data-panel-view="${target}"]`).click();
