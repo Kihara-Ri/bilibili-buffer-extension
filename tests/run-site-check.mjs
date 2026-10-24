@@ -56,6 +56,9 @@ try {
         cardRows: new Set(cards.map((card) => Math.round(card.getBoundingClientRect().top))).size,
         cardNames: cards.map((card) => card.querySelector(".food-name").getClientRects().length),
         cardsInside: cards.every((card) => card.getBoundingClientRect().right <= innerWidth),
+        // 功能与隐私卡片：图标按 34px 显示；隐私卡片四张并排，标题文字必须一行，否则同排卡片高低不齐。
+        cardIcons: [...document.querySelectorAll(".feature .card-icon, .promise .card-icon")].map((icon) => { const box = icon.getBoundingClientRect(); return `${Math.round(box.width)}x${Math.round(box.height)}`; }),
+        promiseTitleLines: [...document.querySelectorAll(".promise h3")].map((title) => { const range = document.createRange(); range.selectNodeContents(title.lastChild); return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size; }),
         // 顶栏：品牌、语言切换、GitHub、添加按钮依次排开，互不重叠、不越出右边
         topbar: [...document.querySelector(".topbar").children].filter((el) => el.getClientRects().length).map((el) => el.getBoundingClientRect()).map((box) => [Math.round(box.left), Math.round(box.right)])
       };
@@ -69,6 +72,8 @@ try {
     assert.equal(alipayShown, device !== "desktop", `${name}：打开支付宝按钮的显示状态不对`);
     assert.equal(layout.cardRows, device !== "desktop" ? 2 : 1, `${name}：投喂卡片排布不对 ${JSON.stringify(layout)}`);
     assert(layout.cardNames.every((lines) => lines === 1) && layout.cardsInside, `${name}：投喂卡片菜名折行或越界 ${JSON.stringify(layout)}`);
+    assert.deepEqual(layout.cardIcons, Array(7).fill("34x34"), `${name}：卡片图标缺失或尺寸不对`);
+    assert(layout.promiseTitleLines.every((lines) => lines === 1), `${name}：隐私卡片标题折行 ${JSON.stringify(layout.promiseTitleLines)}`);
     assert(layout.meta.every((lines) => lines === 1) && layout.verse.every((lines) => lines === 1), `${name}：信息行或诗句被拆行 ${JSON.stringify(layout)}`);
     // 演示可交互：切到片库后高度随内容变化。
     const before = await page.evaluate(() => document.querySelector(".demo-frame").clientHeight);

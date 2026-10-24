@@ -54,6 +54,19 @@ test("「知己」一节讲自己人更懂自己人，隐私承诺单独成节",
   assert.match(privacy, /<h2>只有你知道<\/h2>[\s\S]*class="promises"/);
 });
 
+test("功能与隐私卡片的标题前都有图标：中英两页同序，引用的图标都已定义且对读屏隐藏", () => {
+  const icons = (html) => [...html.matchAll(/<article class="(?:feature|promise)">\s*<h3>(.*?)<\/h3>/g)].map(([, title]) => {
+    const match = title.match(/^<svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#(card-[\w-]+)"\/><\/svg>\S/);
+    assert.ok(match, `卡片标题缺图标：${title}`);
+    assert.ok(html.includes(`<symbol id="${match[1]}"`), `${match[1]} 未定义`);
+    return match[1];
+  });
+  const zh = icons(page);
+  assert.equal(zh.length, 7);
+  assert.equal(new Set(zh).size, 7, "每张卡片的图标应各不相同");
+  assert.deepEqual(icons(enPage), zh);
+});
+
 test("更新记录折叠在页尾，第一条就是当前版本：发版时忘了写开发日志会在这里失败", () => {
   assert.equal(result.versions[0], manifest.version);
   const footer = page.slice(page.indexOf('<footer class="footer">'));

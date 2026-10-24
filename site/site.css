@@ -214,6 +214,12 @@ h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
 .features { display: grid; gap: 16px; }
 .feature, .promise { padding: 22px 24px; border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
 .feature p, .promise p { margin-top: 6px; color: var(--ink-soft); font-size: 15px; }
+/* 标题前的小图标：淡色方块托底。功能卡片够宽，图标放在标题左侧、和首行居中；
+   隐私卡片四列并排、每张只有两百来像素宽，图标放左侧会把「登录态只看「有没有」」挤成两行，所以叠在标题上方。 */
+.feature h3 { display: flex; align-items: flex-start; gap: 12px; }
+.feature .card-icon { margin-top: -4px; }
+.promise .card-icon { display: block; margin-bottom: 12px; }
+.card-icon { flex: none; width: 34px; height: 34px; padding: 7px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
 /* ---------- 比邻：真实弹窗演示 ---------- */
 .near-grid { grid-template-columns: minmax(0, 1fr) auto; }

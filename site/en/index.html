@@ -24,6 +24,14 @@
     <!-- GitHub 标志只定义一次，顶栏、首屏与页脚用 <use> 引用；颜色跟随所在文字（currentColor）。 -->
     <svg width="0" height="0" style="position:absolute" aria-hidden="true">
       <symbol id="icon-github" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></symbol>
+      <!-- 功能与隐私卡片的线条图标：只画描边，颜色、线宽由 .card-icon 统一给，深浅色主题自动跟随。 -->
+      <symbol id="card-preload" viewBox="0 0 24 24"><path d="M3.5 6v12l8-6z"/><path d="M13.5 8l4 4-4 4M18 8l4 4-4 4"/></symbol>
+      <symbol id="card-download" viewBox="0 0 24 24"><path d="M12 3.5v11M7.5 10l4.5 4.5 4.5-4.5M4.5 15.5V18a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-2.5"/></symbol>
+      <symbol id="card-resume" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.9 1 6.7 2.7L21 8M21 3v5h-5"/><path d="M10 9v6l5-3z"/></symbol>
+      <symbol id="card-no-server" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M8 7.5h.01M8 16.5h.01M3 3l18 18"/></symbol>
+      <symbol id="card-signin" viewBox="0 0 24 24"><circle cx="10" cy="8" r="4"/><path d="M3 20c0-3.5 3-6 7-6 1.3 0 2.5.3 3.5.8M15.5 18l2 2 4-4.5"/></symbol>
+      <symbol id="card-local" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/><rect x="9.5" y="10" width="5" height="3.5" rx=".6"/><path d="M10.5 10V8.8a1.5 1.5 0 0 1 3 0V10"/></symbol>
+      <symbol id="card-code" viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4.5l-4 15"/></symbol>
       <symbol id="food-cone" viewBox="0 0 48 48"><path d="M16 22h16l-8 22z" fill="#d9954a"/><path d="M18.5 26l9 8M21 32l5-4.5M29.5 26l-9 8" stroke="#b8762f" stroke-width="1.4"/><path d="M14 22c0-4 3-6 5-6 0-5 4-8 5-10 1 2 5 5 5 10 2 0 5 2 5 6z" fill="#fff6e8" stroke="#e8d5bb" stroke-width="1.2"/><path d="M18 18c3 1.5 9 1.5 12 0" stroke="#e8d5bb" stroke-width="1.2" fill="none"/></symbol>
       <symbol id="food-fries" viewBox="0 0 48 48"><g fill="#f6c33b" stroke="#e0a91f" stroke-width=".8"><rect x="14" y="8" width="4" height="20" rx="1" transform="rotate(-8 16 18)"/><rect x="19" y="5" width="4" height="22" rx="1"/><rect x="24" y="6" width="4" height="22" rx="1" transform="rotate(5 26 17)"/><rect x="29" y="9" width="4" height="19" rx="1" transform="rotate(10 31 18)"/></g><path d="M11 20h26l-3 22H14z" fill="#e2412f"/><path d="M11 20c5 5 21 5 26 0" fill="none" stroke="#b92f20" stroke-width="1.4"/><circle cx="24" cy="32" r="3.2" fill="none" stroke="#ffd9d2" stroke-width="1.6"/></symbol>
       <symbol id="food-coffee" viewBox="0 0 48 48"><path d="M14 14h20l-2.6 28H16.6z" fill="#fbfbf8" stroke="#d9d6cc" stroke-width="1.2"/><rect x="12" y="10" width="24" height="5" rx="2" fill="#5b3a29"/><path d="M15.4 22h17.2l-1 11H16.4z" fill="#2f7a55"/><circle cx="24" cy="27.5" r="3" fill="none" stroke="#e9f4ee" stroke-width="1.4"/><path d="M21 4c-1 2 1 3 0 5M27 4c-1 2 1 3 0 5" stroke="#b9a99c" stroke-width="1.4" fill="none" stroke-linecap="round"/></symbol>
@@ -134,15 +142,15 @@
             </div>
             <div class="features">
               <article class="feature">
-                <h3>Prefetch while you watch</h3>
+                <h3><svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#card-preload"/></svg>Prefetch while you watch</h3>
                 <p>After the player's first request it warms up the segments ahead. When local data covers a request it goes straight to the player; otherwise the original request goes through, so playback never breaks.</p>
               </article>
               <article class="feature">
-                <h3>One-click full cache</h3>
+                <h3><svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#card-download"/></svg>One-click full cache</h3>
                 <p>Downloads the best quality your account actually gets and joins video and audio into one MP4 on your device, without re-encoding. Or keep just the audio in its original quality (Hi-Res lossless / Dolby Atmos / AAC).</p>
               </article>
               <article class="feature">
-                <h3>Keeps going after you close the tab</h3>
+                <h3><svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#card-resume"/></svg>Keeps going after you close the tab</h3>
                 <p>Downloads run on their own in the background. Network drops, expired addresses or rate limits are refreshed and resumed from where they stopped; pause and resume anytime without reopening the video.</p>
               </article>
             </div>
@@ -198,10 +206,10 @@
           <p>Kindred Afar has no server. Everything it remembers stays in your own browser.</p>
         </div>
         <div class="promises">
-          <article class="promise"><h3>No server</h3><p>Nothing is collected or uploaded. No analytics, no tracking, no ads.</p></article>
-          <article class="promise"><h3>Sign-in: only "whether"</h3><p>It only checks whether you're signed in, to show which qualities are available. Cookie values are never read.</p></article>
-          <article class="promise"><h3>Data stays on your device</h3><p>Caches and settings live in your Chrome profile. Delete the cache or uninstall to remove them.</p></article>
-          <article class="promise"><h3>Open source</h3><p>Every line of code is on GitHub, and release packages can be checked against the source.</p></article>
+          <article class="promise"><h3><svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#card-no-server"/></svg>No server</h3><p>Nothing is collected or uploaded. No analytics, no tracking, no ads.</p></article>
+          <article class="promise"><h3><svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#card-signin"/></svg>Sign-in: only "whether"</h3><p>It only checks whether you're signed in, to show which qualities are available. Cookie values are never read.</p></article>
+          <article class="promise"><h3><svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#card-local"/></svg>Data stays local</h3><p>Caches and settings live in your Chrome profile. Delete the cache or uninstall to remove them.</p></article>
+          <article class="promise"><h3><svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#card-code"/></svg>Open source</h3><p>Every line of code is on GitHub, and release packages can be checked against the source.</p></article>
         </div>
         <p class="section-foot"><a href="../privacy.html">Read the full privacy policy</a> (the English version is at the end). This site likewise uses no cookies, analytics or third-party resources.</p>
       </section>
