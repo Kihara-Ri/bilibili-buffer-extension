@@ -1,52 +1,83 @@
-# 海内存知 · bilibili buffer
+<div align="center">
 
-> 海内存知己，天涯若比邻。
+<img src="assets/icon-128.png" width="96" height="96" alt="海内存知图标">
 
-面向海外网络环境的 B 站 Chrome 扩展：**播放时提前加载、减少卡顿等待，也能把视频完整缓存到本机离线观看**。沿用 B 站原生播放器，不转码、无服务器、数据全部留在本机。
+# 海内存知
 
-## 背景：它在解决什么问题
+**海内存知**己，天涯若比邻。
 
-在海外看 B 站，通常会遇到三类麻烦：
+在海外看 B 站的 Chrome 扩展：**播放时提前加载、少转圈，也能把视频完整存到本机离线看**。<br>
+沿用 B 站原生播放器，不转码、无服务器，数据全部留在本机。
 
-1. **播放频繁转圈**。部分内容在离你较近的 CDN 边缘节点没有缓存，每次请求都要回源，响应启动延迟动辄一两秒；一拖进度条就要重新等。
-2. **画质被莫名压低**。B 站播放器会把每次请求的吞吐写进本地的网络能力估计，一次回源慢样本就可能让之后很长时间的自动画质被压低。
-3. **想保存视频没有好办法**。官方没有桌面端离线下载，第三方工具要自己面对登录态、最高画质、音视频合并等一堆麻烦。
+<sub><i>A Chrome extension for watching Bilibili from overseas: prefetches ahead of playback to cut buffering, and caches full videos locally for offline viewing. No server, no telemetry.</i></sub>
 
-海内存知针对这三件事各给一条路径：**提前加载**把接下来要看的内容先取回来，播放器请求直接复用本机数据；**网络估计保护**只在同一节点确实反复出现高延迟时过滤异常样本，不污染长期估计；**完整缓存**把当前账号可用的最高画质原样存进浏览器，随时离线播放或导出文件。
+[![Chrome 商店](https://img.shields.io/chrome-web-store/v/bjegpandnhmeinmennpfpkholhmbllam?label=Chrome%20%E5%95%86%E5%BA%97&color=2bb3e6&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/bjegpandnhmeinmennpfpkholhmbllam)
+[![用户](https://img.shields.io/chrome-web-store/users/bjegpandnhmeinmennpfpkholhmbllam?label=%E7%94%A8%E6%88%B7&color=0d425d)](https://chromewebstore.google.com/detail/bjegpandnhmeinmennpfpkholhmbllam)
+[![Release](https://img.shields.io/github/v/release/Kihara-Ri/bilibili-buffer-extension?label=Release&color=e9a15b)](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)
+![Manifest V3](https://img.shields.io/badge/Manifest-V3-1587c6)
 
-## 功能
+[**官网**](https://haineicunzhi.kihara.cn) · [**添加到 Chrome**](https://chromewebstore.google.com/detail/bjegpandnhmeinmennpfpkholhmbllam) · [隐私说明](https://haineicunzhi.kihara.cn/privacy.html) · [投喂作者](https://haineicunzhi.kihara.cn/#tip)
 
-**播放提前加载（在线）**
+</div>
 
-- 取得播放器首个媒体请求后立即预热前方约 90 秒的分段：多个 Range 分片并行流水线下载，任一分片完成立即补位；播放器请求完整命中时直接用本机数据回应，缺口部分拆片并行补齐，并复用正在下载的分片。
-- 提前就绪的范围在进度条上单独着色，按 SIDX 真实时间索引映射（不是按字节比例估算）；颜色可自定义，也可关闭区分。
-- 页面内存缓存设 128 MiB 驻留上限，前方窗口另按 96 MiB 封顶；关闭开关即取消预热并清理缓存。
-- 节点慢或卡住时在清单里的备用地址上对冲一份请求，先到先用；失败节点自动隔离退避，无需手动调节。
-
-**完整缓存（离线）**
-
-- 按当前账号实际可用的最高画质缓存，也可手动选档位；支持 AV1 / HEVC / AVC。
-- 视频、音频两条轨道分别下载后在本机重封装为单个 MP4，不做任何转码；支持断点续传、播放地址失效自动刷新与后台自动恢复；开始缓存后可以关闭视频页，下载在扩展后台独立完成，链路抖动在分块内重试消化，不会每隔一段就停下来等一分钟。
-- 「仅音频」模式保留 B 站原始音质（Hi-Res 无损优先，其次杜比全景声、AAC），导出 `.flac` / `.m4a`。
-- 再次打开已缓存的视频自动切换为本地播放，保留原生控制条、弹幕与倍速；片库中可保存文件或删除缓存。
-
-**其他**
-
-- 弹窗分「当前视频」「片库」两个页签：当前视频里缓存正在看的视频并查看提前加载效果；片库里管理所有任务，下载中可暂停、随时继续（不需要打开原视频），删除后可在提示里撤销。进度条配色、浏览器自检与关于收在右上角齿轮里。
-- 浏览器自检：Chrome 升级后若某项能力失效，弹窗会列出具体失败项与排查入口，而不是表现成「没反应」。
+![海内存知：把 B 站视频提前存到身边](store/assets/marquee-1400x560.png)
 
 ## 安装
 
-1. 下载 [Release](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases) 里的 `haineicunzhi-<version>.zip`，或克隆本仓库。
+> [!TIP]
+> **从 Chrome 网上应用店安装（推荐）**：打开[商店页面](https://chromewebstore.google.com/detail/bjegpandnhmeinmennpfpkholhmbllam)，点「添加至 Chrome」。之后会自动更新。
+
+<details>
+<summary>手动安装 zip（商店版本还没跟上，或者想试最新改动时）</summary>
+
+1. 下载 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases) 里的 `haineicunzhi-<version>.zip`，或克隆本仓库。
 2. 打开 `chrome://extensions/`，开启右上角「开发者模式」。
 3. 把 zip 直接拖进页面，或用「加载已解压的扩展程序」选择仓库目录。
 
-> 解包 / zip 安装的扩展可能被 Chrome 在升级后停用，插件「没反应」时先到 `chrome://extensions` 确认它没有被停用。
-> 支持标准 BV / av 投稿、分 P 与稍后再看页，番剧、互动视频等特殊格式暂不支持；不能绕过大会员、付费或地区限制，一切以当前账号的实际权益为准。
+> [!WARNING]
+> 手动安装的扩展可能在 Chrome 升级后被停用；插件「没反应」时，先到 `chrome://extensions` 确认它没有被停用。
+
+</details>
+
+## 它能做什么
+
+在海外看 B 站，常见三个麻烦：播放频繁转圈、自动画质被莫名压低、想保存视频没有好办法。海内存知各给一条路：
+
+| | |
+| --- | --- |
+| ![缓存当前视频](store/assets/screenshot-1-cache.png) | **存到本机，断网也能看**<br>按当前账号可用的最高画质（AV1 / HEVC / AVC）缓存，音视频在本机合成一个 MP4，不转码。开始后可以关掉视频页，扩展在后台下完，中断了会自己续上。也可以只存音频（Hi-Res 无损优先）。再打开已缓存的视频会自动切到本地播放，弹幕、倍速照常。 |
+| ![播放时提前加载](store/assets/screenshot-2-assist.png) | **边看边提前加载，少转圈**<br>播放时把前方约 90 秒先取回来，拖进度条也不用重新等；提前就绪的部分在进度条上单独着色。节点慢时自动换备用地址，并防止一次慢样本把之后的自动画质拖低。 |
+| ![片库](store/assets/screenshot-3-library.png) | **片库统一管理**<br>所有缓存任务都在「片库」里：暂停、继续不需要打开原视频；完成的可以导出文件或删除，删错了能撤销。Chrome 升级后若有能力失效，「浏览器自检」会列出具体哪一项。 |
+
+> [!IMPORTANT]
+> **适用范围**：标准 BV / av 投稿、分 P 与稍后再看页；番剧、互动视频等暂不支持。不能绕过大会员、付费或地区限制，一切以当前账号的实际权益为准。
+
+<details>
+<summary>实现要点（给好奇的人）</summary>
+
+- 提前加载：拿到播放器首个媒体请求后，多个 Range 分片并行流水线预热前方窗口；播放器请求完整命中时直接用本机数据回应，缺口拆片补齐并复用在途分片。
+- 进度条着色按 SIDX 真实分段索引映射到时间轴，不是按字节比例估算。
+- 页面内存缓存驻留上限 128 MiB，前方窗口另按 96 MiB 封顶；关闭开关即取消预热并清理。
+- 完整缓存分块写入 IndexedDB 事务，连续提交后才计入进度；播放地址失效自动刷新，后台自动恢复。
+
+```mermaid
+flowchart LR
+  UI["弹窗<br>当前视频 · 片库"] --> SW["Service Worker<br>识别视频 · 消息路由 · 恢复任务"]
+  SW --> OFF["Offscreen<br>分块下载 · 合成 MP4"]
+  OFF <--> DB[("IndexedDB<br>本机缓存")]
+  OFF --> CDN["B 站媒体 CDN"]
+  MAIN["页面主世界观察器<br>提前加载 · 进度条着色"] --> CDN
+  SW <--> CS["内容脚本<br>登录会话 · 本地播放"]
+  OFF -->|已缓存的视频| CS
+```
+
+完整设计见 [技术文档.md](技术文档.md)。
+
+</details>
 
 ## 隐私
 
-没有服务器、没有遥测，登录态只在本机使用，Cookie 原文从不展示或保存。详见 [privacy.html](privacy.html)。
+没有服务器、没有遥测，登录态只在本机使用，Cookie 原文从不展示或保存。详见[隐私说明](privacy.html)。
 
 ## 开发
 
@@ -61,13 +92,15 @@ npm run test:chrome  # 下载与本机 Chrome 同版本的 Chrome for Testing，
 npm run test:live    # 联网：真实 Chromium 加载扩展，对真实 B 站视频跑完整缓存并播放结果
 ```
 
+> [!NOTE]
 > 在 WSL 里开发时请安装 **Linux 版 Node（≥ 22.2）** 再用 npm。Windows 版 npm 通过 `cmd.exe` 执行脚本，而 `cmd.exe` 不支持 `\\wsl.localhost\...` 作为工作目录，会静默退回 `C:\Windows`；`npm test` 因此会直接报「找不到 scripts/run-tests.mjs」。暂时只有 Windows 版 Node 时，可以绕过 npm 直接运行脚本，例如 `node.exe scripts/run-tests.mjs`。
 
 ## 文档
 
 - [技术文档.md](技术文档.md) — 架构、运行流程、接口契约、术语与已知边界；**想了解实现细节从这里进**
 - [开发日志.md](开发日志.md) — 按版本展开的问题、试验与验证记录
+- [docs/](docs/) — 专题设计与验证记录（播放缓存、并发、浏览器兼容、弹窗稳定性等）
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — 参考项目与许可声明
 - [store/](store/) — Chrome Web Store 提审资料
 
-当前版本 2.12.6。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。
+当前版本 2.12.6。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。问题与建议请提 [Issue](https://github.com/Kihara-Ri/bilibili-buffer-extension/issues)。
