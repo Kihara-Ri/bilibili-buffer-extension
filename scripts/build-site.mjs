@@ -21,6 +21,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const SITE_URL = "https://haineicunzhi.kihara.cn";
 export const STORE_URL = `https://chromewebstore.google.com/detail/${STORE_EXTENSION_ID}`;
 export const REPO_URL = "https://github.com/Kihara-Ri/bilibili-buffer-extension";
+/** 作者的支付宝收款链接，即 site/assets/alipay-qr.png 二维码里的内容（金额由付款人填写）。 */
+export const ALIPAY_URL = "https://qr.alipay.com/tsx10942hu3qzwmpqv8th78";
 
 const escapeHtml = (text) => text.replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
 
@@ -82,7 +84,7 @@ export async function buildSite(out = path.join(root, "dist", "site")) {
   await rm(out, { recursive: true, force: true });
   await mkdir(path.join(out, "assets"), { recursive: true });
 
-  const values = { SITE_URL, STORE_URL, REPO_URL, VERSION: manifest.version, CHANGELOG: changelog.html };
+  const values = { SITE_URL, STORE_URL, REPO_URL, ALIPAY_URL, VERSION: manifest.version, CHANGELOG: changelog.html };
   const template = await readFile(path.join(root, "site", "index.html"), "utf8");
   const page = template.replace(/\{\{(\w+)\}\}/g, (whole, key) => {
     if (!(key in values)) throw new Error(`site/index.html 里有未知占位符 ${whole}`);
@@ -90,6 +92,8 @@ export async function buildSite(out = path.join(root, "dist", "site")) {
   });
   await writeFile(path.join(out, "index.html"), page);
   for (const file of ["site.css", "site.js"]) await cp(path.join(root, "site", file), path.join(out, file));
+  // 网站自己的图片（如打赏二维码）放在 site/assets，与扩展图标同一个输出目录。
+  await cp(path.join(root, "site", "assets"), path.join(out, "assets"), { recursive: true });
   for (const icon of ["icon-master.svg", "icon-small.svg", "icon-32.png", "icon-128.png"]) {
     await cp(path.join(root, "assets", icon), path.join(out, "assets", icon));
   }

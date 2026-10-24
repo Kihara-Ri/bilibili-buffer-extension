@@ -19,6 +19,8 @@
   --sea-deep: #08283a;
   --water: #1587c6;
   --amber: #e9a15b;
+  /* 琥珀色用作文字时加深一档：瓶塞色 #e9a15b 在白底上只有约 2.3:1。 */
+  --amber-ink: #a35c12;
   --verse-soft: #9cc3d6;
   /* 进度条三色与扩展默认配色一致：已播放 / 播放器缓冲 / 提前加载。 */
   --played: #00aeec;
@@ -39,6 +41,7 @@
     --ink-soft: #9db5c2;
     --accent: #6fd0f5;
     --buffer: #5b6874;
+    --amber-ink: #f0b27a;
   }
 }
 
@@ -48,6 +51,7 @@ body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.7 var(-
 img, svg { display: block; }
 a { color: var(--accent); text-underline-offset: 3px; }
 h1, h2, h3, p { margin: 0; }
+p { text-wrap: pretty; }
 :focus-visible { outline: 2px solid var(--sky); outline-offset: 3px; border-radius: 4px; }
 
 .skip-link { position: absolute; left: 12px; top: -48px; z-index: 20; padding: 8px 14px; border-radius: 8px; background: var(--surface); color: var(--ink); }
@@ -174,6 +178,21 @@ h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
 /* ---------- 知己 ---------- */
 .promises { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; max-width: 1080px; margin: 0 auto; }
 
+/* ---------- 投喂 ---------- */
+.tip-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: clamp(32px, 6vw, 80px); align-items: center; max-width: 960px; margin: 0 auto; }
+/* 菜单式参考价：像小票一样左右对齐，点线连接。 */
+.menu { display: grid; gap: 12px; max-width: 360px; margin: 0; padding: 0; list-style: none; }
+.menu li { display: flex; align-items: baseline; gap: 10px; font-size: 17px; }
+.menu li::after { content: ""; order: 1; flex: 1; border-bottom: 1px dotted color-mix(in srgb, var(--ink) 30%, transparent); }
+.menu-price { order: 2; font-variant-numeric: tabular-nums; font-weight: 650; color: var(--amber-ink); }
+.tip-note { margin-top: 22px; max-width: 30em; font-size: 14px; color: var(--ink-soft); }
+.tip-card { width: 240px; margin: 0; padding: 14px 14px 18px; border-radius: 18px; background: #fff; box-shadow: 0 0 0 1px var(--line), 0 30px 60px -30px rgba(8, 40, 58, 0.45); text-align: center; }
+.tip-card img { width: 100%; height: auto; }
+.tip-card figcaption { display: none; }
+/* 打开支付宝的按钮只在手机上显示：电脑上点它没有意义，扫码即可。 */
+.button-alipay { display: none; width: 100%; margin-top: 12px; background: #1677ff; color: #fff; }
+.button-alipay:hover { background: #3a8bff; }
+
 /* ---------- 适用范围 / 页脚 ---------- */
 .scope { display: grid; gap: 12px; max-width: 760px; margin: 0 auto; padding: 0; list-style: none; }
 .scope li { padding: 18px 22px; border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--line); color: var(--ink-soft); }
@@ -208,10 +227,16 @@ h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
   .keep-grid, .near-grid { grid-template-columns: minmax(0, 1fr); }
   .keep-bottle { width: 200px; }
   .demo { justify-self: center; }
+  .tip-grid { grid-template-columns: minmax(0, 1fr); }
+  .tip-card { justify-self: center; }
 }
 @media (max-width: 560px) {
   .compare-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .legend { padding-left: 0; }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .button-alipay { display: flex; }
 }
 
 /* 减少动态：停掉漂浮、海浪、进度条与转圈；水位固定在半瓶。 */

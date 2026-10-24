@@ -29,8 +29,8 @@ async function open(options) {
 
 const results = {};
 try {
-  for (const [name, viewport] of [["phone", { width: 375, height: 812 }], ["desktop", { width: 1280, height: 800 }]]) {
-    const { page, errors } = await open({ viewport });
+  for (const [name, options] of [["phone", { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true }], ["desktop", { viewport: { width: 1280, height: 800 } }]]) {
+    const { page, errors } = await open(options);
     const layout = await page.evaluate(() => {
       const frame = document.querySelector(".demo-frame");
       const box = frame.getBoundingClientRect();
@@ -52,6 +52,9 @@ try {
     assert.equal(layout.scrollWidth, layout.innerWidth, `${name}：页面出现横向滚动 ${JSON.stringify(layout)}`);
     assert(layout.demoInside && layout.demoInnerScroll <= 360 && layout.demoFits, `${name}：演示弹窗越界或高度不对 ${JSON.stringify(layout)}`);
     assert.equal(layout.brand, "海内存知", "演示弹窗没有加载真实界面");
+    // 「打开支付宝投喂」只在触屏手机上出现：电脑上扫码即可，按钮没有意义。
+    const alipayShown = await page.evaluate(() => getComputedStyle(document.querySelector(".button-alipay")).display !== "none");
+    assert.equal(alipayShown, name === "phone", `${name}：打开支付宝按钮的显示状态不对`);
     assert(layout.meta.every((lines) => lines === 1) && layout.verse.every((lines) => lines === 1), `${name}：信息行或诗句被拆行 ${JSON.stringify(layout)}`);
     // 演示可交互：切到片库后高度随内容变化。
     const before = await page.evaluate(() => document.querySelector(".demo-frame").clientHeight);

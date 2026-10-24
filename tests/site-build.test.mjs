@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { buildSite, renderChangelog, REPO_URL, STORE_URL } from "../scripts/build-site.mjs";
+import { ALIPAY_URL, buildSite, renderChangelog, REPO_URL, STORE_URL } from "../scripts/build-site.mjs";
 import { STORE_EXTENSION_ID } from "../scripts/lib/release-checks.mjs";
 
 // 官网构建（scripts/build-site.mjs）：版本、更新记录、隐私页与弹窗演示都来自仓库本身，
@@ -57,6 +57,16 @@ test("页面引用的本地文件都存在，且不加载任何第三方资源",
   // 外链只能是可点击的 <a>：脚本、样式、图片、iframe 都必须同源。
   const external = [...page.matchAll(/<(script|link|img|iframe)\b[^>]*\s(?:src|href)="(https?:[^"]+)"/g)].filter((match) => !(match[1] === "link" && /rel="canonical"/.test(match[0])));
   assert.deepEqual(external.map((match) => match[2]), []);
+});
+
+test("投喂区：收款码图片与「打开支付宝」链接都在，并写明自愿、不解锁功能", async () => {
+  const tip = page.slice(page.indexOf('<section id="tip"'), page.indexOf("</section>", page.indexOf('<section id="tip"')));
+  assert.match(tip, /<img src="assets\/alipay-qr\.png" alt="[^"]+"/);
+  await stat(path.join(out, "assets", "alipay-qr.png"));
+  assert.ok(ALIPAY_URL.startsWith("https://qr.alipay.com/"));
+  assert.ok(tip.includes(`href="${ALIPAY_URL}"`));
+  assert.match(tip, /完全自愿，不会解锁任何功能/);
+  assert.match(page, /<a href="#tip">投喂<\/a>/, "顶栏导航要有投喂入口");
 });
 
 test("隐私页原样发布，旧地址跳转到新域名后内容不变", async () => {

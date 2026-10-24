@@ -33,6 +33,7 @@
         <a href="#keep">存</a>
         <a href="#near">比邻</a>
         <a href="#friend">知己</a>
+        <a href="#tip">投喂</a>
       </nav>
       <a class="github-link" href="{{REPO_URL}}" rel="noopener" aria-label="GitHub 源码仓库"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><use href="#icon-github"/></svg><span>GitHub</span></a>
       <a class="button button-small" href="{{STORE_URL}}" rel="noopener">添加到 Chrome</a>
@@ -179,6 +180,31 @@
           <li><b>需要</b> Chrome 116 或更高版本。请只缓存你有权观看的内容，并遵守平台条款与版权要求。</li>
         </ul>
       </section>
+      <!-- 投喂：自愿打赏，不解锁任何功能。二维码是作者的支付宝收款码（金额由付款人填写），
+           手机上扫自己屏幕不方便，另给一个直接打开支付宝的按钮（同一个收款链接）。 -->
+      <section id="tip" class="section">
+        <div class="tip-grid">
+          <div>
+            <div class="section-head section-head-left">
+              <p class="kicker">投喂</p>
+              <h2>请作者吃包薯条</h2>
+              <p>海内存知免费、开源，不会有广告。如果它帮你少等了几次转圈，可以随意投喂一点。</p>
+            </div>
+            <ul class="menu" aria-label="投喂参考">
+              <li><span class="menu-item">一个甜筒</span><span class="menu-price">¥5</span></li>
+              <li><span class="menu-item">一包薯条</span><span class="menu-price">¥10</span></li>
+              <li><span class="menu-item">一杯咖啡</span><span class="menu-price">¥20</span></li>
+              <li><span class="menu-item">随你心意</span><span class="menu-price">自定</span></li>
+            </ul>
+            <p class="tip-note">扫码后在支付宝里自己填金额，以上只是参考。投喂完全自愿，不会解锁任何功能，也不会收集你的任何信息。</p>
+          </div>
+          <figure class="tip-card">
+            <img src="assets/alipay-qr.png" alt="作者的支付宝收款码" width="372" height="435" loading="lazy">
+            <figcaption>支付宝扫一扫</figcaption>
+            <a class="button button-alipay" href="{{ALIPAY_URL}}" rel="noopener">打开支付宝投喂</a>
+          </figure>
+        </div>
+      </section>
     </main>
 
     <footer class="footer">
@@ -187,6 +213,7 @@
         <a href="{{STORE_URL}}" rel="noopener">Chrome 应用商店</a>
         <a class="footer-github" href="{{REPO_URL}}" rel="noopener"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><use href="#icon-github"/></svg>GitHub</a>
         <a href="{{REPO_URL}}/issues" rel="noopener">问题反馈</a>
+        <a href="#tip">投喂作者</a>
         <a href="privacy.html">隐私说明</a>
       </p>
       <!-- 更新记录默认折叠，只在页尾留一个小入口：多数访问者不需要它。 -->
