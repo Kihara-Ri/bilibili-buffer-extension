@@ -176,6 +176,15 @@ export default {
   "about.homepage": "项目主页",
   "about.githubLabel": "GitHub 项目页面",
   "about.data": "数据处理",
+  "about.review": "评价",
+  "about.reviewLink": "在商店评价",
+
+  // 评价邀请
+  "review.title": "觉得好用？留个评价吧",
+  "review.body": "商店里的评价能让更多人找到它，一句话就够了。",
+  "review.go": "去评价",
+  "review.later": "以后再说",
+  "review.never": "不再提示",
 
   // 片库
   "library.countTitle": "{count} 个本地视频",

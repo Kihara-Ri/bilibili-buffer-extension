@@ -99,7 +99,18 @@ const observer = new MutationObserver(() => {
 });
 observer.observe(document.querySelector("#button-label"), { childList: true, characterData: true, subtree: true });
 
+// chrome.storage.local 夹具：评价邀请的状态存这里。?reviewSeed=eligible 预置「已用满 3 天」，其余页面首次打开。
+const reviewStore = new URLSearchParams(location.search).get("reviewSeed") === "eligible"
+  ? { reviewPromptV1: { firstSeenAt: Date.now() - 3 * 24 * 60 * 60 * 1000, snoozedUntil: 0, snoozeCount: 0, closed: "" } }
+  : {};
+window.__popupTest.reviewStore = reviewStore;
 globalThis.chrome = {
+  storage: {
+    local: {
+      async get(key) { return { [key]: structuredClone(reviewStore[key]) }; },
+      async set(values) { Object.assign(reviewStore, structuredClone(values)); }
+    }
+  },
   tabs: {
     async query() {
       return [{ id: 7, url: "https://www.bilibili.com/video/BV1Kg8t6NEmN/?t=20" }];
