@@ -11,7 +11,8 @@ store/
 │   ├── screenshot-1-cache.png     1280×800
 │   ├── screenshot-2-assist.png    1280×800
 │   ├── screenshot-3-library.png   1280×800
-│   └── promo-440x280.png          440×280 小促销图
+│   ├── promo-440x280.png          440×280 小促销图
+│   └── marquee-1400x560.png       1400×560 顶部宣传图（左侧诗句与卖点，右侧真实弹窗）
 └── scene/               生成截图用的界面场景（加载真实 popup.html / popup.css / popup.js）
 ```
 
@@ -33,7 +34,7 @@ npm run store:assets
 1. 用 `store/scene/popup-scene.html` 加载**真实的** popup 界面（只替换 `chrome.*` 返回的演示数据），
    所以截图里的按钮、页签、文案永远来自源码，界面改了重跑一次即可。
 2. 断言当前视图没有被裁断（内容高度、页脚位置都在视口内），断言排版没有越界或重叠。
-3. 回读生成的 PNG 校验尺寸必须精确等于 1280×800 / 440×280。
+3. 回读生成的 PNG 校验尺寸必须精确等于 1280×800 / 440×280 / 1400×560，且为不带 alpha 的 24 位 RGB（商店对宣传图的要求）。
 
 配合 `npm test` 里的商店合规测试，可以保证素材存在且尺寸正确。
 

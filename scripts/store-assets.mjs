@@ -7,7 +7,7 @@ import { chromiumLaunchOptions } from "./lib/browser-launch.mjs";
 import { fileURLToPath } from "node:url";
 
 /**
- * 生成 Chrome Web Store 需要的图片素材：3 张 1280×800 截图与 1 张 440×280 小促销图。
+ * 生成 Chrome Web Store 需要的图片素材：3 张 1280×800 截图、1 张 440×280 小促销图与 1 张 1400×560 顶部宣传图。
  *
  * 为什么截图也要脚本化：商店要求截图与“最新版本的真实界面”一致，
  * 手工截图一旦忘记随界面更新就会与商店政策冲突（Screenshots should reflect the
@@ -97,6 +97,7 @@ try {
   await popupPage.waitForFunction(() => globalThis.__storeScene?.ready === true);
   if (errors.length) throw new Error(`场景夹具报错：${errors.join("；")}`);
 
+  let marqueePopup = null;
   for (const scene of scenes) {
     if (scene.before) await scene.before(popupPage);
     await popupPage.evaluate((view) => globalThis.__storeScene.showTab(view), scene.tab);
@@ -120,6 +121,7 @@ try {
     const popup = await popupPage.screenshot({
       clip: { x: 0, y: 0, width: POPUP_WIDTH, height: fit.shellHeight }
     });
+    if (scene.tab === "current") marqueePopup = { image: popup, height: fit.shellHeight };
     const file = path.join(output, scene.file);
     await composeFrame(browser, scene, popup, iconUrl, fit.shellHeight, file);
     assertSize(file, 1280, 800);
@@ -131,6 +133,11 @@ try {
   await composePromo(browser, iconUrl, promo);
   assertSize(promo, 440, 280);
   console.log("promo-440x280.png  440×280");
+
+  const marquee = path.join(output, "marquee-1400x560.png");
+  await composeMarquee(browser, iconUrl, marqueePopup, marquee);
+  assertSize(marquee, 1400, 560);
+  console.log("marquee-1400x560.png  1400×560");
 } finally {
   await browser.close();
   server.close();
@@ -144,10 +151,13 @@ try {
  */
 /** 商店对素材尺寸是硬性要求，生成后立刻回读校验，避免上传时才发现尺寸不对。 */
 function assertSize(file, width, height) {
-  const actual = readPngSize(readFileSync(file));
+  const buffer = readFileSync(file);
+  const actual = readPngSize(buffer);
   if (actual.width !== width || actual.height !== height) {
     throw new Error(`${path.basename(file)} 尺寸为 ${actual.width}×${actual.height}，应为 ${width}×${height}`);
   }
+  // 商店要求宣传图为 JPEG 或「24 位 PNG（无 alpha 透明层）」。IHDR 第 25 字节是颜色类型：2 = RGB 真彩色。
+  if (buffer[25] !== 2) throw new Error(`${path.basename(file)} 的 PNG 颜色类型为 ${buffer[25]}，应为不带 alpha 的 24 位 RGB`);
 }
 
 async function composeFrame(browser, scene, popup, iconUrl, panelHeight, file) {
@@ -245,6 +255,56 @@ async function composePromo(browser, iconUrl, file) {
     <div class="title"><h1>海内存知<span>己</span></h1><p class="verse">天涯若比邻</p></div>
     <p class="tagline">提前加载 · 缓存到本机 · 离线播放</p>
   </body></html>`);
+  await page.screenshot({ path: file });
+  await page.close();
+}
+
+/**
+ * 1400×560 顶部宣传图（Marquee）：左侧诗句与卖点，右侧真实弹窗（「当前视频」页）。
+ * 底色与小促销图一致的深海军蓝，商店里两张宣传图看起来是一套。
+ */
+async function composeMarquee(browser, iconUrl, popup, file) {
+  if (!popup) throw new Error("顶部宣传图需要「当前视频」页的弹窗截图");
+  const page = await browser.newPage({ viewport: { width: 1400, height: 560 }, deviceScaleFactor: 1 });
+  await page.setContent(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+    * { box-sizing: border-box; margin: 0; }
+    body {
+      width: 1400px; height: 560px; overflow: hidden;
+      display: flex; align-items: center; justify-content: space-between; padding: 0 128px 0 120px;
+      background: linear-gradient(148deg, #08283a 0%, #0d425d 56%, #11557a 100%);
+      font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", sans-serif;
+      color: #ffffff;
+    }
+    .copy { width: 640px; }
+    .brand { display: flex; align-items: center; gap: 22px; margin-bottom: 30px; }
+    .brand img { width: 104px; height: 104px; filter: drop-shadow(0 8px 18px rgba(4,44,64,0.34)); }
+    /* 诗句排法与小促销图一致：「己」紧贴主名、减弱，「天涯若比邻」另起一行。 */
+    h1 { font-size: 56px; line-height: 1.15; font-weight: 780; letter-spacing: 0.02em; white-space: nowrap; }
+    h1 span, .verse { font-weight: 400; color: #9cc3d6; }
+    .verse { font-size: 24px; letter-spacing: 0.14em; margin-top: 6px; }
+    ul { list-style: none; display: grid; gap: 14px; }
+    li { position: relative; padding-left: 26px; font-size: 20px; line-height: 1.45; color: rgba(255,255,255,0.9); }
+    li::before { content: ""; position: absolute; left: 0; top: 9px; width: 12px; height: 12px; border-radius: 50%; background: #2bb3e6; }
+    .note { margin-top: 26px; font-size: 13px; color: #9cc3d6; }
+    .panel {
+      flex: none; width: 360px; height: ${popup.height}px; border-radius: 16px; overflow: hidden;
+      box-shadow: 0 30px 70px -24px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.08);
+    }
+    .panel img { display: block; width: 100%; height: 100%; }
+  </style></head><body>
+    <div class="copy">
+      <div class="brand"><img src="${iconUrl}" alt=""><div><h1>海内存知<span>己</span></h1><p class="verse">天涯若比邻</p></div></div>
+      <ul><li>播放时提前加载前方内容，海外看 B 站也少卡顿</li><li>最高可用画质一键缓存到本机，关掉页面也继续</li><li>片库里随时离线播放、暂停续传或导出文件</li></ul>
+      <p class="note">非官方扩展，与哔哩哔哩无隶属或授权关系。</p>
+    </div>
+    <div class="panel"><img src="data:image/png;base64,${popup.image.toString("base64")}" alt=""></div>
+  </body></html>`);
+  const layout = await page.evaluate(() => {
+    const copy = document.querySelector(".copy").getBoundingClientRect();
+    const panel = document.querySelector(".panel").getBoundingClientRect();
+    return { overlap: copy.right > panel.left - 40, panelInside: panel.top >= 0 && panel.bottom <= 560 && panel.right <= 1400, copyInside: copy.top >= 0 && copy.bottom <= 560 };
+  });
+  if (layout.overlap || !layout.panelInside || !layout.copyInside) throw new Error(`marquee-1400x560.png 排版越界：${JSON.stringify(layout)}`);
   await page.screenshot({ path: file });
   await page.close();
 }

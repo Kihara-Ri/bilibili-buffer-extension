@@ -159,7 +159,7 @@
 | 截图 2 | `store/assets/screenshot-2-assist.png` | 1280×800 | 建议 |
 | 截图 3 | `store/assets/screenshot-3-library.png` | 1280×800 | 建议 |
 | Small promo tile | `store/assets/promo-440x280.png` | 440×280 | 必需 |
-| Marquee promo tile | 未提供 | 1400×560 | 可选 |
+| Marquee promo tile（顶部宣传图块） | `store/assets/marquee-1400x560.png` | 1400×560 | 可选 |
 | Promo video | 未提供 | YouTube 链接 | 可选 |
 
 截图要求：方角、无内边距（full bleed）、不得模糊或变形、文案量不宜过多。
