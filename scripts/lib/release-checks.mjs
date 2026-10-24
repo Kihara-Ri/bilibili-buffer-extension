@@ -63,24 +63,70 @@ export function toReleaseManifest(manifest) {
   return release;
 }
 
+const MESSAGE_REF = /^__MSG_(\w+)__$/;
+
+/**
+ * 把清单里的 __MSG_key__ 按每种语言展开成实际文字。
+ *
+ * 商店的字数上限针对用户看到的文字，而不是占位符本身；英文名与中文名长度不同，
+ * 所以每种语言都要单独量。Chrome 对缺词的处理是直接显示 __MSG_xxx__ 原文，
+ * 这里把缺词、缺 default_locale 都当成失败抛出。
+ * @param {object} manifest
+ * @param {Record<string, Record<string, { message: string }>>} [locales] _locales/<locale>/messages.json 的内容
+ * @returns {{ locale: string | null, name: string, description: string, title: string }[]}
+ */
+export function localizedManifestStrings(manifest, locales = {}) {
+  const fields = [manifest.name, manifest.description, manifest.action?.default_title];
+  if (!fields.some((value) => MESSAGE_REF.test(value || ""))) {
+    const [name = "", description = "", title = ""] = fields;
+    return [{ locale: null, name, description, title }];
+  }
+  if (!manifest.default_locale) throw new Error("清单使用了 __MSG_ 占位符，却没有声明 default_locale");
+  if (!locales[manifest.default_locale]) throw new Error(`缺少默认语言 _locales/${manifest.default_locale}/messages.json`);
+  return Object.entries(locales).map(([locale, messages]) => {
+    const expand = (value) => {
+      const key = MESSAGE_REF.exec(value || "")?.[1];
+      if (!key) return value || "";
+      const message = messages[key]?.message;
+      if (typeof message !== "string") throw new Error(`_locales/${locale} 缺少 ${key}`);
+      return message;
+    };
+    const [name, description, title] = fields.map(expand);
+    return { locale, name, description, title };
+  });
+}
+
 /**
  * @param {object} manifest 待检查的清单
  * @param {object} pkg package.json
- * @param {{ release?: boolean }} [options] release=true 表示检查商店发布包（禁止 key），否则检查源码清单（必须有 key）
+ * @param {{ release?: boolean, locales?: Record<string, Record<string, { message: string }>> }} [options]
+ *   release=true 表示检查商店发布包（禁止 key），否则检查源码清单（必须有 key）；
+ *   locales 为 _locales 目录内容，清单用了 __MSG_ 占位符时必须提供
  * @returns {string[]} 失败说明
  */
-export function checkManifestFields(manifest, pkg, { release = false } = {}) {
+export function checkManifestFields(manifest, pkg, { release = false, locales = {} } = {}) {
   const failures = [];
   if (manifest.manifest_version !== 3) failures.push("manifest_version 必须是 3");
   if (manifest.version !== pkg.version) {
     failures.push(`manifest 版本 ${manifest.version} 与 package.json 的 ${pkg.version} 不一致`);
   }
   if (!SEMVER.test(manifest.version || "")) failures.push("版本号必须是 Chrome 接受的 1~4 段数字");
-  if ((manifest.name || "").length > MAX_NAME_LENGTH) {
-    failures.push(`名称 ${manifest.name.length} 字，超过 Chrome Web Store 的 ${MAX_NAME_LENGTH} 字上限`);
+  let localized = [];
+  try {
+    localized = localizedManifestStrings(manifest, locales);
+  } catch (error) {
+    failures.push(error.message);
   }
-  if ((manifest.description || "").length > MAX_DESCRIPTION_LENGTH) {
-    failures.push(`描述 ${manifest.description.length} 字，超过 manifest 的 ${MAX_DESCRIPTION_LENGTH} 字上限`);
+  for (const { locale, name, description, title } of localized) {
+    const where = locale ? `（${locale}）` : "";
+    if (!name) failures.push(`名称${where}为空`);
+    if (name.length > MAX_NAME_LENGTH) {
+      failures.push(`名称${where} ${name.length} 字，超过 Chrome Web Store 的 ${MAX_NAME_LENGTH} 字上限`);
+    }
+    if (description.length > MAX_DESCRIPTION_LENGTH) {
+      failures.push(`描述${where} ${description.length} 字，超过 manifest 的 ${MAX_DESCRIPTION_LENGTH} 字上限`);
+    }
+    if (title && title !== name) failures.push(`action.default_title${where} 与扩展名不一致`);
   }
   if (release && manifest.key) failures.push("发布包不得包含 key：商店会以「key 字段与当前内容不符」拒收");
   if (!release && !manifest.key) failures.push("缺少 key：本地开发 ID 会随目录变化，DNR 规则与已有缓存全部失效");

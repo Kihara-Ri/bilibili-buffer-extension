@@ -1,4 +1,5 @@
 import { newerTask, taskBadge } from "./task-presentation.js";
+import { t } from "./i18n.js";
 import { buildCacheSizeInfo } from "./cache-size.js";
 import {
   AUTO_QUALITY,
@@ -159,7 +160,7 @@ async function handleMessage(message, sender) {
       const auth = await getBiliSessionState();
       const playurl = await requestPlayurl(pageInfo, AUTO_QUALITY, message.tabId, auth);
       const qualities = buildMediaQualityOptions(playurl.data);
-      if (!qualities.length) throw new Error("B 站没有返回可缓存的 MP4 或 DASH 画质");
+      if (!qualities.length) throw new Error(t("err.noQualities"));
       const codecOptionsByQuality = buildCodecOptionsByQuality(playurl.data, qualities);
       return {
         pageInfo,
@@ -258,16 +259,16 @@ async function handleMessage(message, sender) {
         const active = (await listVideos()).some(video => video.tabId === sender.tab.id && video.status === "downloading");
         if (active) { await updateTaskBadge(sender.tab.id); return { received: true }; }
         await chrome.action.setBadgeBackgroundColor({ color: "#1682a7", tabId: sender.tab.id });
-        await chrome.action.setBadgeText({ text: "本地", tabId: sender.tab.id });
+        await chrome.action.setBadgeText({ text: t("badge.local"), tabId: sender.tab.id });
       }
       return { received: true };
     default:
-      throw new Error("未知的扩展指令");
+      throw new Error(t("err.unknownCommand"));
   }
 }
 
 async function refreshPopupSnapshot(inputUrl, tabId) {
-  if (!Number.isInteger(tabId)) throw new Error("无法识别当前标签页");
+  if (!Number.isInteger(tabId)) throw new Error(t("err.noTab"));
   const previous = await readPopupSnapshot(tabId, inputUrl);
   const pageInfo = await getPageInfo(inputUrl);
   const savedAt = Date.now();
@@ -294,7 +295,7 @@ async function refreshPopupSnapshot(inputUrl, tabId) {
   const auth = await getBiliSessionState();
   const playurl = await requestPlayurl(pageInfo, AUTO_QUALITY, tabId, auth);
   const qualities = buildMediaQualityOptions(playurl.data);
-  if (!qualities.length) throw new Error("B 站没有返回可缓存的 MP4 或 DASH 画质");
+  if (!qualities.length) throw new Error(t("err.noQualities"));
   const codecOptionsByQuality = buildCodecOptionsByQuality(playurl.data, qualities);
   const latest = await readPopupSnapshot(tabId, inputUrl);
   const selectionSnapshot = (Number(latest?.selectionUpdatedAt) || 0) >= (Number(previous?.selectionUpdatedAt) || 0)
@@ -466,7 +467,7 @@ async function ensureOffscreenDocument() {
   creatingOffscreen = chrome.offscreen.createDocument({
     url: OFFSCREEN_PATH,
     reasons: ["BLOBS"],
-    justification: "持续下载大视频并将媒体 Blob 分块写入扩展本地数据库"
+    justification: t("err.offscreenReason")
   }).finally(() => {
     creatingOffscreen = null;
   });
@@ -479,7 +480,7 @@ async function sendToOffscreen(message) {
 }
 
 async function refreshDownloadSource(video) {
-  if (!video?.bvid || !video?.cid) throw new Error("缓存任务缺少视频身份，无法刷新播放地址");
+  if (!video?.bvid || !video?.cid) throw new Error(t("err.taskNoIdentity"));
   const auth = await getBiliSessionState();
   const requestedQuality = normalizeQualityId(video.requestedQuality ?? video.quality, AUTO_QUALITY);
   const fnval = video.mediaKind === "dash" || video.mediaKind === "audio" ? "4048" : "1";
@@ -518,13 +519,13 @@ async function restartDownload(video, auth) {
 /** 片库里的「继续」：暂停或出错的任务清掉等待状态后重新拉起，不要求打开原视频页。 */
 async function resumeCache(videoId) {
   const video = (await listVideos()).find((item) => item.id === videoId);
-  if (!video) throw new Error("缓存任务已不存在");
+  if (!video) throw new Error(t("err.taskGone"));
   if (video.status === "complete") return video;
   const resumed = { ...video, status: "downloading", error: "", nextRetryAt: 0, retryDelayMs: 0, autoRetryCount: 0, updatedAt: Date.now() };
   await putVideo(resumed);
   await ensureDownloadWatchdog();
   const result = await restartDownload(resumed, await getBiliSessionState());
-  if (!result?.ok) throw new Error(result?.error || "无法继续缓存");
+  if (!result?.ok) throw new Error(result?.error || t("err.cannotContinue"));
   return resumed;
 }
 
@@ -543,7 +544,7 @@ async function syncDownloadWatchdog() {
 }
 
 function unwrap(result) {
-  if (!result?.ok) throw new Error(result?.error || "缓存后台没有响应");
+  if (!result?.ok) throw new Error(result?.error || t("err.offscreenNoResponse"));
   return result;
 }
 
@@ -597,15 +598,15 @@ async function requestPlayurl(video, requestedQuality, tabId, session, fnval = "
       credentials: "include",
       headers: { Accept: "application/json" }
     });
-    if (!response.ok) throw new Error(`播放地址请求失败（HTTP ${response.status}）`);
+    if (!response.ok) throw new Error(t("err.playurlHttp", { status: response.status }));
     payload = await response.json();
   }
 
   if (payload.code !== 0 || !payload.data) {
     const authenticationHint = session.hasSessionCookie
-      ? "已尝试使用当前 Chrome 的 B 站登录状态，但账号可能没有观看权限或登录已失效"
-      : "未检测到 B 站登录 Cookie，请先在当前 Chrome 登录后重试";
-    throw new Error(`${payload.message || `B 站接口返回错误 ${payload.code}`}；${authenticationHint}`);
+      ? t("err.authHintSession")
+      : t("err.authHintNoCookie");
+    throw new Error(t("err.withHint", { message: payload.message || t("err.apiCode", { code: payload.code }), hint: authenticationHint }));
   }
 
   return {
@@ -632,7 +633,7 @@ async function requestVideoView(parsed) {
     "https://api.bilibili.com/x/web-interface/wbi/view",
     "https://api.bilibili.com/x/web-interface/view"
   ];
-  let lastError = new Error("无法识别当前视频");
+  let lastError = new Error(t("err.unrecognized"));
   for (const base of endpoints) {
     const endpoint = new URL(base);
     if (parsed.bvid) endpoint.searchParams.set("bvid", parsed.bvid);
@@ -643,10 +644,10 @@ async function requestVideoView(parsed) {
         credentials: "include",
         headers: { Accept: "application/json" }
       });
-      if (!response.ok) throw new Error(`视频信息请求失败（HTTP ${response.status}）`);
+      if (!response.ok) throw new Error(t("err.viewHttp", { status: response.status }));
       const payload = await response.json();
       if (payload.code !== 0 || !payload.data) {
-        throw new Error(payload.message || `无法识别当前视频（${payload.code}）`);
+        throw new Error(payload.message || t("err.unrecognizedCode", { code: payload.code }));
       }
       return payload;
     } catch (error) {
@@ -660,9 +661,9 @@ async function getPageInfo(inputUrl) {
   const parsed = parseBiliVideoUrl(inputUrl);
   if (!parsed.supported) {
     const messages = {
-      notBilibili: "这里不是 B 站页面",
-      notVideo: "请打开一个 B 站标准视频页",
-      invalidUrl: "当前页面地址无效"
+      notBilibili: t("err.notBilibili"),
+      notVideo: t("err.notVideo"),
+      invalidUrl: t("err.invalidUrl")
     };
     return { supported: false, reason: parsed.reason, message: messages[parsed.reason] };
   }

@@ -1,6 +1,6 @@
 # 播放提前加载（在线）
 
-> 适用版本：v2.12.6 · 最后核对：2026-10-24
+> 适用版本：v2.13.0 · 最后核对：2026-10-24
 > 对应实现：`src/playback-cache.js`、`src/playback-network.js`、`src/playback-reuse.js`、
 > `src/playback-observer.js`（以上为 MAIN world，按此顺序注入）、`src/playback-bridge.js`（ISOLATED world）。
 

@@ -13,7 +13,8 @@ await mkdir(unpacked, { recursive: true });
 // privacy.html 会随包发布：弹窗底部的“隐私说明”指向本地副本，
 // 这样即使离线也能看到完整的隐私政策，不必依赖外部网址。
 // LICENSE 同样随包：GPL-3.0 要求分发（商店 zip 即分发）时附带许可证全文。
-for (const entry of ["LICENSE", "THIRD_PARTY_NOTICES.md", "assets", "rules", "src", "manifest.json", "offscreen.html", "popup.css", "popup.html", "privacy.html"]) {
+// _locales 提供清单里 __MSG_extName__ 等占位符的中英文，缺了 Chrome 会拒绝加载。
+for (const entry of ["LICENSE", "THIRD_PARTY_NOTICES.md", "_locales", "assets", "rules", "src", "manifest.json", "offscreen.html", "popup.css", "popup.html", "privacy.html"]) {
   await cp(path.join(root, entry), path.join(unpacked, entry), { recursive: true });
 }
 

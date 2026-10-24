@@ -1,6 +1,6 @@
 # 兼容与回退
 
-> 适用版本：v2.12.6 · 最后核对：2026-10-24
+> 适用版本：v2.13.0 · 最后核对：2026-10-24
 > 本文汇总「能力缺失」与「运行期失败」两类情况下插件的行为承诺，以及对应的自动化证据。
 > 对应实现分散在 `src/playback-reuse.js`、`src/source-range-store.js`、`src/source-mirror.js`、
 > `src/playback-cache.js`、`src/playback-observer.js`、`src/playback-bridge.js`。

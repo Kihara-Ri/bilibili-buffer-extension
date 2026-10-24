@@ -1,6 +1,6 @@
 # 部分命中复用：只补缺口，拼出完整响应
 
-> 适用版本：v2.12.6 · 最后核对：2026-10-24
+> 适用版本：v2.13.0 · 最后核对：2026-10-24
 > 对应实现：`src/playback-cache.js` 的请求适配器、`src/playback-observer.js` 的 `loadPlayerRange` / `assembleRange`、
 > `src/playback-network.js` 的 `get`。整体链路见[播放提前加载](playback-assist.md)。
 > 这项能力在 2.8.3 引入（缺口规划在缓存模块里），2.9.0 改成现在的结构，变化见开发日志对应版本。

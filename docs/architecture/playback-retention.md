@@ -1,6 +1,6 @@
 # 播放位置感知的内存回收
 
-> 适用版本：v2.12.6 · 最后核对：2026-10-24
+> 适用版本：v2.13.0 · 最后核对：2026-10-24
 > 对应实现：`src/playback-cache.js` 的 `retain` / `release` 与回收逻辑，`src/playback-observer.js` 的 `updateRetentionHints`。
 > 本文只讲「128 MiB 满了先丢哪些」；命中、请求适配和预热调度见[播放提前加载](playback-assist.md)。
 

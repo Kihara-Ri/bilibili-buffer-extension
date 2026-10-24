@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 /** @param {object} video @returns {number} 已确认落盘量；完成后的体积允许因合并/提取而改变。 */
 export function committedBytes(video) {
   const bytes = video.status === 'complete' ? video.downloadedBytes : video.committedBytes ?? video.resumeBytes ?? video.downloadedBytes;
@@ -44,9 +45,9 @@ export function sampleSpeed(previous, video, now = Date.now()) {
 export function taskBadge(videos, tabId) {
   const tasks = videos.filter(video => video.tabId === tabId);
   const active = tasks.filter(video => video.status === 'downloading');
-  if (active.length > 1) return { text: active.length > 99 ? '99+' : `${active.length}↓`, color: '#fb7299', title: `${active.length} 个缓存任务进行中（含等待续传）` };
-  if (active.length === 1) return { text: String(Math.min(99, Math.floor(taskProgress(active[0]) * 100))), color: '#fb7299', title: `正在缓存：${active[0].partTitle || active[0].title || '视频'}` };
-  if (tasks.some(video => video.status === 'error')) return { text: '!', color: '#8b5b64', title: '有缓存任务需要处理' };
-  if (tasks.some(video => video.status === 'complete')) return { text: '✓', color: '#1682a7', title: '缓存已完成' };
-  return { text: '', color: '#1682a7', title: '海内存知' };
+  if (active.length > 1) return { text: active.length > 99 ? '99+' : `${active.length}↓`, color: '#fb7299', title: t('badge.activeMany', { count: active.length }) };
+  if (active.length === 1) return { text: String(Math.min(99, Math.floor(taskProgress(active[0]) * 100))), color: '#fb7299', title: t('badge.activeOne', { title: active[0].partTitle || active[0].title || t('video.untitled') }) };
+  if (tasks.some(video => video.status === 'error')) return { text: '!', color: '#8b5b64', title: t('badge.error') };
+  if (tasks.some(video => video.status === 'complete')) return { text: '✓', color: '#1682a7', title: t('badge.complete') };
+  return { text: '', color: '#1682a7', title: t('ext.name') };
 }

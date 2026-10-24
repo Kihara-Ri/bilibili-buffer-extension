@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "海内存知",
+    "description": "Extension name shown in Chrome and the Web Store"
+  },
+  "extDescription": {
+    "message": "提前加载 B 站 CDN 后续内容，并把最高可用画质的音视频合并缓存到本地播放，也可只缓存保留原始音质的音频。",
+    "description": "Manifest description, at most 132 characters"
+  }
+}

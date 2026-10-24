@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 export const DOWNLOAD_WATCHDOG_ALARM = "bili-buffer-download-watchdog-v1";
 export const DOWNLOAD_WATCHDOG_MINUTES = 1;
 
@@ -12,13 +14,18 @@ const RETRY_DELAYS_MS = Object.freeze([
   300_000
 ]);
 
+/**
+ * 判断一次下载失败能否靠稍后重试恢复。错误文案按界面语言生成（src/i18n.js），
+ * 所以每条规则同时列出中文与英文的关键字；tests/i18n.test.mjs 会把每条错误文案的两种语言
+ * 都跑一遍，保证换了语言后重试判断不变。
+ */
 export function isRecoverableDownloadError(error) {
   const message = String(error?.message || error || "");
   if (!message) return false;
-  if (/IndexedDB|\u6570\u636e\u5e93|\u7f16\u7801|\u753b\u8d28|\u8f68\u9053\u4e0d\u5b8c\u6574|\u603b\u5927\u5c0f\u4e0d\u4e00\u81f4|\u9519\u8bef\u7684\u8303\u56f4\u8d77\u70b9/i.test(message)) return false;
-  if (/Failed to fetch|NetworkError|Load failed|ERR_[A-Z_]+|\u7f51\u7edc|\u8d85\u65f6|timeout|\u63d0\u524d\u7ed3\u675f/i.test(message)) return true;
+  if (/IndexedDB|数据库|database|编码|画质|quality|轨道不完整|总大小不一致|total media size|错误的范围起点|wrong range start/i.test(message)) return false;
+  if (/Failed to fetch|NetworkError|Load failed|ERR_[A-Z_]+|网络|network|超时|timeout|timed out|提前结束|ended early/i.test(message)) return true;
   if (/HTTP\s*(?:403|408|425|429|5\d\d)\b/i.test(message)) return true;
-  return /CDN.*(?:\u62d2\u7edd|\u5931\u8d25|\u65e0\u6cd5)|\u6240\u6709 CDN|\u6ca1\u6709\u53ef\u7528\u7684 CDN|\u64ad\u653e\u5730\u5740/i.test(message);
+  return /CDN.*(?:拒绝|失败|无法)|所有 CDN|没有可用的 CDN|播放地址|CDN.*(?:refused|failed|could|can't|cannot)|No CDN address|Every CDN|playback address/i.test(message);
 }
 
 export function makeDownloadRetryState(video, error, now = Date.now()) {
@@ -29,7 +36,7 @@ export function makeDownloadRetryState(video, error, now = Date.now()) {
     autoRetryCount: attempt,
     nextRetryAt: now + delayMs,
     retryDelayMs: delayMs,
-    error: `\u8fde\u63a5\u4e2d\u65ad\uff0c\u5df2\u4fdd\u7559\u8fdb\u5ea6\uff0c\u5c06\u5728 ${Math.ceil(delayMs / 1000)} \u79d2\u540e\u81ea\u52a8\u7eed\u4f20`
+    error: t("err.retryScheduled", { seconds: Math.ceil(delayMs / 1000) })
   };
 }
 

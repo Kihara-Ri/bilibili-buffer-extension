@@ -1,3 +1,4 @@
+import { t } from "./i18n.js";
 import { parseContentRange } from "./utils.js";
 
 export const DEFAULT_RANGE_CONCURRENCY = 6;
@@ -29,7 +30,7 @@ export function buildByteRanges(start, totalBytes, rangeSize = DEFAULT_RANGE_SIZ
 
 export async function rankRangeCandidates(urls, options = {}) {
   const candidates = uniqueHttpUrls(urls);
-  if (!candidates.length) throw new Error("没有可用的 CDN 地址");
+  if (!candidates.length) throw new Error(t("err.noCdn"));
   const fetchImpl = options.fetchImpl || platformFetch;
   const probeStart = Math.max(0, Math.floor(Number(options.start) || 0));
   const knownTotal = Math.max(0, Math.floor(Number(options.totalBytes) || 0));
@@ -51,13 +52,13 @@ export async function rankRangeCandidates(urls, options = {}) {
     if (result.status === "fulfilled") successful.push(result.value);
     else errors.push(result.reason);
   }
-  if (!successful.length) throw errors[0] || new Error("所有 CDN 测速请求均失败");
+  if (!successful.length) throw errors[0] || new Error(t("err.allProbesFailed"));
 
   const totalBytes = knownTotal || successful[0].totalBytes;
   const ranked = successful
     .filter((entry) => entry.totalBytes === totalBytes)
     .sort((left, right) => right.score - left.score);
-  if (!ranked.length) throw new Error("CDN 返回的媒体大小不一致");
+  if (!ranked.length) throw new Error(t("err.cdnSizeMismatch"));
 
   const rankedUrls = ranked.map((entry) => entry.url);
   const remaining = candidates.filter((url) => !rankedUrls.includes(url));
@@ -81,7 +82,7 @@ export async function downloadByteRanges(options) {
   // 整个乱序窗口（含正在下载和等待落盘的块）有字节上限，而不只是限制连接数。
   const maxBufferedBytes=Math.max(1,Math.min(16*1024*1024,Math.floor(Number(options.maxBufferedBytes)||16*1024*1024)));
   const rangeSize=Math.max(1,Math.min(maxBufferedBytes,DEFAULT_RANGE_SIZE,Math.floor(Number(options.rangeSize)||DEFAULT_RANGE_SIZE)));
-  if(!Number.isSafeInteger(Number(options.totalBytes))||Number(options.totalBytes)<0)throw Error('无效媒体总长');
+  if(!Number.isSafeInteger(Number(options.totalBytes))||Number(options.totalBytes)<0)throw Error(t('err.invalidTotal'));
   const first=Math.max(0,Math.floor(Number(options.start)||0));
   const rangeCount=Math.max(0,Math.ceil((Number(options.totalBytes)-first)/rangeSize));
   const rangeAt=ordinal=>({ordinal,start:first+ordinal*rangeSize,end:Math.min(Number(options.totalBytes)-1,first+(ordinal+1)*rangeSize-1)});
@@ -105,7 +106,7 @@ export async function downloadByteRanges(options) {
   if (!rangeCount) return { metrics: { ...metrics, completedAt: Date.now() } };
 
   const urls = uniqueHttpUrls(options.urls);
-  if (!urls.length) throw new Error("没有可用的 CDN 地址");
+  if (!urls.length) throw new Error(t("err.noCdn"));
   const fetchImpl = options.fetchImpl || platformFetch;
   const candidateStats = new Map(urls.map((url, index) => [url, makeCandidateStat(url, index)]));
   let preferredUrl = urls[0];
@@ -201,7 +202,7 @@ export async function downloadByteRanges(options) {
   }
   options.signal?.removeEventListener("abort",cancel);wake();
   if (fatalError) throw fatalError;
-  if (nextCommit !== rangeCount) throw new Error("并发分块没有形成连续结果");
+  if (nextCommit !== rangeCount) throw new Error(t("err.notContiguous"));
   metrics.completedAt = Date.now();
   metrics.cdnHost = getHost(preferredUrl);
   metrics.hosts = publicCandidateStats(candidateStats);
@@ -225,7 +226,7 @@ async function probeCandidate(url, options) {
     });
   } catch (error) {
     if (options.signal?.aborted) throw error;
-    if (attempt.didTimeout()) throw new Error("CDN 测速超时");
+    if (attempt.didTimeout()) throw new Error(t("err.probeTimeout"));
     throw error;
   } finally {
     attempt.cleanup();
@@ -291,13 +292,13 @@ async function fetchRangeWithFallback(rank, range, options) {
       if (attemptBytes) options.receive(-attemptBytes, { host: getHost(url), range, rollback: true });
       if (options.signal?.aborted) throw error;
       if (!idle.didTimeout() && error?.name === "AbortError") throw error;
-      lastError = idle.didTimeout() ? new Error("CDN 分块下载停滞超时，已多次重试") : error;
+      lastError = idle.didTimeout() ? new Error(t("err.chunkStalled")) : error;
       if (/HTTP 403/.test(String(error?.message))) rejected.add(url);
     } finally {
       idle.cleanup();
     }
   }
-  throw lastError || new Error("所有 CDN 地址均无法完成该分块");
+  throw lastError || new Error(t("err.chunkAllFailed"));
 }
 
 function abortableDelay(ms, signal) {
@@ -319,32 +320,32 @@ async function readRange(url, start, end, options) {
   const headersAt = now();
   options.onHeaders?.();
   if (!response.ok) {
-    if (response.status === 403) throw new Error("CDN 拒绝了范围下载（HTTP 403）");
-    if (response.status === 429) throw new Error("CDN 请求过于频繁（HTTP 429）");
-    throw new Error(`CDN 范围下载失败（HTTP ${response.status}）`);
+    if (response.status === 403) throw new Error(t("err.range403"));
+    if (response.status === 429) throw new Error(t("err.range429"));
+    throw new Error(t("err.rangeHttp", { status: response.status }));
   }
   if (response.status !== 206) {
     await response.body?.cancel?.().catch(() => {});
-    throw new Error("CDN 没有按 Range 返回 HTTP 206");
+    throw new Error(t("err.not206"));
   }
   const contentRange = parseContentRange(response.headers.get("content-range"));
   if (!contentRange || contentRange.start !== start) {
     await response.body?.cancel?.().catch(() => {});
-    throw new Error("CDN 返回了错误的范围起点");
+    throw new Error(t("err.wrongStart"));
   }
   if (options.requireExactEnd && contentRange.end !== end) {
     await response.body?.cancel?.().catch(() => {});
-    throw new Error("CDN 没有返回完整的固定范围");
+    throw new Error(t("err.notFullRange"));
   }
   if (contentRange.end > end) {
     await response.body?.cancel?.().catch(() => {});
-    throw new Error("CDN 返回范围超过请求终点");
+    throw new Error(t("err.pastEnd"));
   }
   if (options.expectedTotal > 0 && contentRange.total !== options.expectedTotal) {
     await response.body?.cancel?.().catch(() => {});
-    throw new Error("CDN 返回的媒体总大小不一致");
+    throw new Error(t("err.totalMismatch"));
   }
-  if (!response.body) throw new Error("浏览器没有提供可读取的下载流");
+  if (!response.body) throw new Error(t("err.noStream"));
 
   const reader = response.body.getReader();
   const parts = [];
@@ -357,7 +358,7 @@ async function readRange(url, start, end, options) {
     options.onReceive?.(value.byteLength);
   }
   const expectedBytes = contentRange.end - contentRange.start + 1;
-  if (received !== expectedBytes) throw new Error("CDN 范围响应提前结束");
+  if (received !== expectedBytes) throw new Error(t("err.rangeEnded"));
   const completedAt = now();
   const ttfbMs = Math.max(0, headersAt - startedAt);
   const totalMs = Math.max(0, completedAt - startedAt);
@@ -508,7 +509,7 @@ function createAttemptSignal(parentSignal, timeoutMs) {
     clearTimeout(timer);
     timer = setTimeout(() => {
       timedOut = true;
-      controller.abort(new DOMException("CDN 分块请求停滞超时", "TimeoutError"));
+      controller.abort(new DOMException(t("err.chunkStalled"), "TimeoutError"));
     }, limit);
   };
   touch();

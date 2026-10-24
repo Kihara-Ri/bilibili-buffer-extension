@@ -37,6 +37,16 @@ const expect = (condition, message) => {
 };
 
 const readJson = async (file) => JSON.parse(await readFile(file, "utf8"));
+/** 读出 <base>/_locales 下每种语言的 messages.json；没有该目录时返回空对象。 */
+async function readLocales(base) {
+  const directory = path.join(base, "_locales");
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+  const locales = {};
+  for (const entry of entries) {
+    if (entry.isDirectory()) locales[entry.name] = await readJson(path.join(directory, entry.name, "messages.json"));
+  }
+  return locales;
+}
 
 let manifest;
 try {
@@ -47,10 +57,10 @@ try {
 }
 const pkg = await readJson(path.join(root, "package.json"));
 
-failures.push(...checkManifestFields(manifest, pkg, { release: true }));
+failures.push(...checkManifestFields(manifest, pkg, { release: true, locales: await readLocales(unpacked) }));
 // 发布包不带 key，开发 ID 只能从源码清单推导；DNR 规则要同时放行开发 ID 与商店 ID。
 const sourceManifest = await readJson(path.join(root, "manifest.json"));
-failures.push(...checkManifestFields(sourceManifest, pkg));
+failures.push(...checkManifestFields(sourceManifest, pkg, { locales: await readLocales(root) }));
 failures.push(...checkHostPermissions(manifest));
 
 for (const size of [16, 32, 48, 128]) {

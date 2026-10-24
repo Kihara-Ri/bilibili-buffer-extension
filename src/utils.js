@@ -1,6 +1,9 @@
+import { t } from "./i18n.js";
+
+// 画质、音频说明与文件名里的文字按界面语言生成（见 src/i18n.js）；「大会员 / 登录」的识别仍匹配 B 站接口返回的中文原文。
 export const QUALITY_LABELS = Object.freeze({
   127: "8K",
-  126: "杜比视界",
+  126: t("quality.dolbyVision"),
   125: "HDR",
   120: "4K",
   116: "1080P60",
@@ -15,7 +18,7 @@ export const QUALITY_LABELS = Object.freeze({
 export const AUTO_QUALITY = 127;
 
 export const CODEC_LABELS = Object.freeze({
-  auto: "自动（省流）",
+  auto: t("codec.auto"),
   av1: "AV1",
   hevc: "HEVC",
   avc: "AVC"
@@ -79,7 +82,7 @@ export function buildQualityOptions(playurlData) {
         format.display_desc ||
         description ||
         QUALITY_LABELS[quality] ||
-        `画质 ${quality}`
+        t("quality.fallback", { quality })
       ).trim();
       const accessText = [
         format.superscript,
@@ -119,7 +122,7 @@ export function buildMediaQualityOptions(playurlData) {
     .sort((left, right) => right - left)
     .map((quality) => described.get(quality) || {
       quality,
-      label: QUALITY_LABELS[quality] || `画质 ${quality}`,
+      label: QUALITY_LABELS[quality] || t("quality.fallback", { quality }),
       requiresVip: false,
       requiresLogin: false
     });
@@ -302,18 +305,18 @@ export function getCacheMode(video) {
 }
 
 const AUDIO_FAMILY_LABELS = Object.freeze({
-  flac: "Hi-Res 无损",
-  dolby: "杜比全景声",
+  flac: t("audio.family.flac"),
+  dolby: t("audio.family.dolby"),
   aac: "AAC",
-  other: "音频"
+  other: t("audio.family.other")
 });
 
 const AUDIO_ID_LABELS = Object.freeze({
   30216: "AAC 64K",
   30232: "AAC 132K",
   30280: "AAC 192K",
-  30250: "杜比全景声",
-  30251: "Hi-Res 无损"
+  30250: t("audio.family.dolby"),
+  30251: t("audio.family.flac")
 });
 
 export function getAudioFamily(track) {
@@ -346,10 +349,10 @@ export function getAudioFileExtension(value) {
 }
 
 const AUDIO_CONTAINER_LABELS = Object.freeze({
-  "audio/mp4": "MP4 容器",
-  "audio/flac": "原生 FLAC",
-  "audio/mpeg": "MP3 容器",
-  "audio/ogg": "OGG 容器"
+  "audio/mp4": t("audio.container.mp4"),
+  "audio/flac": t("audio.container.flac"),
+  "audio/mpeg": t("audio.container.mpeg"),
+  "audio/ogg": t("audio.container.ogg")
 });
 
 /**
@@ -359,18 +362,18 @@ const AUDIO_CONTAINER_LABELS = Object.freeze({
 export function describeAudioContainer(value) {
   const track = value?.tracks?.audio || value || {};
   const mimeType = String(track.mimeType || "").trim().toLowerCase();
-  const container = AUDIO_CONTAINER_LABELS[mimeType] || (mimeType || "未知容器");
+  const container = AUDIO_CONTAINER_LABELS[mimeType] || (mimeType || t("audio.container.unknown"));
   const family = getAudioFamily(track);
   const codec = family === "flac"
-    ? "FLAC 无损"
+    ? t("audio.codec.flac")
     : family === "aac"
       ? "AAC"
       : family === "dolby"
-        ? "杜比"
+        ? t("audio.codec.dolby")
         : family === "mp3"
           ? "MP3"
-          : "音频";
-  return `${container} · ${codec} 编码`;
+          : t("audio.codec.other");
+  return t("audio.describe", { container, codec });
 }
 
 export function makeAudioCacheVideoId(pageId) {
@@ -437,7 +440,7 @@ export function makeBiliSpaceUrl(value) {
     : "";
 }
 
-export function sanitizeDownloadFilename(input, fallback = "Bili 视频") {
+export function sanitizeDownloadFilename(input, fallback = t("file.fallbackName")) {
   const sanitized = String(input || "")
     .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
     .replace(/\s+/g, " ")
@@ -450,7 +453,7 @@ export function buildCachedDownloadPlan(cached) {
   const video = cached?.video || {};
   const title = video.partTitle
     ? `${video.title} - ${video.partTitle}`
-    : video.title || video.bvid || "Bili 视频";
+    : video.title || video.bvid || t("file.fallbackName");
   const quality = video.qualityLabel ? ` [${video.qualityLabel}]` : "";
   const baseName = sanitizeDownloadFilename(`${title}${quality}`);
 
@@ -464,14 +467,14 @@ export function buildCachedDownloadPlan(cached) {
   }
 
   const tracks = Array.isArray(cached?.playback?.tracks) ? cached.playback.tracks : [];
-  if (!tracks.length) throw new Error("本地视频没有可保存的媒体轨道");
+  if (!tracks.length) throw new Error(t("err.noSavableTracks"));
   return {
     splitTracks: tracks.length > 1,
     items: tracks.map((track) => {
       const isAudio = track.name === "audio";
       const extension = isAudio ? getAudioFileExtension(track) : "mp4";
       const filename = tracks.length > 1
-        ? `${baseName}.${isAudio ? "音频轨" : "视频轨"}.${extension}`
+        ? `${baseName}.${t(isAudio ? "track.audioTrack" : "track.videoTrack")}.${extension}`
         : `${baseName}.${extension}`;
       return { url: track.url, filename };
     })
@@ -508,5 +511,5 @@ export function hasCompleteByteCount(video) {
 
 export function toPublicError(error) {
   if (error instanceof Error && error.message) return error.message;
-  return String(error || "发生未知错误");
+  return String(error || t("err.unknown"));
 }

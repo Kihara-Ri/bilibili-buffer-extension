@@ -1,6 +1,6 @@
 # 持久化源范围复用（离线已下载字节 → 在线播放）
 
-> 适用版本：v2.12.6 · 最后核对：2026-10-24
+> 适用版本：v2.13.0 · 最后核对：2026-10-24
 > 对应实现：`src/source-range-store.js`（镜像仓库与校验）、`src/source-mirror.js`（下载侧写入器）、
 > `src/offscreen.js` 的 `createSourceMirror` 调用点、`src/playback-reuse.js`（页面侧读取）、`src/playback-bridge.js`、
 > `src/background.js` 的 `SOURCE_RANGE` 分支、`src/playback-observer.js` 的 `loadPlayerRange`。

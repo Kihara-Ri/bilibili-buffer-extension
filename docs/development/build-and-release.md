@@ -1,6 +1,6 @@
 # 热更新、构建与发布
 
-> 适用版本：v2.12.6 · 最后核对：2026-10-24
+> 适用版本：v2.13.0 · 最后核对：2026-10-24
 > 对应实现：`scripts/dev-reload-server.mjs`、`src/dev-reload.js`、`scripts/build-release.mjs`、`scripts/verify-release.mjs`、
 > `scripts/lib/release-checks.mjs`、`scripts/lib/zip.mjs`、`scripts/build-icons.mjs`、`scripts/build-site.mjs`。
 > 商店提审的操作步骤见 [store/README.md](../../store/README.md)。

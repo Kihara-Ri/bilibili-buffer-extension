@@ -1,6 +1,6 @@
 # 完整缓存（离线片库）
 
-> 适用版本：v2.12.6 · 最后核对：2026-10-24
+> 适用版本：v2.13.0 · 最后核对：2026-10-24
 > 对应实现：`src/background.js`（识别与取地址）、`src/offscreen.js`（下载、合并、本地播放）、
 > `src/range-downloader.js`、`src/download-retry.js`、`src/db.js`、`src/mp4-merge.js`、
 > `src/media-selection.js`、`src/utils.js`、`src/content.js`。

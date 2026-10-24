@@ -184,11 +184,14 @@ const MANIFEST = await fetch(new URL("../../manifest.json", import.meta.url)).th
 const SCENE_AUTH = new URLSearchParams(location.search).get("auth") === "limited"
   ? { viaPageSession: false, hasSessionCookie: true }
   : { viaPageSession: true, vipActive: true };
+// ?lang=en 截英文界面；默认与 Chrome 的界面语言无关，固定中文，商店中文截图才稳定。
+const SCENE_LANG = new URLSearchParams(location.search).get("lang") || "zh-CN";
 let library = structuredClone(LIBRARY);
 let assistConfig = { ...ASSIST_CONFIG };
 let cacheMode = "video";
 
 globalThis.chrome = {
+  i18n: { getUILanguage: () => SCENE_LANG },
   tabs: {
     async query() {
       return [{ id: 1, url: CURRENT_VIDEO.url }];

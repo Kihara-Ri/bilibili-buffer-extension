@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 // 浏览器侧能力自检。
 //
 // 为什么需要：所有增强能力都按 docs/architecture/compat-fallback.md 静默降级——这对播放是
@@ -5,6 +7,7 @@
 // 「貌似不能用了」这种结论。这里把「本机浏览器上哪些能力不可用」变成弹窗里能读到
 // 的结论，避免让用户对着没有反应的按钮猜。
 //
+// 结论里的文字按 Service Worker 的界面语言生成（src/i18n.js）。
 // 只探测能力与开关：不发网络请求、不读 Cookie 原始值；存储探测只写一个随即删除的自检键。
 
 /** 从 User-Agent 取浏览器版本；SW 与弹窗都能拿到 navigator。 @returns {string} */
@@ -32,14 +35,14 @@ function withTimeout(promise, ms, message) {
 
 /** 真实开一次库再删掉：只判断 API 存在会把「被策略禁用」误判为可用。 */
 async function probeIndexedDb(indexedDb, timeoutMs) {
-  if (!indexedDb || typeof indexedDb.open !== "function") throw new Error("indexedDB 不可用");
+  if (!indexedDb || typeof indexedDb.open !== "function") throw new Error(t("probe.unavailable", { api: "indexedDB" }));
   const name = `bili-buffer-health-${Date.now().toString(36)}`;
   const request = indexedDb.open(name, 1);
   await withTimeout(new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(new Error(request.error?.message || "打开失败"));
-    request.onblocked = () => reject(new Error("打开被阻塞"));
-  }), timeoutMs, "打开本地数据库超时").then((database) => database.close());
+    request.onerror = () => reject(new Error(request.error?.message || t("probe.dbOpenFailed")));
+    request.onblocked = () => reject(new Error(t("probe.dbBlocked")));
+  }), timeoutMs, t("probe.dbTimeout")).then((database) => database.close());
   indexedDb.deleteDatabase?.(name);
 }
 
@@ -64,69 +67,69 @@ export async function collectHealthChecks({
   const probes = [
     {
       id: "storage-local",
-      label: "本地存储",
+      label: t("probe.storage"),
       run: async () => {
-        if (typeof api?.storage?.local?.set !== "function") throw new Error("storage.local 不可用");
+        if (typeof api?.storage?.local?.set !== "function") throw new Error(t("probe.unavailable", { api: "storage.local" }));
         await api.storage.local.set({ healthProbe: 1 });
         await api.storage.local.remove?.("healthProbe");
       }
     },
     {
       id: "storage-session",
-      label: "会话存储（弹窗快照）",
+      label: t("probe.session"),
       run: async () => {
-        if (typeof api?.storage?.session?.set !== "function") throw new Error("storage.session 不可用");
+        if (typeof api?.storage?.session?.set !== "function") throw new Error(t("probe.unavailable", { api: "storage.session" }));
         await api.storage.session.set({ healthProbe: 1 });
       }
     },
     {
       id: "indexeddb",
-      label: "本地缓存数据库",
+      label: t("probe.database"),
       run: () => probeIndexedDb(indexedDb, timeoutMs)
     },
     {
       id: "dnr-rules",
-      label: "CDN 请求头规则",
+      label: t("probe.rules"),
       run: async () => {
-        if (typeof api?.declarativeNetRequest?.getEnabledRulesets !== "function") throw new Error("declarativeNetRequest 不可用");
+        if (typeof api?.declarativeNetRequest?.getEnabledRulesets !== "function") throw new Error(t("probe.unavailable", { api: "declarativeNetRequest" }));
         const enabled = await api.declarativeNetRequest.getEnabledRulesets();
         // 规则未生效时 CDN 下载会因缺少 Referer 被拒，属于必须暴露的失效。
         const expected = (manifest.declarative_net_request?.rule_resources || []).map((entry) => entry.id);
         const missing = expected.filter((id) => !enabled.includes(id));
-        if (missing.length) throw new Error(`静态规则集未生效：${missing.join("、")}`);
+        if (missing.length) throw new Error(t("probe.rulesMissing", { list: missing.join(t("sep.list")) }));
       }
     },
     {
       id: "offscreen",
-      label: "后台下载文档",
+      label: t("probe.offscreen"),
       run: async () => {
-        if (typeof api?.offscreen?.createDocument !== "function") throw new Error("offscreen 不可用");
+        if (typeof api?.offscreen?.createDocument !== "function") throw new Error(t("probe.unavailable", { api: "offscreen" }));
         // 判断是否已存在依赖 getContexts；缺失会在创建时重复开文档。
-        if (typeof api?.runtime?.getContexts !== "function") throw new Error("runtime.getContexts 不可用");
+        if (typeof api?.runtime?.getContexts !== "function") throw new Error(t("probe.unavailable", { api: "runtime.getContexts" }));
       }
     },
     {
       id: "downloads",
-      label: "保存到本地",
+      label: t("probe.downloads"),
       run: async () => {
-        if (typeof api?.downloads?.download !== "function") throw new Error("downloads 不可用");
+        if (typeof api?.downloads?.download !== "function") throw new Error(t("probe.unavailable", { api: "downloads" }));
       }
     },
     {
       id: "cookies",
-      label: "B 站登录状态读取",
+      label: t("probe.cookies"),
       run: async () => {
-        if (typeof api?.cookies?.get !== "function") throw new Error("cookies 不可用");
+        if (typeof api?.cookies?.get !== "function") throw new Error(t("probe.unavailable", { api: "cookies" }));
       }
     },
     {
       id: "browser-version",
-      label: "浏览器版本",
+      label: t("probe.browser"),
       run: async () => {
         const required = majorOf(manifest.minimum_chrome_version);
         const actual = majorOf(browserVersion);
-        if (!actual) throw new Error(`无法识别浏览器版本（${browserVersion || "未知"}）`);
-        if (required && actual < required) throw new Error(`需要 Chrome ${required} 及以上，当前 ${browserVersion}`);
+        if (!actual) throw new Error(t("probe.versionUnknown", { version: browserVersion || t("unknown") }));
+        if (required && actual < required) throw new Error(t("probe.versionTooOld", { required, version: browserVersion }));
       }
     }
   ];
@@ -135,7 +138,7 @@ export async function collectHealthChecks({
   const checks = [];
   for (const probe of probes) {
     try {
-      await withTimeout(probe.run(), timeoutMs, `${probe.label}探测超时`);
+      await withTimeout(probe.run(), timeoutMs, t("probe.timeout", { label: probe.label }));
       checks.push({ id: probe.id, label: probe.label, ok: true, detail: "" });
     } catch (error) {
       checks.push({ id: probe.id, label: probe.label, ok: false, detail: String(error?.message || error) });

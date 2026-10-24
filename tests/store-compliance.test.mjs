@@ -10,6 +10,7 @@ import {
   checkPackagedText,
   checkZipEntries,
   extensionIdFromKey,
+  localizedManifestStrings,
   STORE_EXTENSION_ID,
   toReleaseManifest
 } from "../scripts/lib/release-checks.mjs";
@@ -24,6 +25,11 @@ const readText = (relative) => readFile(new URL(relative, root), "utf8");
 
 const manifest = await readJson("manifest.json");
 const pkg = await readJson("package.json");
+/** 清单的名称与描述走 _locales；中文 / 英文各自量字数。 */
+const locales = Object.fromEntries(
+  await Promise.all(["en", "zh_CN", "zh_TW"].map(async (locale) => [locale, await readJson(`_locales/${locale}/messages.json`)]))
+);
+const zhStrings = localizedManifestStrings(manifest, locales).find((entry) => entry.locale === "zh_CN");
 // 权限与站点范围的断言都针对“发布态清单”：开发目录里额外带的热更新域名
 // 由 scripts/lib/release-checks.mjs 的 toReleaseManifest 负责剔除。
 const releaseManifest = toReleaseManifest(manifest);
@@ -32,16 +38,33 @@ const EXPECTED_ID = "ppoagkhgdcfchiodhgadpenibndbnhcj";
 const STORE_ID = "bjegpandnhmeinmennpfpkholhmbllam";
 
 test("清单字段满足商店与 manifest 的硬性上限", () => {
-  assert.deepEqual(checkManifestFields(manifest, pkg), []);
+  assert.deepEqual(checkManifestFields(manifest, pkg, { locales }), []);
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.version, pkg.version);
-  assert.ok(manifest.name.length <= 75, "名称上限 75 字");
-  assert.ok(manifest.description.length <= 132, "描述上限 132 字");
+  for (const { locale, name, description } of localizedManifestStrings(manifest, locales)) {
+    assert.ok(name.length <= 75, `${locale} 名称上限 75 字`);
+    assert.ok(description.length <= 132, `${locale} 描述上限 132 字`);
+  }
+});
+
+test("清单名称按语言展开：英文 Kindred Afar，简繁中文都是海内存知", () => {
+  assert.equal(manifest.default_locale, "en");
+  const byLocale = Object.fromEntries(localizedManifestStrings(manifest, locales).map((entry) => [entry.locale, entry]));
+  assert.equal(byLocale.en.name, "Kindred Afar");
+  assert.equal(byLocale.zh_CN.name, "海内存知");
+  assert.deepEqual(byLocale.zh_TW, { ...byLocale.zh_CN, locale: "zh_TW" });
+  for (const entry of Object.values(byLocale)) assert.equal(entry.title, entry.name, "工具栏提示与扩展名一致");
+  // 占位符缺词或缺默认语言时，Chrome 会显示 __MSG_ 原文或拒绝加载
+  assert.ok(checkManifestFields(manifest, pkg).some((m) => m.includes("默认语言")));
+  assert.ok(checkManifestFields(manifest, pkg, { locales: { ...locales, en: {} } }).some((m) => m.includes("缺少 extName")));
+  assert.ok(checkManifestFields({ ...manifest, default_locale: undefined }, pkg, { locales }).some((m) => m.includes("default_locale")));
+  const longEnglish = { ...locales, en: { ...locales.en, extDescription: { message: "x".repeat(133) } } };
+  assert.ok(checkManifestFields(manifest, pkg, { locales: longEnglish }).some((m) => m.includes("（en）") && m.includes("132")));
 });
 
 test("坏清单会被拒绝：超长描述、缺图标、版本不一致、缺 key", () => {
   const base = structuredClone(manifest);
-  const broken = (patch) => checkManifestFields({ ...base, ...patch }, pkg);
+  const broken = (patch) => checkManifestFields({ ...base, ...patch }, pkg, { locales });
   assert.ok(broken({ description: "字".repeat(133) }).some((m) => m.includes("132")));
   assert.ok(broken({ name: "字".repeat(76) }).some((m) => m.includes("75")));
   assert.ok(broken({ version: "9.9.9" }).some((m) => m.includes("package.json")));
@@ -49,10 +72,10 @@ test("坏清单会被拒绝：超长描述、缺图标、版本不一致、缺 k
   assert.ok(broken({ manifest_version: 2 }).some((m) => m.includes("manifest_version")));
   const noIcon = structuredClone(base);
   delete noIcon.icons["128"];
-  assert.ok(checkManifestFields(noIcon, pkg).some((m) => m.includes("缺少 128")));
+  assert.ok(checkManifestFields(noIcon, pkg, { locales }).some((m) => m.includes("缺少 128")));
   const mismatched = structuredClone(base);
   mismatched.action.default_icon["48"] = "assets/icon-128.png";
-  assert.ok(checkManifestFields(mismatched, pkg).some((m) => m.includes("不一致")));
+  assert.ok(checkManifestFields(mismatched, pkg, { locales }).some((m) => m.includes("不一致")));
 });
 
 test("商店包不带 key：已发布商品的 key 由商店持有，带开发 key 上传会被拒收", () => {
@@ -60,9 +83,9 @@ test("商店包不带 key：已发布商品的 key 由商店持有，带开发 k
   // 与商品 bjegpandnhmeinmennpfpkholhmbllam 的公钥不符。源码清单保留 key 固定开发 ID，发布态清单必须剔除。
   assert.ok(manifest.key, "源码清单必须保留 key，否则本地开发 ID 会随目录变化");
   assert.equal("key" in releaseManifest, false);
-  assert.deepEqual(checkManifestFields(releaseManifest, pkg, { release: true }), []);
+  assert.deepEqual(checkManifestFields(releaseManifest, pkg, { release: true, locales }), []);
   assert.ok(
-    checkManifestFields(manifest, pkg, { release: true }).some((m) => m.includes("key")),
+    checkManifestFields(manifest, pkg, { release: true, locales }).some((m) => m.includes("key")),
     "发布校验必须拒绝仍带 key 的清单"
   );
 });
@@ -189,7 +212,7 @@ test("以 GPL-3.0 开源：许可证全文入库、package.json 声明一致，�
 
 test("商店文案与清单保持一致，且覆盖全部权限与素材", async () => {
   const listing = await readText("store/listing.md");
-  assert.ok(listing.includes(manifest.description), "listing.md 的摘要必须与 manifest 的 description 一致");
+  assert.ok(listing.includes(zhStrings.description), "listing.md 的摘要必须与 manifest 的 description 一致");
   for (const permission of releaseManifest.permissions) {
     assert.ok(listing.includes(`\`${permission}\``), `listing.md 缺少权限理由：${permission}`);
   }

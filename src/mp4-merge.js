@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 /**
  * 把 B 站 DASH 的独立视频轨与音频轨（fragmented MP4 / fMP4）合并为一个双轨 MP4。
  *
@@ -116,18 +118,18 @@ function findChild(bytes, parent, types) {
 /** 取出 trak 的 track_ID（tkhd）与媒体时间刻度（mdhd）、处理器类型（hdlr）。 */
 function describeTrak(moovBytes, trak) {
   const tkhd = findChild(moovBytes, trak, ["tkhd"]);
-  if (!tkhd) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存轨道缺少 tkhd 盒子");
+  if (!tkhd) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.missingBox", { box: "tkhd" }));
   const tkhdVersion = moovBytes[tkhd.offset + tkhd.headerSize];
   const trackIdOffset = tkhd.offset + tkhd.headerSize + 4 + (tkhdVersion === 1 ? 16 : 8);
   if (trackIdOffset + 4 > tkhd.end) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存轨道的 tkhd 盒子无法解析");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.tkhdUnparsable"));
   }
   const trackId = readUint32(moovBytes, trackIdOffset);
 
   const mdia = findChild(moovBytes, trak, ["mdia"]);
-  if (!mdia) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存轨道缺少 mdia 盒子");
+  if (!mdia) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.missingBox", { box: "mdia" }));
   const mdhd = findChild(moovBytes, mdia, ["mdhd"]);
-  if (!mdhd) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存轨道缺少 mdhd 盒子");
+  if (!mdhd) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.missingBox", { box: "mdhd" }));
   const mdhdVersion = moovBytes[mdhd.offset + mdhd.headerSize];
   const timescale = readUint32(moovBytes, mdhd.offset + mdhd.headerSize + (mdhdVersion === 1 ? 20 : 12));
 
@@ -145,19 +147,19 @@ export function parseInitSegment(bytes) {
   const ftypBox = boxes.find((box) => box.type === "ftyp") || null;
   const moovBox = boxes.find((box) => box.type === "moov") || null;
   if (!moovBox) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.NOT_FRAGMENTED, "缓存轨道缺少 moov 初始化段");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.NOT_FRAGMENTED, t("mp4.noMoov"));
   }
   const children = listBoxes(bytes, moovBox.offset + moovBox.headerSize, moovBox.end);
   const mvex = children.find((box) => box.type === "mvex") || null;
   if (!mvex) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.NOT_FRAGMENTED, "缓存轨道不是 fragmented MP4，无法自动合并");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.NOT_FRAGMENTED, t("mp4.notFragmented"));
   }
   const traks = children.filter((box) => box.type === "trak");
   if (traks.length !== 1) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存轨道必须只包含一条媒体轨");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.singleTrack"));
   }
   const mvhd = children.find((box) => box.type === "mvhd");
-  if (!mvhd) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存轨道缺少 mvhd 盒子");
+  if (!mvhd) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.missingBox", { box: "mvhd" }));
 
   const trak = traks[0];
   const trakBytes = bytes.slice(trak.offset, trak.end);
@@ -185,12 +187,12 @@ export function parseInitSegment(bytes) {
 export function parseFragment(moofBytes) {
   const moof = readBoxHeader(moofBytes, 0);
   if (!moof || moof.type !== "moof") {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存片段缺少 moof 盒子");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.fragmentNoMoof"));
   }
   const moofChildren = listBoxes(moofBytes, moof.headerSize, moof.size);
   const trafs = moofChildren.filter((box) => box.type === "traf");
   if (trafs.length !== 1) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存片段必须只包含一条 traf");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.fragmentSingleTraf"));
   }
   const traf = trafs[0];
   const trafChildren = listBoxes(moofBytes, traf.offset + traf.headerSize, traf.end);
@@ -198,7 +200,7 @@ export function parseFragment(moofBytes) {
   const tfdt = trafChildren.find((box) => box.type === "tfdt");
   const mfhd = moofChildren.find((box) => box.type === "mfhd");
   if (!tfhd || !mfhd) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存片段缺少 tfhd 或 mfhd 盒子");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.fragmentNoTfhd"));
   }
 
   let decodeTime = null;
@@ -236,10 +238,10 @@ function patchMvhd(bytes, { duration, nextTrackId }) {
 export function patchTrackId(bytes, trackId) {
   const copy = bytes.slice();
   const head = readBoxHeader(copy, 0);
-  if (!head) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "无法解析需要改写 track_ID 的盒子");
+  if (!head) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.trackIdBox"));
   if (head.type === "trak") {
     const tkhd = listBoxes(copy, head.headerSize, copy.length).find((box) => box.type === "tkhd");
-    if (!tkhd) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存轨道缺少 tkhd 盒子");
+    if (!tkhd) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.missingBox", { box: "tkhd" }));
     const version = copy[tkhd.offset + tkhd.headerSize];
     writeUint32(copy, tkhd.offset + tkhd.headerSize + 4 + (version === 1 ? 16 : 8), trackId);
     return copy;
@@ -248,7 +250,7 @@ export function patchTrackId(bytes, trackId) {
     writeUint32(copy, head.headerSize + 4, trackId);
     return copy;
   }
-  throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "无法改写缓存轨道的 track_ID");
+  throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.trackIdRewrite"));
 }
 
 /**
@@ -258,18 +260,18 @@ export function patchTrackId(bytes, trackId) {
 export function patchFragmentBytes(bytes, { trackId, sequenceNumber } = {}) {
   const moof = readBoxHeader(bytes, 0);
   if (!moof || moof.type !== "moof") {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "只能改写 moof 片段");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.onlyMoof"));
   }
   if (trackId !== undefined && trackId !== null) {
     const traf = listBoxes(bytes, moof.headerSize, moof.size).find((box) => box.type === "traf");
-    if (!traf) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存片段缺少 traf");
+    if (!traf) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.fragmentMissing", { box: "traf" }));
     const tfhd = listBoxes(bytes, traf.offset + traf.headerSize, traf.end).find((box) => box.type === "tfhd");
-    if (!tfhd) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存片段缺少 tfhd");
+    if (!tfhd) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.fragmentMissing", { box: "tfhd" }));
     writeUint32(bytes, tfhd.offset + tfhd.headerSize + 4, trackId);
   }
   if (sequenceNumber !== undefined && sequenceNumber !== null) {
     const mfhd = listBoxes(bytes, moof.headerSize, moof.size).find((box) => box.type === "mfhd");
-    if (!mfhd) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存片段缺少 mfhd");
+    if (!mfhd) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.fragmentMissing", { box: "mfhd" }));
     writeUint32(bytes, mfhd.offset + mfhd.headerSize + 4, sequenceNumber);
   }
   return bytes;
@@ -352,7 +354,7 @@ function dataSize(data) {
   if (data instanceof Blob) return data.size;
   if (data instanceof ArrayBuffer) return data.byteLength;
   if (ArrayBuffer.isView(data)) return data.byteLength;
-  throw new Mp4MergeError(MP4_MERGE_PROBLEM.TRUNCATED, "缓存分块格式无法识别");
+  throw new Mp4MergeError(MP4_MERGE_PROBLEM.TRUNCATED, t("mp4.chunkUnknown"));
 }
 
 async function readChunkRange(data, start, end) {
@@ -378,7 +380,7 @@ function createChunkAccess(chunks) {
     async readRange(start, length) {
       if (length <= 0) return new Uint8Array(0);
       if (start < 0 || start + length > total) {
-        throw new Mp4MergeError(MP4_MERGE_PROBLEM.TRUNCATED, "缓存轨道分块不完整，无法合并");
+        throw new Mp4MergeError(MP4_MERGE_PROBLEM.TRUNCATED, t("mp4.chunksIncomplete"));
       }
       const result = new Uint8Array(length);
       let offset = start;
@@ -432,7 +434,7 @@ export async function scanTopLevelBoxes(access) {
     if (!header) break;
     const size = header.toEnd ? access.totalBytes - position : header.size;
     if (size < header.headerSize || position + size > access.totalBytes) {
-      throw new Mp4MergeError(MP4_MERGE_PROBLEM.TRUNCATED, `缓存文件的 ${header.type} 盒子在中间被截断`);
+      throw new Mp4MergeError(MP4_MERGE_PROBLEM.TRUNCATED, t("mp4.boxTruncated", { box: header.type }));
     }
     boxes.push({ type: header.type, size, headerSize: header.headerSize, offset: position, end: position + size });
     position += size;
@@ -454,7 +456,7 @@ export function createFragmentReader(chunks) {
       if (!header) return;
       if (header.type === "moof") return;
       if (header.type !== "ftyp" && header.type !== "moov" && !isSkippable(header.type)) {
-        throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, `缓存文件出现无法识别的顶层盒子：${header.type}`);
+        throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.fileUnknownBox", { box: header.type }));
       }
       position += header.toEnd ? access.totalBytes - position : header.size;
     }
@@ -476,14 +478,14 @@ export function createFragmentReader(chunks) {
         return { ...parseInitSegment(moovBytes), ftypBytes };
       }
       if (header.type === "mdat") {
-        throw new Mp4MergeError(MP4_MERGE_PROBLEM.NOT_FRAGMENTED, "缓存轨道不是 fragmented MP4（先出现 mdat）");
+        throw new Mp4MergeError(MP4_MERGE_PROBLEM.NOT_FRAGMENTED, t("mp4.mdatFirst"));
       }
       if (!isSkippable(header.type)) {
-        throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存轨道出现无法识别的顶层盒子：" + header.type);
+        throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.trackUnknownBox", { box: header.type }));
       }
       position += header.size;
     }
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.NOT_FRAGMENTED, "缓存轨道缺少 moov 初始化段");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.NOT_FRAGMENTED, t("mp4.noMoov"));
   }
 
   async function nextFragment() {
@@ -495,8 +497,8 @@ export function createFragmentReader(chunks) {
           throw new Mp4MergeError(
             MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT,
             header.type === "mdat"
-              ? "缓存轨道不是 fragmented MP4（片段之间出现裸 mdat）"
-              : "缓存轨道出现无法识别的顶层盒子：" + header.type
+              ? t("mp4.bareMdat")
+              : t("mp4.trackUnknownBox", { box: header.type })
           );
         }
         position += header.size;
@@ -513,7 +515,7 @@ export function createFragmentReader(chunks) {
         const next = await headerAt(end);
         if (!next || next.type === "moof") break;
         if (next.size < next.headerSize || next.toEnd || end + next.size > access.totalBytes) {
-          throw new Mp4MergeError(MP4_MERGE_PROBLEM.TRUNCATED, "缓存片段在盒子中间被截断");
+          throw new Mp4MergeError(MP4_MERGE_PROBLEM.TRUNCATED, t("mp4.fragmentTruncated"));
         }
         end += next.size;
         if (next.type === "mdat") mediaEnd = end;
@@ -539,7 +541,7 @@ export async function createMergedFragmentedMp4({ video, audio }) {
   const videoInit = await videoReader.readInit();
   const audioInit = await audioReader.readInit();
   if (Math.max(videoInit.timescale, audioInit.timescale) <= 0) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存轨道缺少媒体时间刻度");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.noTimescale"));
   }
   const init = buildMergedInit(videoInit, audioInit);
 
@@ -587,13 +589,13 @@ export function verifyMergedHeader(bytes, { videoTrackId = 1, audioTrackId = 2 }
   const ftyp = boxes.find((box) => box.type === "ftyp");
   const moov = boxes.find((box) => box.type === "moov");
   if (!ftyp || !moov) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "合并结果缺少 ftyp 或 moov");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.resultNoMoov"));
   }
   const children = listBoxes(bytes, moov.offset + moov.headerSize, moov.end);
   const traks = children.filter((box) => box.type === "trak");
   const mvex = children.find((box) => box.type === "mvex");
   if (traks.length !== 2 || !mvex) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "合并结果必须包含两条媒体轨与 mvex");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.resultTracks"));
   }
   const trackIds = traks.map((trak) => {
     const tkhd = listBoxes(bytes, trak.offset + trak.headerSize, trak.end).find((box) => box.type === "tkhd");
@@ -601,7 +603,7 @@ export function verifyMergedHeader(bytes, { videoTrackId = 1, audioTrackId = 2 }
     return readUint32(bytes, tkhd.offset + tkhd.headerSize + 4 + (version === 1 ? 16 : 8));
   });
   if (trackIds[0] !== videoTrackId || trackIds[1] !== audioTrackId) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "合并结果的轨道编号不正确");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.resultTrackIds"));
   }
   return { trackIds };
 }
@@ -671,7 +673,7 @@ function describeAudioSampleEntry(moovBytes, trak, { lenient = false } = {}) {
   if (!stsd) {
     // fragmented 描述可以省掉 stsd；此时只能给出容器信息，具体编码由调用方兜底。
     if (lenient) return { sampleEntryType: "", mimeType: "audio/mp4", family: "other", codecs: "" };
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存视频缺少样本描述（stsd）");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.noStsd"));
   }
   const entryOffset = stsd.offset + stsd.headerSize + 8;
   const entry = readBoxHeader(moovBytes, entryOffset);
@@ -695,7 +697,7 @@ function describeAudioSampleTable(moovBytes, trak) {
   const children = stbl ? listBoxes(moovBytes, stbl.offset + stbl.headerSize, stbl.end) : [];
   const stsz = children.find((box) => box.type === "stsz") || null;
   if (!stsz) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存视频缺少样本大小表，无法安全提取音轨");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.noStsz"));
   }
 
   const uniformSize = readUint32(moovBytes, stsz.offset + stsz.headerSize + 4);
@@ -718,7 +720,7 @@ function describeAudioSampleTable(moovBytes, trak) {
 
   const stco = children.find((box) => box.type === "stco" || box.type === "co64");
   if (!stco) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存视频缺少分块偏移表，无法安全提取音轨");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.noStco"));
   }
 
   return {
@@ -735,7 +737,7 @@ function describeAudioSampleTable(moovBytes, trak) {
 /** 按 stsc / stsz / stco 展开每个分块在源文件中的字节区间。 */
 function expandChunkRanges(moovBytes, stblChildren, stco, stsz) {
   const stsc = stblChildren.find((box) => box.type === "stsc");
-  if (!stsc) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存视频缺少 stsc 分块映射表");
+  if (!stsc) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.noStsc"));
   const uniformSize = readUint32(moovBytes, stsz.offset + stsz.headerSize + 4);
   const sampleCount = readUint32(moovBytes, stsz.offset + stsz.headerSize + 8);
   const sampleSizeAt = (index) => (uniformSize
@@ -791,7 +793,7 @@ function shiftChunkOffsets(trakBytes, mapOffset) {
       .find((item) => item.type === "stco" || item.type === "co64")
     : null;
   if (!box) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存视频缺少分块偏移表，无法安全提取音轨");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.noStco"));
   }
   const width = box.type === "co64" ? 8 : 4;
   const count = readUint32(copy, box.offset + box.headerSize + 4);
@@ -827,7 +829,7 @@ export async function createAudioOnlyMp4({ chunks }) {
   const boxes = await scanTopLevelBoxes(access);
   const ftypBox = boxes.find((box) => box.type === "ftyp") || null;
   const moovBox = boxes.find((box) => box.type === "moov") || null;
-  if (!moovBox) throw new Mp4MergeError(MP4_MERGE_PROBLEM.NOT_FRAGMENTED, "缓存视频缺少 moov 初始化段");
+  if (!moovBox) throw new Mp4MergeError(MP4_MERGE_PROBLEM.NOT_FRAGMENTED, t("mp4.videoNoMoov"));
 
   const ftypBytes = ftypBox ? await access.readRange(ftypBox.offset, ftypBox.size) : null;
   const moovBytes = await access.readRange(moovBox.offset, moovBox.size);
@@ -835,13 +837,13 @@ export async function createAudioOnlyMp4({ chunks }) {
   const moovChildren = listBoxes(moovBytes, moovHeader.headerSize, moovBytes.length);
   const mvhdBox = moovChildren.find((box) => box.type === "mvhd");
   const mvexBox = moovChildren.find((box) => box.type === "mvex") || null;
-  if (!mvhdBox) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存视频缺少 mvhd 盒子");
+  if (!mvhdBox) throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.videoNoMvhd"));
 
   const audioTrakBox = moovChildren
     .filter((box) => box.type === "trak")
     .find((trak) => describeTrak(moovBytes, trak).handlerType === "soun");
   if (!audioTrakBox) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "这个 MP4 里没有音频轨，无法仅缓存音频");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.noAudio"));
   }
   // fragmented 轨道的 stbl 里通常只有 stsd（没有样本表），因此只解析采样描述。
   const audioTable = mvexBox
@@ -893,7 +895,7 @@ export async function createAudioOnlyMp4({ chunks }) {
 
   const mdatBoxes = boxes.filter((box) => box.type === "mdat");
   if (!mdatBoxes.length) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.NOT_FRAGMENTED, "缓存视频缺少媒体数据段（mdat）");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.NOT_FRAGMENTED, t("mp4.noMdat"));
   }
   const sizedTrak = patchTrackId(audioTrakBytes, 1);
 
@@ -901,10 +903,10 @@ export async function createAudioOnlyMp4({ chunks }) {
   const ranges = audioTable.chunkRanges || [];
   const audioBytes = ranges.reduce((sum, range) => sum + range.length, 0);
   if (!ranges.length || audioBytes !== audioTable.sampleBytes) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "音频样本表与分块长度不一致，无法安全提取音轨");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.sampleMismatch"));
   }
   if (audioBytes + 8 > MAX_UINT32) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "音频数据超过单文件 MP4 的 32 位长度上限");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.tooLarge"));
   }
   for (const range of ranges) {
     const inside = mdatBoxes.some((box) => {
@@ -913,7 +915,7 @@ export async function createAudioOnlyMp4({ chunks }) {
       return range.offset >= start && range.offset + range.length <= end;
     });
     if (!inside) {
-      throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "缓存视频的音频样本不在媒体数据段内，无法安全提取音轨");
+      throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.sampleOutside"));
     }
   }
 
@@ -930,7 +932,7 @@ export async function createAudioOnlyMp4({ chunks }) {
   ]));
   const header = concatBytes([ftypBytes || makeDefaultFtyp(), moov, makeStreamingHeader("mdat", audioBytes)]);
   if (header.length !== dataStart) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "提取音轨时头部长度计算不一致");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.headerMismatch"));
   }
 
   // 源文件里音视频分块交错，逐块小读会退化；这里用 4 MiB 预读窗口按顺序取音频字节。
@@ -970,19 +972,19 @@ export function verifyAudioOnlyMp4(bytes, { totalBytes, requireMdat = true } = {
   const moov = boxes.find((box) => box.type === "moov");
   const mdat = boxes.find((box) => box.type === "mdat");
   if (!ftyp || !moov || (requireMdat && !mdat)) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "仅音频文件缺少 ftyp、moov 或 mdat");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.audioMissingBoxes"));
   }
   const children = listBoxes(bytes, moov.offset + moov.headerSize, moov.end);
   const traks = children.filter((box) => box.type === "trak");
   if (traks.length !== 1) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "仅音频文件必须只包含一条媒体轨");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.audioSingleTrack"));
   }
   const described = describeTrak(bytes, traks[0]);
   if (described.handlerType !== "soun" || described.trackId !== 1) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, "仅音频文件保留的不是 track_ID 1 的音频轨");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.UNSUPPORTED_LAYOUT, t("mp4.audioWrongTrack"));
   }
   if (Number(totalBytes) > 0 && bytes.length !== Number(totalBytes)) {
-    throw new Mp4MergeError(MP4_MERGE_PROBLEM.TRUNCATED, "仅音频文件字节数与元数据不一致");
+    throw new Mp4MergeError(MP4_MERGE_PROBLEM.TRUNCATED, t("mp4.audioBytesMismatch"));
   }
   return {
     trackId: described.trackId,

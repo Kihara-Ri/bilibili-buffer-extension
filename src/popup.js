@@ -21,6 +21,7 @@ import {
   normalizePreheatColor,
   PREHEAT_COLOR_PRESETS
 } from "./assist-config.js";
+import { localizeDocument, t } from "./i18n.js";
 
 const DEFAULT_PROGRESS_COLOR = "#00a1d6";
 // 删除先从列表隐藏，提示里可撤销；超时（或弹窗关闭）才真正删除数据。
@@ -200,6 +201,7 @@ chrome.runtime.onMessage.addListener((message) => {
   if (state.pageInfo) renderCurrent();
 });
 
+localizeDocument();
 renderAssistColorPresets();
 renderAbout();
 setPanelView("current");
@@ -276,7 +278,7 @@ async function initialize() {
 
 async function restorePopupSnapshot() {
   if (!state.tab?.url) {
-    renderUnsupported("无法读取当前页面", "请重新打开插件");
+    renderUnsupported(t("page.unreadable"), t("page.reopen"));
     return null;
   }
   try {
@@ -302,10 +304,10 @@ async function refreshPopupData({ silent = false } = {}) {
     applyPopupSnapshot(result.snapshot);
   } catch (error) {
     if (state.pageInfo) {
-      state.qualityError = silent ? `后台刷新失败，暂时使用上次画质：${error.message}` : error.message;
+      state.qualityError = silent ? t("quality.refreshFailed", { error: error.message }) : error.message;
       renderCurrent();
     } else {
-      renderUnsupported("暂时无法识别", error.message);
+      renderUnsupported(t("page.unrecognized"), error.message);
     }
   } finally {
     state.qualitiesLoading = false;
@@ -348,7 +350,7 @@ async function refreshLibrary() {
     renderLibrary();
     if (state.pageInfo) renderCurrent();
   } catch (error) {
-    if (!state.videos.length) renderEmptyLibrary("本地片库读取失败", error.message);
+    if (!state.videos.length) renderEmptyLibrary(t("library.readFailed"), error.message);
   } finally {
     state.libraryLoading = false;
   }
@@ -400,14 +402,14 @@ function renderUnsupported(title, detail) {
   elements.formatControls.hidden = true;
   elements.assistPanel.hidden = true;
   elements.pauseButton.hidden = true;
-  setButtonState("disabled", "当前页面无法缓存", "", 0, true);
-  setHint("打开一个 B 站视频页即可缓存；已缓存的视频在「片库」里", false);
+  setButtonState("disabled", t("button.unsupportedPage"), "", 0, true);
+  setHint(t("hint.unsupportedPage"), false);
 }
 
 function renderCurrent() {
   const info = state.pageInfo;
   if (!info?.supported) {
-    renderUnsupported(info?.message || "请打开 B 站视频页", "支持标准 BV / av 投稿视频");
+    renderUnsupported(info?.message || t("page.openVideo"), t("page.supported"));
     return;
   }
 
@@ -415,7 +417,7 @@ function renderCurrent() {
   const ownerUrl = normalizeHttpUrl(info.ownerUrl) || makeBiliSpaceUrl(info.ownerId);
   elements.currentOwner.hidden = !info.owner;
   setText(elements.currentOwner, info.owner || "");
-  elements.currentOwner.title = ownerUrl ? `打开 ${info.owner} 的主页` : "";
+  elements.currentOwner.title = ownerUrl ? t("owner.open", { owner: info.owner }) : "";
   if (ownerUrl) { elements.currentOwner.href = ownerUrl; elements.currentOwner.dataset.url = ownerUrl; }
   else { elements.currentOwner.removeAttribute("href"); delete elements.currentOwner.dataset.url; }
   setText(elements.currentDetailText, formatDuration(info.duration));
@@ -439,23 +441,23 @@ function renderCacheAction(cached) {
   elements.pauseButton.disabled = state.pausePending;
   if (!cached) {
     if (state.qualitiesLoading) {
-      setButtonState("disabled", "正在读取可用画质", "", 0, true);
+      setButtonState("disabled", t("button.loadingQualities"), "", 0, true);
       setHint("", false);
       return;
     }
     if (isAudioMode() && !getAudioCacheSize(state.cacheSizeInfo, null)) {
-      setButtonState("disabled", "暂时无法缓存音频", "", 0, true);
-      setHint(state.qualityError || "B 站没有返回可缓存的音频轨（单文件 MP4 也需要包含音轨）。", true);
+      setButtonState("disabled", t("button.noAudio"), "", 0, true);
+      setHint(state.qualityError || t("hint.noAudio"), true);
       return;
     }
     if (!isAudioMode() && !state.selectedQuality) {
-      setButtonState("disabled", "暂时无法缓存", "", 0, true);
-      setHint(state.qualityError || "B 站没有返回可缓存画质。", true);
+      setButtonState("disabled", t("button.noQuality"), "", 0, true);
+      setHint(state.qualityError || t("hint.noQuality"), true);
       return;
     }
-    setButtonState("idle", "缓存", "", 0, false);
+    setButtonState("idle", t("button.cache"), "", 0, false);
     setHint(isAudioMode() && getAudioCacheSize(state.cacheSizeInfo, null)?.mode === "extract"
-      ? "该视频只有单文件 MP4：会先下载整段，再无损提取音轨（不转码）" : "", false);
+      ? t("hint.extract") : "", false);
     return;
   }
 
@@ -467,29 +469,29 @@ function renderCacheAction(cached) {
     const retrySeconds = Math.max(0, Math.ceil(((Number(cached.nextRetryAt) || 0) - Date.now()) / 1000));
     const merging = cached.stage === "merging" || cached.mergeStage === "merging";
     const extracting = cached.stage === "extracting";
-    const label = retrySeconds > 0 ? `等待续传 ${percent}%` : extracting ? `正在提取音频 ${percent}%`
-      : merging ? `正在合并 ${percent}%` : cached.error ? `正在恢复 ${percent}%` : `正在缓存 ${percent}%`;
-    const speed = retrySeconds > 0 ? `${retrySeconds}s` : merging || extracting ? "处理中"
-      : speedSample.value > 0 ? formatSpeed(speedSample.value) : "连接中";
+    const label = t(retrySeconds > 0 ? "button.waitRetry" : extracting ? "button.extracting"
+      : merging ? "button.merging" : cached.error ? "button.recovering" : "button.caching", { percent });
+    const speed = retrySeconds > 0 ? `${retrySeconds}s` : merging || extracting ? t("speed.processing")
+      : speedSample.value > 0 ? formatSpeed(speedSample.value) : t("speed.connecting");
     // 已缓存字节数放进按钮第二行；只有需要解释的状态（提取 / 合并 / 出错）才占独立提示行，省出一行高度。
-    const special = extracting ? "正在无损提取音轨（不转码）" : merging ? "音视频已下载完，正在合并为单个 MP4" : cached.error || "";
+    const special = extracting ? t("hint.extracting") : merging ? t("hint.merging") : cached.error || "";
     setButtonState("downloading", label, speed, progress, true, special ? "" : `${formatBytes(committedBytes(cached))} / ${formatBytes(cached.totalBytes)}`);
     setHint(special, false);
-    elements.cacheButton.title = special ? "" : "缓存在后台独立进行，可以关闭这个页面";
+    elements.cacheButton.title = special ? "" : t("button.backgroundTip");
     return;
   }
   if (cached.status === "complete") {
-    setButtonState("complete", "已缓存", formatBytes(cached.downloadedBytes), 1, true);
-    setHint(cached.mergeError ? `未能合并为单个 MP4，已保留两条独立轨道：${cached.mergeError}` : "再次打开这个视频时会自动使用本地缓存播放", Boolean(cached.mergeError));
+    setButtonState("complete", t("button.cached"), formatBytes(cached.downloadedBytes), 1, true);
+    setHint(cached.mergeError ? t("hint.mergeFailed", { error: cached.mergeError }) : t("hint.cachedPlayback"), Boolean(cached.mergeError));
     return;
   }
   if (cached.status === "paused") {
-    setButtonState("paused", `继续缓存 ${percent}%`, "", progress, false);
-    setHint(`已暂停 · 已缓存 ${formatBytes(committedBytes(cached))}`, false);
+    setButtonState("paused", t("button.resume", { percent }), "", progress, false);
+    setHint(t("hint.paused", { bytes: formatBytes(committedBytes(cached)) }), false);
     return;
   }
-  setButtonState("error", `继续缓存 ${percent}%`, "", progress, false);
-  setHint(cached.error || "缓存未完成", true);
+  setButtonState("error", t("button.resume", { percent }), "", progress, false);
+  setHint(cached.error || t("hint.incomplete"), true);
 }
 
 function findCurrentVideo() {
@@ -517,16 +519,16 @@ function renderFormatControls(cached) {
   let ladder = null;
   if (audioMode) {
     const size = getAudioCacheSize(state.cacheSizeInfo, cached);
-    setText(elements.audioSummary, size ? [size.label, `${size.estimated ? "约 " : ""}${formatBytes(size.bytes)}`].filter(Boolean).join(" · ") : "暂时无法估算");
+    setText(elements.audioSummary, size ? [size.label, approxBytes(size)].filter(Boolean).join(" · ") : t("audio.unknownSize"));
     elements.audioSummary.title = size?.mode === "extract"
-      ? "该视频只有单文件 MP4：会先下载整段 MP4，再无损提取音轨；保存时保留原始音频格式"
-      : "优先 Hi-Res 无损，其次杜比全景声，最后 AAC；保存时保留 B 站原始格式";
+      ? t("audio.extractTip")
+      : t("audio.tip");
   } else if (state.qualitiesLoading) {
-    renderQualityOptions([], cached, "正在读取可用画质…");
+    renderQualityOptions([], cached, t("quality.loading"));
   } else {
     const options = getQualityDisplayOptions(cached);
     if (!options.some((option) => option.quality === state.selectedQuality)) state.selectedQuality = options[0]?.quality || 0;
-    renderQualityOptions(options, cached, "没有可缓存画质");
+    renderQualityOptions(options, cached, t("quality.none"));
     ladder = describeQualityLadder(options);
     elements.qualityOptions.title = ladder.title;
     updateQualitySelection(cached?.status === "downloading");
@@ -537,7 +539,11 @@ function renderFormatControls(cached) {
 function sizeText(quality, cached) {
   if (!quality) return "";
   const size = getCacheSize(state.cacheSizeInfo, quality, cached);
-  return size ? `${size.estimated ? "约 " : ""}${formatBytes(size.bytes)}` : "";
+  return size ? approxBytes(size) : "";
+}
+
+function approxBytes(size) {
+  return size.estimated ? t("size.approx", { size: formatBytes(size.bytes) }) : formatBytes(size.bytes);
 }
 
 /**
@@ -547,22 +553,22 @@ function sizeText(quality, cached) {
 function renderAuthNote(ladder) {
   const note = elements.authNote;
   const missing = ladder?.missing || [];
-  const list = (items) => items.slice(0, 2).map((item) => item.label).join("、") + (items.length > 2 ? " 等" : "");
+  const list = (items) => items.slice(0, 2).map((item) => item.label).join(t("sep.list")) + (items.length > 2 ? t("list.more") : "");
   const vipOnly = missing.filter((item) => item.requiresVip);
   const others = missing.filter((item) => !item.requiresVip);
   let text = "", tone = "normal", title = "";
   if (state.qualityError) {
     text = state.qualityError; tone = "warning"; title = state.qualityError;
   } else if (state.auth?.viaPageSession && state.auth?.vipActive) {
-    text = missing.length ? `已登录大会员 · 本视频没有 ${list(missing)}` : "已登录大会员";
-    tone = "member"; title = "通过当前 B 站页面使用登录态，并检测到有效大会员";
+    text = missing.length ? t("auth.vipMissing", { list: list(missing) }) : t("auth.vip");
+    tone = "member"; title = t("auth.vipTip");
   } else if (state.auth?.viaPageSession) {
-    text = vipOnly.length ? `已登录 · ${list(vipOnly)} 需要大会员` : others.length ? `已登录 · 本视频没有 ${list(others)}` : "已登录";
-    title = "画质列表以当前账号实际权限为准";
+    text = vipOnly.length ? t("auth.needsVip", { list: list(vipOnly) }) : others.length ? t("auth.missing", { list: list(others) }) : t("auth.signedIn");
+    title = t("auth.signedInTip");
   } else if (state.auth?.hasSessionCookie) {
-    text = "登录状态受限，会员画质可能不全"; tone = "warning"; title = "检测到登录 Cookie，但通过页面读取登录态没有成功";
+    text = t("auth.limited"); tone = "warning"; title = t("auth.limitedTip");
   } else if (state.auth) {
-    text = "未登录：只能缓存公开画质"; tone = "warning"; title = "在当前 Chrome 登录 B 站后可缓存更高画质";
+    text = t("auth.signedOut"); tone = "warning"; title = t("auth.signedOutTip");
   }
   note.hidden = !text || isAudioMode() && tone !== "warning";
   setSegmentedText(note, text);
@@ -574,7 +580,7 @@ function getQualityDisplayOptions(cached) {
   const options = [...state.qualityOptions];
   const cachedQuality = Number(cached?.requestedQuality || cached?.quality) || 0;
   if (cachedQuality && !options.some((option) => option.quality === cachedQuality)) {
-    options.push({ quality: cachedQuality, label: cached.qualityLabel || `画质 ${cachedQuality}` });
+    options.push({ quality: cachedQuality, label: cached.qualityLabel || t("quality.fallback", { quality: cachedQuality }) });
   }
   return options;
 }
@@ -586,7 +592,7 @@ function qualityShortLabels(options) {
 }
 
 function qualityAccess(quality) {
-  return quality.requiresVip ? "大会员" : quality.requiresLogin ? "登录可用" : "";
+  return quality.requiresVip ? "vip" : quality.requiresLogin ? "login" : "";
 }
 
 /**
@@ -612,11 +618,11 @@ function renderQualityOptions(options, cached, placeholder) {
     option.type = "button";
     option.setAttribute("role", "radio");
     option.dataset.quality = String(value);
-    option.title = [fullName + (best ? "（最高）" : ""), size, access].filter(Boolean).join(" · ");
+    option.title = [fullName + (best ? t("quality.best") : ""), size, access && t(`access.${access}`)].filter(Boolean).join(" · ");
     const label = document.createElement("span"); label.className = "quality-option-label"; label.textContent = name;
     const bytes = document.createElement("span"); bytes.className = "quality-option-size"; bytes.textContent = size || "—";
     option.append(label, bytes);
-    if (access) { const tag = document.createElement("span"); tag.className = "quality-option-tag"; tag.textContent = access === "大会员" ? "VIP" : "登录"; option.append(tag); }
+    if (access) { const tag = document.createElement("span"); tag.className = "quality-option-tag"; tag.textContent = t(`tag.${access}`); option.append(tag); }
     fragment.append(option);
   }
   elements.qualityOptions.replaceChildren(fragment);
@@ -625,13 +631,13 @@ function renderQualityOptions(options, cached, placeholder) {
 /** 对比 B 站声明的档位与当前账号实际返回的轨道，让「是不是最高规格」有答案。 */
 function describeQualityLadder(options) {
   const declared = Array.isArray(state.cacheSizeInfo?.declared) ? state.cacheSizeInfo.declared : [];
-  const describe = (quality) => `${quality.label}${quality.requiresVip ? "（大会员）" : quality.requiresLogin ? "（需登录）" : ""}`;
+  const describe = (quality) => `${quality.label}${quality.requiresVip ? t("ladder.vip") : quality.requiresLogin ? t("ladder.login") : ""}`;
   const missing = declared.filter((item) => !options.some((option) => option.quality === item.quality));
   if (!declared.length) return { missing: [], missingText: "", title: "" };
   return {
     missing,
-    missingText: missing.map(describe).join("、"),
-    title: [`B 站声明可用：${declared.map(describe).join(" / ")}`, `当前账号返回：${options.map((option) => option.label).join(" / ") || "无"}`].join("\n")
+    missingText: missing.map(describe).join(t("sep.list")),
+    title: [t("ladder.declared", { list: declared.map(describe).join(" / ") }), t("ladder.returned", { list: options.map((option) => option.label).join(" / ") || t("ladder.none") })].join("\n")
   };
 }
 
@@ -682,7 +688,7 @@ function setButtonState(mode, label, speed, progress, disabled, sub = "") {
   setText(elements.buttonSpeed, speed);
   setText(elements.buttonSub, sub);
   elements.cacheButton.title = "";
-  setAttr(elements.cacheButton, "aria-label", [label, sub, speed].filter(Boolean).join("，"));
+  setAttr(elements.cacheButton, "aria-label", [label, sub, speed].filter(Boolean).join(t("sep.comma")));
 }
 
 function setHint(message, isError) {
@@ -694,13 +700,13 @@ function setHint(message, isError) {
 async function startCache() {
   if (!state.pageInfo?.supported || !state.tab) return;
   if (!isAudioMode() && !state.selectedQuality) return;
-  setButtonState("downloading", "正在连接缓存节点", "", 0, true);
-  setHint("正在获取当前视频的可缓存版本…", false);
+  setButtonState("downloading", t("button.connecting"), "", 0, true);
+  setHint(t("hint.starting"), false);
   try {
     await send("START_CACHE", { url: state.tab.url, tabId: state.tab.id, quality: state.selectedQuality, codec: state.selectedCodec, mode: state.cacheMode });
     await refreshLibrary();
   } catch (error) {
-    setButtonState("error", "重试缓存", "", 0, false);
+    setButtonState("error", t("button.retry"), "", 0, false);
     setHint(error.message, true);
   }
 }
@@ -774,15 +780,15 @@ function renderAssist() {
   const metrics = {
     speed: live ? formatSpeed(finite(stats.networkSpeed)) : "—",
     hit: live ? formatBytes(finite(stats.cacheHitMB) * 1024 * 1024) : "—",
-    ready: live ? `${finite(stats.prefetchAheadSec).toFixed(0)} 秒` : "—",
-    buffer: live ? `${finite(stats.bufferAheadSec).toFixed(1)} 秒` : "—",
+    ready: live ? t("assist.seconds", { value: finite(stats.prefetchAheadSec).toFixed(0) }) : "—",
+    buffer: live ? t("assist.seconds", { value: finite(stats.bufferAheadSec).toFixed(1) }) : "—",
     // 卡顿是「插件有没有让你少卡」的结果指标；累计时长不足 0.1 秒不显示，免得「0 次 · 0.0 秒」。
-    stalls: live ? `${finite(stats.stalls)} 次${finite(stats.stallMs) >= 100 ? ` · ${(finite(stats.stallMs) / 1000).toFixed(1)} 秒` : ""}` : "—",
+    stalls: live ? t("assist.stallsValue", { count: finite(stats.stalls), seconds: finite(stats.stallMs) >= 100 ? (finite(stats.stallMs) / 1000).toFixed(1) : "" }) : "—",
     // 驻留上限是 playback-cache 的 128 MiB；超过后按播放位置回收，用户需要知道离上限有多远。
     residency: live ? `${finite(stats.cacheResidentMB).toFixed(0)} / 128 MB` : "—",
-    accelerated: live ? `${finite(stats.acceleratedRequests)} 次${finite(stats.networkRescues) > 0 ? ` · 救援 ${finite(stats.networkRescues)}` : ""}` : "—",
-    trouble: live ? [finite(stats.nativeFallbacks) > 0 ? `交还原生 ${finite(stats.nativeFallbacks)}` : "", finite(stats.prefetchErrors) > 0 ? `预热失败 ${finite(stats.prefetchErrors)}` : "", finite(stats.blockedNodes) > 0 ? `隔离节点 ${finite(stats.blockedNodes)}` : ""].filter(Boolean).join(" · ") : "",
-    node: live ? (stats.networkHost || "等待连接") : (enabled ? "等待数据" : "已关闭")
+    accelerated: live ? t("assist.acceleratedValue", { count: finite(stats.acceleratedRequests), rescues: finite(stats.networkRescues) }) : "—",
+    trouble: live ? [finite(stats.nativeFallbacks) > 0 ? t("assist.trouble.fallbacks", { count: finite(stats.nativeFallbacks) }) : "", finite(stats.prefetchErrors) > 0 ? t("assist.trouble.prefetch", { count: finite(stats.prefetchErrors) }) : "", finite(stats.blockedNodes) > 0 ? t("assist.trouble.blocked", { count: finite(stats.blockedNodes) }) : ""].filter(Boolean).join(" · ") : "",
+    node: live ? (stats.networkHost || t("assist.node.connecting")) : t(enabled ? "assist.node.waitingData" : "assist.status.off")
   };
   for (const [key, value] of Object.entries(metrics)) setText(elements.assistMetrics[key], value);
   // 「异常」合并交还原生 / 预热失败 / 隔离节点：全是失败信号，为 0 时只是噪音，整行不出现；出现才显示并用警示色。
@@ -793,13 +799,13 @@ function renderAssist() {
   elements.assistToggle.setAttribute("aria-checked", String(enabled));
 
   // 状态只看新鲜的统计：页面没在播放或统计过期时，不能沿用旧的「正在加载」。
-  let status = "已关闭", tone = "off";
-  if (enabled && (!live || !stats.activeTracks)) { status = "等待视频播放"; tone = "waiting"; }
-  else if (enabled && stats.prefetchErrors > 0 && !stats.prefetching && !(stats.prefetchAheadSec > 0)) { status = "连接不稳定，自动重试中"; tone = "warning"; }
-  else if (enabled && stats.prefetching > 0) { status = "正在提前加载"; tone = "active"; }
-  else if (enabled && stats.prefetchAheadSec > 0) { status = "前方已就绪"; tone = "active"; }
-  else if (enabled) { status = "已开启"; tone = "active"; }
-  setText(elements.assistStatus, status);
+  let status = "off", tone = "off";
+  if (enabled && (!live || !stats.activeTracks)) { status = "waiting"; tone = "waiting"; }
+  else if (enabled && stats.prefetchErrors > 0 && !stats.prefetching && !(stats.prefetchAheadSec > 0)) { status = "unstable"; tone = "warning"; }
+  else if (enabled && stats.prefetching > 0) { status = "prefetching"; tone = "active"; }
+  else if (enabled && stats.prefetchAheadSec > 0) { status = "ready"; tone = "active"; }
+  else if (enabled) { status = "on"; tone = "active"; }
+  setText(elements.assistStatus, t(`assist.status.${status}`));
   elements.assistStatus.dataset.state = tone;
 }
 
@@ -828,8 +834,9 @@ function renderAssistColorPresets() {
     button.type = "button";
     button.setAttribute("role", "radio");
     button.dataset.assistColor = preset.value;
-    button.title = preset.label;
-    button.setAttribute("aria-label", preset.label);
+    const label = t(`color.${preset.name}`);
+    button.title = label;
+    button.setAttribute("aria-label", label);
     button.setAttribute("aria-checked", "false");
     button.style.setProperty("--swatch-color", preset.value);
     fragment.append(button);
@@ -847,7 +854,7 @@ async function refreshHealth({ refresh = false } = {}) {
     state.healthError = "";
   } catch (error) {
     state.healthReport = null;
-    state.healthError = error?.message || "无法读取自检结果";
+    state.healthError = error?.message || t("health.readFailed");
   } finally {
     elements.browserHealthRefresh.disabled = false;
   }
@@ -866,9 +873,8 @@ function renderHealth() {
   if (signature === state.healthSignature) return;
   state.healthSignature = signature;
   // 不写「N 项」这类数字加量词：中文可断行，窄宽度下会把数字与量词拆到两行。
-  setText(elements.browserHealthStatus, state.healthError ? `自检未完成：${state.healthError}`
-    : failed.length ? `浏览器自检未通过（Chrome ${report.browserVersion || "版本未知"}），下面列出的能力当前不可用`
-      : `全部正常（Chrome ${report.browserVersion || "版本未知"}）`);
+  setText(elements.browserHealthStatus, state.healthError ? t("health.incomplete", { error: state.healthError })
+    : t(failed.length ? "health.failed" : "health.ok", { version: report.browserVersion || t("health.unknownVersion") }));
   elements.browserHealthStatus.dataset.state = problem ? "failed" : "ok";
   elements.browserHealthList.replaceChildren(...failed.map((check) => {
     const item = document.createElement("li");
@@ -902,15 +908,15 @@ function libraryVideos() {
 function renderLibrary() {
   const videos = libraryVideos();
   setText(elements.libraryCount, videos.length > 99 ? "99+" : String(videos.length));
-  elements.libraryCount.title = `${videos.length} 个本地视频`;
+  elements.libraryCount.title = t("library.countTitle", { count: videos.length });
   const bytes = videos.reduce((sum, video) => sum + committedBytes(video), 0);
-  setText(elements.librarySummary, videos.length ? `${videos.length} 个视频 · ${formatBytes(bytes)}` : "");
+  setText(elements.librarySummary, videos.length ? t("library.summary", { count: videos.length, bytes: formatBytes(bytes) }) : "");
   elements.librarySummary.hidden = !videos.length;
   const ids = new Set(videos.map((video) => video.id));
   for (const row of elements.videoList.querySelectorAll(".video-item")) {
     if (!ids.has(row.dataset.videoId)) { state.speedSamples.delete(row.dataset.videoId); row.remove(); }
   }
-  if (!videos.length) { renderEmptyLibrary("还没有缓存", "在「当前视频」里缓存正在看的视频"); return; }
+  if (!videos.length) { renderEmptyLibrary(t("library.empty"), t("library.emptyHint")); return; }
   elements.videoList.querySelector(".empty-state")?.remove();
   const rows = new Map([...elements.videoList.querySelectorAll(".video-item")].map((row) => [row.dataset.videoId, row]));
   let cursor = elements.videoList.firstElementChild;
@@ -970,7 +976,7 @@ function createVideoItem(video) {
     save.disabled = true;
     try {
       const result = await send("SAVE_VIDEO", { videoId: item.video.id });
-      showToast(result.splitTracks ? "高画质为双轨，已分别保存视频轨和音频轨" : "已交给 Chrome 保存");
+      showToast(t(result.splitTracks ? "toast.savedSplit" : "toast.saved"));
     } catch (error) {
       showToast(error.message);
     } finally {
@@ -984,7 +990,7 @@ function createVideoItem(video) {
 function updateVideoItem(item, video) {
   item.video = video;
   item.dataset.status = video.status;
-  const title = video.partTitle || video.title || "视频";
+  const title = video.partTitle || video.title || t("video.untitled");
   const image = item.querySelector("img");
   // 片库记录里的封面是 http 地址；扩展页里统一换成 https，避免混合内容拦截。
   const cover = normalizeHttpUrl(video.cover)?.replace(/^http:/, "https:") || null;
@@ -996,7 +1002,7 @@ function updateVideoItem(item, video) {
   setText(item.querySelector(".cover-status"), video.status === "complete" ? formatDuration(video.duration) : `${Math.floor(progress * 100)}%`);
   const link = item.querySelector(".video-link");
   setText(link, title);
-  setAttr(link, "title", video.status === "complete" ? `打开原视频（自动使用本地缓存播放）：${title}` : `打开原视频：${title}`);
+  setAttr(link, "title", t(video.status === "complete" ? "item.openCached" : "item.open", { title }));
   setAttr(link, "href", normalizeHttpUrl(video.url) || "#");
   const owner = item.querySelector(".video-owner");
   setText(owner, video.owner || "");
@@ -1008,11 +1014,11 @@ function updateVideoItem(item, video) {
   const speedSample = video.status === "downloading" ? sampleSpeed(state.speedSamples.get(video.id), video) : null;
   if (speedSample) state.speedSamples.set(video.id, speedSample);
   const status = video.status === "complete"
-    ? (isAudioOnlyCache(video) ? ["仅音频", video.audioLabel || describeAudioTrack(video)] : [video.qualityLabel || "MP4", video.codecLabel || CODEC_LABELS[video.codec]]).filter(Boolean).join(" · ")
+    ? (isAudioOnlyCache(video) ? [t("mode.audio"), video.audioLabel || describeAudioTrack(video)] : [video.qualityLabel || "MP4", video.codecLabel || CODEC_LABELS[video.codec]]).filter(Boolean).join(" · ")
     : video.status === "downloading"
-      ? video.stage === "merging" ? "合并中" : video.stage === "extracting" ? "提取音频中" : Number(video.nextRetryAt) > Date.now() ? "等待自动续传"
-        : video.error ? "正在恢复" : speedSample?.value > 0 ? formatSpeed(speedSample.value) : "缓存中"
-      : video.status === "paused" ? "已暂停" : "未完成";
+      ? video.stage === "merging" ? t("item.merging") : video.stage === "extracting" ? t("item.extracting") : Number(video.nextRetryAt) > Date.now() ? t("item.waitRetry")
+        : video.error ? t("item.recovering") : speedSample?.value > 0 ? formatSpeed(speedSample.value) : t("item.caching")
+      : t(video.status === "paused" ? "item.paused" : "item.incomplete");
   const state_ = item.querySelector(".video-state");
   setText(state_, `${status} · ${formatBytes(committedBytes(video))}`);
   setAttr(state_, "title", video.status === "error" ? video.error || "" : "");
@@ -1028,22 +1034,22 @@ function updateVideoItem(item, video) {
   if (!complete) {
     const mode = video.status === "downloading" ? "pause" : "resume";
     if (toggle.dataset.mode !== mode) { toggle.dataset.mode = mode; toggle.innerHTML = ACTION_ICONS[mode]; }
-    setAttr(toggle, "aria-label", `${mode === "pause" ? "暂停" : "继续"}缓存《${title}》`);
-    setAttr(toggle, "title", mode === "pause" ? "暂停缓存" : "继续缓存（不需要打开原视频）");
+    setAttr(toggle, "aria-label", t(mode === "pause" ? "item.pauseLabel" : "item.resumeLabel", { title }));
+    setAttr(toggle, "title", t(mode === "pause" ? "task.pause" : "item.resumeTip"));
   }
-  setAttr(save, "aria-label", `保存《${title}》到电脑`);
-  setAttr(save, "title", isAudioOnlyCache(video) ? `保存音频文件（${describeAudioContainer(video)}，未转码）`
-    : video.merged ? "保存已合并音视频的单个 MP4" : video.mediaKind === "dash" && video.tracks?.audio ? "保存视频轨和音频轨" : "保存视频");
+  setAttr(save, "aria-label", t("item.saveLabel", { title }));
+  setAttr(save, "title", isAudioOnlyCache(video) ? t("item.saveAudio", { container: describeAudioContainer(video) })
+    : t(video.merged ? "item.saveMerged" : video.mediaKind === "dash" && video.tracks?.audio ? "item.saveTracks" : "item.saveVideo"));
   const remove = item.querySelector(".delete-button");
-  setAttr(remove, "aria-label", `删除《${title}》的缓存`);
-  setAttr(remove, "title", "删除缓存");
+  setAttr(remove, "aria-label", t("item.deleteLabel", { title }));
+  setAttr(remove, "title", t("item.deleteTip"));
 }
 
 async function pauseTask(videoId) {
   try {
     const result = await send("PAUSE_CACHE", { videoId });
     if (result.video) mergeTask(result.video);
-    if (!result.paused && result.video?.status === "complete") showToast("已经缓存完成");
+    if (!result.paused && result.video?.status === "complete") showToast(t("toast.alreadyComplete"));
   } catch (error) {
     showToast(error.message);
   }
@@ -1073,15 +1079,15 @@ function mergeTask(video) {
  */
 function deleteWithUndo(video) {
   if (state.pendingDeletes.has(video.id)) return;
-  const title = video.partTitle || video.title || "视频";
+  const title = video.partTitle || video.title || t("video.untitled");
   const pending = { resume: video.status === "downloading", timer: null };
   state.pendingDeletes.set(video.id, pending);
   renderLibrary();
   if (state.pageInfo) renderCurrent();
   if (pending.resume) void send("PAUSE_CACHE", { videoId: video.id }).catch(() => {});
   pending.timer = setTimeout(() => void commitDelete(video.id), DELETE_UNDO_MS);
-  showToast(`已删除《${title}》`, {
-    action: "撤销",
+  showToast(t("toast.deleted", { title }), {
+    action: t("toast.undo"),
     duration: DELETE_UNDO_MS,
     onAction: () => {
       clearTimeout(pending.timer);
@@ -1101,7 +1107,7 @@ async function commitDelete(videoId) {
     state.deletedAt.set(videoId, Date.now());
     state.videos = state.videos.filter((video) => video.id !== videoId);
   } catch (error) {
-    showToast(`删除失败：${error.message}`);
+    showToast(t("toast.deleteFailed", { error: error.message }));
   } finally {
     state.pendingDeletes.delete(videoId);
     renderLibrary();
@@ -1155,6 +1161,6 @@ function hideToast() {
 
 async function send(type, data = {}) {
   const response = await chrome.runtime.sendMessage({ target: "background", type, ...data });
-  if (!response?.ok) throw new Error(response?.error || "扩展后台没有响应");
+  if (!response?.ok) throw new Error(response?.error || t("err.noResponse"));
   return response;
 }

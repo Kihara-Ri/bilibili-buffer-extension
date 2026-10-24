@@ -1,4 +1,5 @@
 import { chooseAudioRepresentation, chooseVideoRepresentation, getTrackUrls } from "./media-selection.js";
+import { t } from "./i18n.js";
 import { buildQualityOptions, describeAudioTrack, isAudioOnlyCache } from "./utils.js";
 
 // Keep only sizing metadata in popup snapshots, without signed CDN addresses.
@@ -76,7 +77,7 @@ export function getAudioCacheSize(info, cached) {
     return {
       bytes: Number(info.progressiveBytes),
       estimated: false,
-      label: "单文件 MP4 · 整段下载后提取音轨",
+      label: t("audio.extractLabel"),
       mode: "extract"
     };
   }

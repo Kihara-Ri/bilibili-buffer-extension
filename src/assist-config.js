@@ -1,12 +1,13 @@
 export const DEFAULT_PREHEAT_COLOR = "#ff8a1f";
 
+// name 对应界面文案 color.<name>（见 src/locales），颜色值本身是存储格式，不随语言变化。
 export const PREHEAT_COLOR_PRESETS = Object.freeze([
-  Object.freeze({ value: "#ff8a1f", label: "橙色" }),
-  Object.freeze({ value: "#ffd23f", label: "金黄" }),
-  Object.freeze({ value: "#20c997", label: "青绿" }),
-  Object.freeze({ value: "#2f80ed", label: "蓝色" }),
-  Object.freeze({ value: "#9b5de5", label: "紫色" }),
-  Object.freeze({ value: "#f15bb5", label: "粉色" })
+  Object.freeze({ value: "#ff8a1f", name: "orange" }),
+  Object.freeze({ value: "#ffd23f", name: "gold" }),
+  Object.freeze({ value: "#20c997", name: "teal" }),
+  Object.freeze({ value: "#2f80ed", name: "blue" }),
+  Object.freeze({ value: "#9b5de5", name: "purple" }),
+  Object.freeze({ value: "#f15bb5", name: "pink" })
 ]);
 
 // 只保存用户可见的开关与外观；预热窗口、并发、分片大小等网络策略是页面侧内部常量

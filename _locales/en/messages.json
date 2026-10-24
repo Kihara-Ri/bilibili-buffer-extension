@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Kindred Afar",
+    "description": "Extension name shown in Chrome and the Web Store"
+  },
+  "extDescription": {
+    "message": "Prefetches Bilibili videos ahead of playback to cut buffering, and caches the best available quality locally for offline viewing.",
+    "description": "Manifest description, at most 132 characters"
+  }
+}
