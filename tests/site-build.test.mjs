@@ -32,6 +32,16 @@ test("GitHub 入口在顶栏与首屏都带图标", () => {
   assert.match(hero, new RegExp(`href="${REPO_URL}"[^>]*><svg class="gh"`));
 });
 
+test("各节标题把导航关键字写进句子里：不再单独放一行小标题", () => {
+  assert.doesNotMatch(page, /class="kicker"/);
+  const nav = page.slice(page.indexOf('<nav class="topbar-links"'), page.indexOf("</nav>"));
+  for (const [, id, label] of nav.matchAll(/<a href="#(\w+)">([^<]+)<\/a>/g)) {
+    const start = page.indexOf(`id="${id}"`);
+    const heading = page.slice(start, page.indexOf("</section>", start)).match(/<h2>(.*?)<\/h2>/)?.[1] || "";
+    assert.ok(heading.includes(`<em class="key">${label}</em>`), `#${id} 的标题应包含高亮的「${label}」：${heading}`);
+  }
+});
+
 test("更新记录折叠在页尾，第一条就是当前版本：发版时忘了写开发日志会在这里失败", () => {
   assert.equal(result.versions[0], manifest.version);
   const footer = page.slice(page.indexOf('<footer class="footer">'));

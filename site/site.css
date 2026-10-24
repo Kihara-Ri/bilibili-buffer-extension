@@ -128,8 +128,9 @@ main { isolation: isolate; }
 .section-tint { background: var(--tint); }
 .section-head { max-width: 680px; margin: 0 auto 40px; text-align: center; }
 .section-head-left { margin: 0 0 32px; text-align: left; }
-.section-head p:last-child:not(.kicker) { margin-top: 14px; color: var(--ink-soft); font-size: 17px; }
-.kicker { font-family: var(--serif); font-size: 18px; letter-spacing: 0.3em; color: var(--accent); margin-bottom: 8px; }
+.section-head p:last-child { margin-top: 14px; color: var(--ink-soft); font-size: 17px; }
+/* 标题里的关键字（与顶栏导航同名：天涯 / 存 / 比邻 / 知己 / 投喂）只换颜色，标题保持一行。 */
+.key { font-style: normal; color: var(--accent); }
 h2 { font-family: var(--serif); font-size: clamp(30px, 4.4vw, 44px); line-height: 1.25; font-weight: 700; letter-spacing: 0.02em; }
 h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
 .section-foot { max-width: 680px; margin: 32px auto 0; text-align: center; color: var(--ink-soft); }
