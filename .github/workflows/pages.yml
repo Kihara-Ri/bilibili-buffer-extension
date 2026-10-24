@@ -1,0 +1,41 @@
+# 官网 https://haineicunzhi.kihara.cn 的部署。
+#
+# 只发布 scripts/build-site.mjs 的构建产物（dist/site），不再把整个仓库根目录当网站发布。
+# 首次启用需要在仓库 Settings → Pages 里把 Source 改为「GitHub Actions」，并填写自定义域名
+# haineicunzhi.kihara.cn、勾选 Enforce HTTPS（Actions 部署忽略 CNAME 文件，域名只认设置里的值）。
+# 构建只用 Node 内置模块，不需要 npm install。
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test tests/site-build.test.mjs
+      - run: node scripts/build-site.mjs
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/site
+      - id: deployment
+        uses: actions/deploy-pages@v4

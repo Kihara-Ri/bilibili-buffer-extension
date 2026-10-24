@@ -22,13 +22,12 @@
 
 ### 0.2 隐私政策网址
 
-`privacy.html` 需要有一个可公开访问的网址。仓库是公开仓库，最省事的方式是用 GitHub Pages：
+隐私政策随官网发布（技术文档 15.5）：`https://haineicunzhi.kihara.cn/privacy.html`。
 
-1. 仓库 `Settings → Pages`，Source 选 `Deploy from a branch`，branch 选 `main`、目录选 `/ (root)`。
-2. 保存后等待约一分钟，隐私政策网址即为
-   `https://kihara-ri.github.io/bilibili-buffer-extension/privacy.html`
-3. 把这个网址填进仪表盘的 **Privacy policy URL**。
-4. 打开确认能正常显示（页面不引用任何外部资源，离线也能打开）。
+1. DNS：`haineicunzhi.kihara.cn` 添加 CNAME 指向 `kihara-ri.github.io.`。
+2. 仓库 `Settings → Pages`：Source 选 **GitHub Actions**，Custom domain 填 `haineicunzhi.kihara.cn`，勾选 **Enforce HTTPS**。
+3. 推送 `main` 后 `Deploy site` 工作流发布官网；打开上面的网址确认能正常显示，再填进仪表盘的 **Privacy policy URL**。
+4. 旧地址 `https://kihara-ri.github.io/bilibili-buffer-extension/privacy.html` 会被 GitHub 跳转到新域名，已填旧地址也不会失效。
 
 ---
 
@@ -86,9 +85,9 @@
 
 | 字段 | 填写内容 |
 | --- | --- |
-| **Homepage URL** | `https://github.com/Kihara-Ri/bilibili-buffer-extension` |
+| **Homepage URL** | `https://haineicunzhi.kihara.cn` |
 | **Support URL** | `https://github.com/Kihara-Ri/bilibili-buffer-extension/issues` |
-| **Official URL** | 留空（未做站点归属验证） |
+| **Official URL** | `https://haineicunzhi.kihara.cn`（需先在 Google Search Console 用 DNS TXT 记录验证 `kihara.cn` 网域，仪表盘才能选择） |
 | **Mature content** | 不勾选 |
 
 ---
@@ -144,7 +143,7 @@
 
 ### 2.5 Privacy policy URL
 
-填 `https://kihara-ri.github.io/bilibili-buffer-extension/privacy.html`（见 0.2）。
+填 `https://haineicunzhi.kihara.cn/privacy.html`（见 0.2）。
 
 ---
 

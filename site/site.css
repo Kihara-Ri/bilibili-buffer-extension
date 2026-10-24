@@ -1,0 +1,223 @@
+/*
+ * 海内存知 官网样式。
+ *
+ * 配色全部取自图标：天蓝瓶身、深海蓝水与海浪、琥珀瓶塞。B 站粉不出现在网站上——
+ * 它在扩展里只留给「缓存」这一个动作。诗句用系统衬线体、界面用系统无衬线体，
+ * 不加载网络字体：和扩展一样，访问者的请求不离开这一个域名。
+ */
+:root {
+  color-scheme: light dark;
+  --bg: #f6fafc;
+  --tint: #eaf4f9;
+  --surface: #ffffff;
+  --line: rgba(18, 48, 61, 0.1);
+  --ink: #12303d;
+  --ink-soft: #4f6b79;
+  --accent: #0b7fae;
+  --sky: #2bb3e6;
+  --sea: #0d425d;
+  --sea-deep: #08283a;
+  --water: #1587c6;
+  --amber: #e9a15b;
+  --verse-soft: #9cc3d6;
+  /* 进度条三色与扩展默认配色一致：已播放 / 播放器缓冲 / 提前加载。 */
+  --played: #00aeec;
+  --buffer: #b9c3cc;
+  --preload: #f59a23;
+  --serif: "Songti SC", "STSong", "Noto Serif SC", "Source Han Serif SC", "Noto Serif CJK SC", serif;
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --radius: 14px;
+  --gutter: clamp(16px, 5vw, 48px);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0a1620;
+    --tint: #0e1f2b;
+    --surface: #12283a;
+    --line: rgba(255, 255, 255, 0.09);
+    --ink: #e3eef4;
+    --ink-soft: #9db5c2;
+    --accent: #6fd0f5;
+    --buffer: #5b6874;
+  }
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.7 var(--sans); -webkit-font-smoothing: antialiased; }
+img, svg { display: block; }
+a { color: var(--accent); text-underline-offset: 3px; }
+h1, h2, h3, p { margin: 0; }
+:focus-visible { outline: 2px solid var(--sky); outline-offset: 3px; border-radius: 4px; }
+
+.skip-link { position: absolute; left: 12px; top: -48px; z-index: 20; padding: 8px 14px; border-radius: 8px; background: var(--surface); color: var(--ink); }
+.skip-link:focus { top: 12px; }
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: 10px;
+  height: 60px; padding: 0 var(--gutter);
+  background: color-mix(in srgb, var(--sea-deep) 88%, transparent);
+  backdrop-filter: saturate(1.4) blur(12px);
+  -webkit-backdrop-filter: saturate(1.4) blur(12px);
+  color: #fff;
+}
+.topbar-brand { display: flex; align-items: center; gap: 8px; color: #fff; text-decoration: none; font-weight: 650; letter-spacing: 0.06em; }
+.topbar-links { display: flex; gap: 22px; margin-left: auto; margin-right: 14px; }
+.topbar-links a { color: rgba(255, 255, 255, 0.78); text-decoration: none; font-size: 15px; }
+.topbar-links a:hover { color: #fff; }
+
+/* ---------- 按钮 ---------- */
+.button {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 46px; padding: 0 24px; border-radius: 999px;
+  font-weight: 600; font-size: 16px; text-decoration: none; white-space: nowrap;
+  transition: transform 160ms ease, background-color 160ms ease;
+}
+.button:active { transform: scale(0.98); }
+.button-primary { background: var(--sky); color: #04263a; }
+.button-primary:hover { background: #4cc4ef; }
+.button-ghost { color: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35); }
+.button-ghost:hover { background: rgba(255, 255, 255, 0.08); }
+.button-small { min-height: 36px; padding: 0 16px; font-size: 14px; background: var(--sky); color: #04263a; }
+/* GitHub 入口：顶栏里与「添加到 Chrome」并列，图标 + 文字；窄屏只留图标。 */
+.github-link { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 14px; border-radius: 999px; color: #fff; text-decoration: none; font-size: 14px; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3); }
+.github-link:hover { background: rgba(255, 255, 255, 0.1); }
+.gh { width: 18px; height: 18px; flex: none; }
+.button .gh { margin-right: 8px; }
+
+/* ---------- 首屏 ---------- */
+.hero {
+  position: relative; overflow: hidden;
+  padding: clamp(56px, 10vh, 112px) var(--gutter) 150px;
+  background: linear-gradient(160deg, var(--sea-deep) 0%, var(--sea) 62%, #11557a 100%);
+  color: #fff; text-align: center;
+}
+.hero-inner { max-width: 880px; margin: 0 auto; }
+.hero-bottle { width: clamp(132px, 22vw, 200px); height: auto; margin: 0 auto 18px; filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.3)); animation: bob 6s ease-in-out infinite; }
+.eyebrow { font-size: 14px; letter-spacing: 0.2em; color: var(--verse-soft); margin-bottom: 14px; }
+/* 诗句：主名加粗，其余减弱；两半各自不折行，窄屏时在「，」后整体换行。 */
+.verse { font-family: var(--serif); font-size: clamp(38px, 7.4vw, 76px); line-height: 1.25; font-weight: 400; letter-spacing: 0.04em; }
+.verse-line { display: inline-block; white-space: nowrap; }
+.verse-name { font-weight: 700; }
+.verse-soft { color: var(--verse-soft); font-weight: 400; }
+.lead { max-width: 34em; margin: 22px auto 0; font-size: clamp(17px, 2.2vw, 20px); color: rgba(255, 255, 255, 0.88); }
+.hero-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 32px; }
+/* 每一项整体不折行，窄屏时按项换行，不会把「据」单独挤到下一行。 */
+.hero-meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 0; margin-top: 18px; font-size: 14px; color: var(--verse-soft); }
+.hero-meta span { white-space: nowrap; }
+.hero-meta span + span::before { content: "·"; margin: 0 8px; }
+.hero-waves { position: absolute; left: 0; bottom: -1px; width: 100%; height: 110px; }
+.wave { animation: drift 14s linear infinite; }
+.wave-back { fill: color-mix(in srgb, var(--bg) 35%, transparent); animation-duration: 22s; }
+.wave-front { fill: var(--bg); }
+
+@keyframes bob { 0%, 100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-10px) rotate(-3deg); } }
+@keyframes drift { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+/* ---------- 通用区块 ---------- */
+.section { padding: clamp(64px, 10vw, 112px) var(--gutter); }
+.section-tint { background: var(--tint); }
+.section-head { max-width: 680px; margin: 0 auto 40px; text-align: center; }
+.section-head-left { margin: 0 0 32px; text-align: left; }
+.section-head p:last-child:not(.kicker) { margin-top: 14px; color: var(--ink-soft); font-size: 17px; }
+.kicker { font-family: var(--serif); font-size: 18px; letter-spacing: 0.3em; color: var(--accent); margin-bottom: 8px; }
+h2 { font-family: var(--serif); font-size: clamp(30px, 4.4vw, 44px); line-height: 1.25; font-weight: 700; letter-spacing: 0.02em; }
+h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
+.section-foot { max-width: 680px; margin: 32px auto 0; text-align: center; color: var(--ink-soft); }
+
+/* ---------- 天涯：进度条对比 ---------- */
+.compare { max-width: 760px; margin: 0 auto; padding: 28px clamp(18px, 4vw, 36px); border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 24px 48px -32px rgba(8, 40, 58, 0.35); }
+.compare-row { display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 16px; padding: 12px 0; }
+.compare-label { font-size: 15px; color: var(--ink-soft); }
+.bar { position: relative; height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 9%, transparent); }
+.bar > span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: inherit; }
+.bar-played { width: 32%; background: var(--played); }
+.bar-buffer { width: 38%; background: var(--buffer); }
+.bar-preload { width: 82%; background: var(--preload); }
+.bar-smooth .bar-played { animation: play 9s linear infinite; }
+.bar-smooth .bar-buffer { animation: buffer 9s linear infinite; }
+.bar > .bar-spinner { position: absolute; left: 32%; top: 50%; bottom: auto; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--ink) 18%, transparent); border-top-color: var(--ink-soft); background: var(--surface); animation: spin 0.9s linear infinite; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 14px 0 0; padding: 0 0 0 136px; list-style: none; font-size: 13px; color: var(--ink-soft); }
+.legend li { display: flex; align-items: center; gap: 6px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; }
+.dot-played { background: var(--played); }
+.dot-buffer { background: var(--buffer); }
+.dot-preload { background: var(--preload); }
+@keyframes play { from { width: 32%; } to { width: 74%; } }
+@keyframes buffer { from { width: 38%; } to { width: 80%; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- 存：瓶中水位 + 功能 ---------- */
+.keep-grid, .near-grid { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: clamp(32px, 6vw, 80px); align-items: center; max-width: 1080px; margin: 0 auto; }
+.keep-bottle { width: min(100%, 320px); height: auto; margin: 0 auto; overflow: visible; }
+.keep-bottle .glass { fill: var(--sky); }
+.keep-bottle .water { transform: translateY(calc(108px - var(--level, 0.5) * 82px)); transition: transform 240ms ease-out; }
+.keep-bottle .water-wave { fill: var(--water); animation: drift 5s linear infinite; }
+.keep-bottle .glint { fill: #fff; fill-opacity: 0.4; }
+.keep-bottle .cork { fill: var(--amber); }
+.keep-bottle .play { fill: #fff; stroke: #fff; stroke-width: 5; stroke-linejoin: round; }
+.features { display: grid; gap: 16px; }
+.feature, .promise { padding: 22px 24px; border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.feature p, .promise p { margin-top: 6px; color: var(--ink-soft); font-size: 15px; }
+
+/* ---------- 比邻：真实弹窗演示 ---------- */
+.near-grid { grid-template-columns: minmax(0, 1fr) auto; }
+.checks { display: grid; gap: 14px; margin: 0; padding: 0; list-style: none; }
+.checks li { position: relative; padding-left: 30px; }
+.checks li::before { content: ""; position: absolute; left: 2px; top: 7px; width: 14px; height: 14px; border-radius: 50%; background: var(--sky); box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--sky) 30%, var(--bg)); }
+.demo { margin: 0; }
+.demo-frame { display: block; width: 360px; height: 560px; border: 0; border-radius: 16px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 34px 70px -28px rgba(8, 40, 58, 0.45); }
+.demo figcaption { margin-top: 12px; text-align: center; font-size: 13px; color: var(--ink-soft); }
+
+/* ---------- 知己 ---------- */
+.promises { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; max-width: 1080px; margin: 0 auto; }
+
+/* ---------- 适用范围 / 页脚 ---------- */
+.scope { display: grid; gap: 12px; max-width: 760px; margin: 0 auto; padding: 0; list-style: none; }
+.scope li { padding: 18px 22px; border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--line); color: var(--ink-soft); }
+.scope b { color: var(--ink); margin-right: 4px; }
+.footer { padding: 56px var(--gutter) 64px; background: var(--sea-deep); color: rgba(255, 255, 255, 0.8); text-align: center; }
+.footer-verse { font-family: var(--serif); font-size: 24px; letter-spacing: 0.04em; color: #fff; }
+.footer-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 22px; margin-top: 18px; }
+.footer-links a { color: #fff; }
+.footer-note { margin-top: 18px; font-size: 13px; color: var(--verse-soft); }
+.footer-github { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ---------- 页尾：折叠的更新记录 ---------- */
+.changelog { max-width: 560px; margin: 22px auto 0; font-size: 13px; color: var(--verse-soft); }
+.changelog summary { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; cursor: pointer; list-style: none; box-shadow: inset 0 0 0 1px rgba(156, 195, 214, 0.35); }
+.changelog summary::-webkit-details-marker { display: none; }
+.changelog summary::after { content: "▾"; font-size: 11px; transition: transform 160ms ease; }
+.changelog[open] summary::after { transform: rotate(180deg); }
+.changelog summary:hover { color: #fff; }
+.changelog-list { margin: 14px 0 0; padding: 0; list-style: none; text-align: left; border-top: 1px solid rgba(255, 255, 255, 0.1); }
+.release { display: flex; align-items: baseline; gap: 14px; padding: 9px 4px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+.release-version { flex: none; min-width: 4.5em; font-variant-numeric: tabular-nums; font-weight: 650; color: var(--sky); }
+.release-title { color: rgba(255, 255, 255, 0.86); }
+.release-title code { font-size: 0.95em; }
+.changelog-more { margin-top: 10px; }
+.changelog-more a { color: #fff; }
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 860px) {
+  .topbar-links { display: none; }
+  .github-link { margin-left: auto; padding: 0 9px; }
+  .github-link span { display: none; }
+  .keep-grid, .near-grid { grid-template-columns: minmax(0, 1fr); }
+  .keep-bottle { width: 200px; }
+  .demo { justify-self: center; }
+}
+@media (max-width: 560px) {
+  .compare-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .legend { padding-left: 0; }
+}
+
+/* 减少动态：停掉漂浮、海浪、进度条与转圈；水位固定在半瓶。 */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .bar-smooth .bar-played { width: 52%; }
+  .bar-smooth .bar-buffer { width: 58%; }
+}

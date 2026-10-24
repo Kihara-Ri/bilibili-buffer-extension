@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>海内存知 · 把 B 站视频提前存到身边</title>
+    <meta name="description" content="海内存知是一个 Chrome 扩展：播放时提前加载 B 站视频的后续内容，并把最高可用画质缓存到本机离线播放。无服务器，不收集任何数据。">
+    <meta name="theme-color" content="#08283a">
+    <link rel="canonical" href="{{SITE_URL}}/">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="海内存知己，天涯若比邻">
+    <meta property="og:description" content="把 B 站视频提前存到身边：海外播放少卡顿，断网也能接着看。">
+    <meta property="og:url" content="{{SITE_URL}}/">
+    <meta property="og:image" content="{{SITE_URL}}/og.png">
+    <link rel="icon" href="assets/icon-small.svg" type="image/svg+xml">
+    <link rel="icon" href="assets/icon-32.png" sizes="32x32" type="image/png">
+    <link rel="stylesheet" href="site.css">
+    <!-- 本站不加载任何第三方资源（字体、统计、CDN 脚本）：和扩展一样，不让访问者的请求离开这一个域名。 -->
+  </head>
+  <body>
+    <!-- GitHub 标志只定义一次，顶栏、首屏与页脚用 <use> 引用；颜色跟随所在文字（currentColor）。 -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="icon-github" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></symbol>
+    </svg>
+    <a class="skip-link" href="#far">跳到正文</a>
+    <header class="topbar">
+      <a class="topbar-brand" href="#top" aria-label="海内存知 首页">
+        <img src="assets/icon-small.svg" alt="" width="22" height="22">
+        <span>海内存知</span>
+      </a>
+      <nav class="topbar-links" aria-label="页面导航">
+        <a href="#far">天涯</a>
+        <a href="#keep">存</a>
+        <a href="#near">比邻</a>
+        <a href="#friend">知己</a>
+      </nav>
+      <a class="github-link" href="{{REPO_URL}}" rel="noopener" aria-label="GitHub 源码仓库"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><use href="#icon-github"/></svg><span>GitHub</span></a>
+      <a class="button button-small" href="{{STORE_URL}}" rel="noopener">添加到 Chrome</a>
+    </header>
+
+    <main id="top">
+      <!-- 首屏：与弹窗页眉同一种排法——主名加粗，诗句减弱，整句连读。 -->
+      <section class="hero">
+        <div class="hero-inner">
+          <img class="hero-bottle" src="assets/icon-master.svg" alt="" width="200" height="200">
+          <p class="eyebrow">Chrome 扩展 · 免费开源</p>
+          <h1 class="verse">
+            <span class="verse-line"><span class="verse-name">海内存知</span><span class="verse-soft">己，</span></span><span class="verse-line verse-soft">天涯若比邻</span>
+          </h1>
+          <p class="lead">把 B 站视频提前存到身边。人在海外也能流畅地看，断了网也能接着看。</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="{{STORE_URL}}" rel="noopener">添加到 Chrome</a>
+            <a class="button button-ghost" href="{{REPO_URL}}" rel="noopener"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><use href="#icon-github"/></svg>GitHub 源码</a>
+          </div>
+          <p class="hero-meta"><span>v{{VERSION}}</span><span>需要 Chrome 116+</span><span>无服务器</span><span>不收集任何数据</span></p>
+        </div>
+        <svg class="hero-waves" viewBox="0 0 1440 120" preserveAspectRatio="none" aria-hidden="true">
+          <path class="wave wave-back" d="M0 60 Q180 20 360 60 T720 60 T1080 60 T1440 60 T1800 60 T2160 60 T2520 60 T2880 60 V120 H0 Z"/>
+          <path class="wave wave-front" d="M0 76 Q180 44 360 76 T720 76 T1080 76 T1440 76 T1800 76 T2160 76 T2520 76 T2880 76 V120 H0 Z"/>
+        </svg>
+      </section>
+
+      <section id="far" class="section">
+        <div class="section-head">
+          <p class="kicker">天涯</p>
+          <h2>视频远在天涯</h2>
+          <p>B 站的视频节点大多在国内。人在海外时，每一段数据都要跨洋往返；播放器只缓冲眼前几秒，网速一抖就开始转圈。</p>
+        </div>
+        <!-- 两条进度条用的正是扩展里的配色：蓝＝已播放、灰＝播放器缓冲、橙＝提前加载。 -->
+        <div class="compare" role="img" aria-label="对比：直接播放时缓冲只领先几秒并卡住；开启海内存知后，前方一大段已提前加载">
+          <div class="compare-row">
+            <span class="compare-label">直接播放</span>
+            <div class="bar bar-stall">
+              <span class="bar-buffer"></span><span class="bar-played"></span>
+              <span class="bar-spinner" aria-hidden="true"></span>
+            </div>
+          </div>
+          <div class="compare-row">
+            <span class="compare-label">开启海内存知</span>
+            <div class="bar bar-smooth">
+              <span class="bar-preload"></span><span class="bar-buffer"></span><span class="bar-played"></span>
+            </div>
+          </div>
+          <ul class="legend" aria-hidden="true">
+            <li><i class="dot dot-played"></i>已播放</li>
+            <li><i class="dot dot-buffer"></i>播放器缓冲</li>
+            <li><i class="dot dot-preload"></i>提前加载</li>
+          </ul>
+        </div>
+        <p class="section-foot">海内存知在播放器开口之前，就把前方的分段取回本机。进度条上橙色的一段，就是已经在身边的部分。</p>
+      </section>
+
+      <section id="keep" class="section section-tint">
+        <div class="keep-grid">
+          <!-- 瓶中水位随滚动上涨：水位＝已缓存，与图标的含义一致。减少动态偏好下固定在半瓶。 -->
+          <svg class="keep-bottle" viewBox="0 0 128 128" role="img" aria-label="漂流瓶里的水位代表已经缓存到本机的部分">
+            <defs>
+              <clipPath id="keep-glass"><path d="M55 26H73V40Q73 45 78 48Q90 55 90 69V96Q90 108 78 108H50Q38 108 38 96V69Q38 55 50 48Q55 45 55 40Z"/></clipPath>
+            </defs>
+            <path class="glass" d="M55 26H73V40Q73 45 78 48Q90 55 90 69V96Q90 108 78 108H50Q38 108 38 96V69Q38 55 50 48Q55 45 55 40Z"/>
+            <g clip-path="url(#keep-glass)">
+              <g class="water">
+                <path class="water-wave" d="M0 0Q8 -4 16 0T32 0T48 0T64 0T80 0T96 0T112 0T128 0T144 0T160 0T176 0T192 0T208 0T224 0T240 0T256 0V140H0Z"/>
+              </g>
+            </g>
+            <path class="glint" d="M44 72Q44 64 50 60V94Q50 99 47 99Q44 99 44 94Z"/>
+            <rect class="cork" x="52" y="14" width="24" height="16" rx="5"/>
+            <path class="play" d="M57 68L73 78L57 88Z"/>
+          </svg>
+          <div>
+            <div class="section-head section-head-left">
+              <p class="kicker">存</p>
+              <h2>存在身边</h2>
+              <p>从你点下播放开始，海内存知就在后台把视频一点点装进瓶子里。</p>
+            </div>
+            <div class="features">
+              <article class="feature">
+                <h3>播放时提前加载</h3>
+                <p>取得播放器的第一个请求后立刻预热前方分段。本机数据完整命中就直接交给播放器，不命中自动回退原始请求，不会把播放弄坏。</p>
+              </article>
+              <article class="feature">
+                <h3>一键完整缓存</h3>
+                <p>按账号实际可用的最高画质下载，音视频在本机合并为 MP4，不转码；也可以只缓存保留原始音质的音频（Hi-Res 无损 / 杜比全景声 / AAC）。</p>
+              </article>
+              <article class="feature">
+                <h3>关掉页面也继续</h3>
+                <p>下载在后台独立进行。断网、地址过期或被限流时自动刷新并从断点续传；暂停之后随时继续，不必重新打开视频。</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="near" class="section">
+        <div class="near-grid">
+          <div>
+            <div class="section-head section-head-left">
+              <p class="kicker">比邻</p>
+              <h2>随时就在手边</h2>
+              <p>右边是扩展真实的弹窗界面（演示数据），可以直接点：切换「当前视频 / 片库」，或者打开右上角的设置。</p>
+            </div>
+            <ul class="checks">
+              <li>片库里的视频随时离线播放，暂停的任务随时继续</li>
+              <li>再次打开原视频，直接用本机数据播放；原生控制条、倍速、弹幕照常</li>
+              <li>需要带走时，一键保存为本地 MP4 或音频文件</li>
+            </ul>
+          </div>
+          <figure class="demo">
+            <!-- 演示复用 store/scene：加载真实的 popup.html / popup.css / popup.js，只把 chrome.* 换成固定数据。 -->
+            <iframe class="demo-frame" src="demo/store/scene/popup-scene.html" title="海内存知弹窗演示（演示数据）" width="360" height="560" loading="lazy"></iframe>
+            <figcaption>真实界面 · 演示数据</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="friend" class="section section-tint">
+        <div class="section-head">
+          <p class="kicker">知己</p>
+          <h2>只有你知道</h2>
+          <p>海内存知没有服务器。它记得的一切，都只留在你自己的浏览器里。</p>
+        </div>
+        <div class="promises">
+          <article class="promise"><h3>没有服务器</h3><p>不收集、不上传任何数据；没有统计、埋点，也没有广告。</p></article>
+          <article class="promise"><h3>登录态只看「有没有」</h3><p>只判断是否已登录，用来显示可用画质；从不读取 Cookie 的值。</p></article>
+          <article class="promise"><h3>数据留在本机</h3><p>缓存与设置都在你的 Chrome 配置里；删除缓存或卸载扩展即可清除。</p></article>
+          <article class="promise"><h3>开源可查</h3><p>每一行代码都在 GitHub 上，发布包可以按源码复现校验。</p></article>
+        </div>
+        <p class="section-foot"><a href="privacy.html">阅读完整的隐私说明</a>。这个网站同样不使用 Cookie、统计或任何第三方资源。</p>
+      </section>
+
+      <section class="section section-tint">
+        <div class="section-head">
+          <p class="kicker">适用范围</p>
+          <h2>能做什么，不做什么</h2>
+        </div>
+        <ul class="scope">
+          <li><b>支持</b>标准 BV / av 投稿、分 P，以及带 bvid 的稍后再看页面；番剧、互动视频和课程暂不支持。</li>
+          <li><b>不绕过</b>任何会员、付费、地区或内容授权限制，只使用账号本来就有的观看与画质权限。</li>
+          <li><b>需要</b> Chrome 116 或更高版本。请只缓存你有权观看的内容，并遵守平台条款与版权要求。</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p class="footer-verse"><span class="verse-name">海内存知</span><span class="verse-soft">己，天涯若比邻</span></p>
+      <p class="footer-links">
+        <a href="{{STORE_URL}}" rel="noopener">Chrome 应用商店</a>
+        <a class="footer-github" href="{{REPO_URL}}" rel="noopener"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><use href="#icon-github"/></svg>GitHub</a>
+        <a href="{{REPO_URL}}/issues" rel="noopener">问题反馈</a>
+        <a href="privacy.html">隐私说明</a>
+      </p>
+      <!-- 更新记录默认折叠，只在页尾留一个小入口：多数访问者不需要它。 -->
+      <details id="changelog" class="changelog">
+        <summary>v{{VERSION}} · 更新记录</summary>
+        <ol class="changelog-list">
+{{CHANGELOG}}
+        </ol>
+        <p class="changelog-more"><a href="{{REPO_URL}}/blob/main/%E5%BC%80%E5%8F%91%E6%97%A5%E5%BF%97.md" rel="noopener">完整开发日志</a></p>
+      </details>
+      <p class="footer-note">本扩展不是哔哩哔哩官方产品，与哔哩哔哩没有隶属或授权关系。</p>
+    </footer>
+    <script src="site.js" defer></script>
+  </body>
+</html>

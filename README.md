@@ -56,6 +56,7 @@ npm run dev        # 热更新：修改代码约 1 秒内自动重载已加载�
 npm test           # 单元与上架合规测试
 npm run check      # 语法检查 + Chrome 版本兼容门禁
 npm run build      # 生成 dist/unpacked 与 dist/haineicunzhi-<version>.zip（含上架体检）
+npm run site:preview  # 构建官网并在 http://127.0.0.1:4310 预览（npm run test:site 做浏览器检查）
 npm run test:chrome  # 下载与本机 Chrome 同版本的 Chrome for Testing，跑全部浏览器套件
 npm run test:live    # 联网：真实 Chromium 加载扩展，对真实 B 站视频跑完整缓存并播放结果
 ```
