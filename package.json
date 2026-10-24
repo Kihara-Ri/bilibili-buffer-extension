@@ -1,6 +1,6 @@
 {
   "name": "haineicunzhi",
-  "version": "2.13.0",
+  "version": "2.14.0",
   "private": true,
   "license": "GPL-3.0-only",
   "type": "module",
@@ -17,7 +17,7 @@
     "site:preview": "node scripts/build-site.mjs --preview",
     "test:site": "node tests/run-site-check.mjs",
     "test": "node scripts/run-tests.mjs",
-    "test:popup": "node tests/run-popup-stability.mjs",
+    "test:popup": "node tests/run-popup-stability.mjs && node tests/run-review-prompt.mjs",
     "test:network": "node tests/run-playback-network.mjs && node tests/run-playback-demand.mjs",
     "test:playback": "node tests/run-playback-cache-integration.mjs",
     "test:extension": "npm run build && node tests/run-playback-extension-smoke.mjs",

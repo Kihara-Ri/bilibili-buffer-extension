@@ -114,6 +114,21 @@
         </section>
 
         <section id="library-view" class="panel-view" role="tabpanel" aria-labelledby="library-tab" hidden>
+          <!-- 评价邀请：只在用户用出价值后出现（条件见 src/review-prompt.js），可推迟、可永久关闭。
+               外层用 grid 行高 0fr→1fr 做展开收起动画；收起时 inert，键盘与读屏都不会进入。 -->
+          <div id="review-card" class="review-card" data-open="false" inert>
+            <div class="review-card-inner">
+              <div class="review-copy">
+                <strong data-i18n="review.title">觉得好用？留个评价吧</strong>
+                <p data-i18n="review.body">商店里的评价能让更多人找到它，一句话就够了。</p>
+              </div>
+              <div class="review-actions">
+                <a id="review-go" class="review-go" href="#" target="_blank" rel="noopener noreferrer" data-i18n="review.go">去评价</a>
+                <button id="review-later" class="text-button" type="button" data-i18n="review.later">以后再说</button>
+                <button id="review-never" class="text-button" type="button" data-i18n="review.never">不再提示</button>
+              </div>
+            </div>
+          </div>
           <p id="library-summary" class="library-summary"></p>
           <div id="video-list" class="video-list" aria-live="polite"></div>
         </section>
@@ -162,6 +177,7 @@
             <dl class="about-list">
               <div><dt data-i18n="about.version">版本</dt><dd id="about-version">—</dd></div>
               <div><dt data-i18n="about.homepage">项目主页</dt><dd><a class="github-link" href="https://github.com/Kihara-Ri/bilibili-buffer-extension" target="_blank" rel="noopener noreferrer" aria-label="GitHub 项目页面" data-i18n-attr="aria-label:about.githubLabel">GitHub</a></dd></div>
+              <div><dt data-i18n="about.review">评价</dt><dd><a id="about-review" href="#" target="_blank" rel="noopener noreferrer" data-i18n="about.reviewLink">在商店评价</a></dd></div>
               <div><dt data-i18n="about.data">数据处理</dt><dd><a href="privacy.html" target="_blank" rel="noopener noreferrer" data-i18n="privacy.link">隐私说明</a></dd></div>
             </dl>
           </section>

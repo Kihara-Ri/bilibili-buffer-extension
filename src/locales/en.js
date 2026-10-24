@@ -179,6 +179,15 @@ export default {
   "about.homepage": "Project",
   "about.githubLabel": "GitHub project page",
   "about.data": "Data",
+  "about.review": "Review",
+  "about.reviewLink": "Review on the Web Store",
+
+  // Review invitation
+  "review.title": "Leave a review",
+  "review.body": "Reviews on the Web Store help other people find it. One sentence is plenty.",
+  "review.go": "Write a review",
+  "review.later": "Maybe later",
+  "review.never": "Don't ask again",
 
   // Library
   "library.countTitle": ({ count }) => `${plural(count, "local video", "local videos")}`,

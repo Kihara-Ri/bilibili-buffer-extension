@@ -101,4 +101,4 @@ UI strings live in `src/locales/{zh-CN,en}.js`; `tests/i18n.test.mjs` checks the
 
 [GPL-3.0](LICENSE). You may use, modify and redistribute it freely; redistributed versions based on this project must also be open-sourced under GPL-3.0. Notices for referenced projects are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Current version 2.13.0. History: [开发日志.md](开发日志.md) (Chinese) and [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases). Issues and suggestions are welcome in [Issues](https://github.com/Kihara-Ri/bilibili-buffer-extension/issues), in English or Chinese.
+Current version 2.14.0. History: [开发日志.md](开发日志.md) (Chinese) and [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases). Issues and suggestions are welcome in [Issues](https://github.com/Kihara-Ri/bilibili-buffer-extension/issues), in English or Chinese.

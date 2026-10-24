@@ -22,6 +22,17 @@ import {
   PREHEAT_COLOR_PRESETS
 } from "./assist-config.js";
 import { localizeDocument, t } from "./i18n.js";
+import {
+  completeReviewPrompt,
+  defaultReviewState,
+  dismissReviewPrompt,
+  markFirstSeen,
+  normalizeReviewState,
+  REVIEW_PROMPT_KEY,
+  REVIEW_URL,
+  shouldShowReviewPrompt,
+  snoozeReviewPrompt
+} from "./review-prompt.js";
 
 const DEFAULT_PROGRESS_COLOR = "#00a1d6";
 // 删除先从列表隐藏，提示里可撤销；超时（或弹窗关闭）才真正删除数据。
@@ -74,6 +85,11 @@ const elements = {
   browserHealthList: $("#browser-health-list"),
   browserHealthRefresh: $("#browser-health-refresh"),
   aboutVersion: $("#about-version"),
+  aboutReview: $("#about-review"),
+  reviewCard: $("#review-card"),
+  reviewGo: $("#review-go"),
+  reviewLater: $("#review-later"),
+  reviewNever: $("#review-never"),
   videoList: $("#video-list"),
   librarySummary: $("#library-summary"),
   appFooter: $(".app-footer"),
@@ -111,6 +127,8 @@ const state = {
   assistStats: null,
   assistReadSequence: 0,
   healthReport: null,
+  // 评价邀请的持久状态；读出之前为 null，此时卡片一律不显示。
+  review: null,
   healthError: "",
   healthSignature: "",
   pausePending: false,
@@ -258,6 +276,7 @@ async function initialize() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   state.tab = tabs[0] || null;
   await loadCacheModePreference();
+  await loadReviewState();
   void refreshAssistState();
   // 自检只在打开弹窗时读一次（后台缓存 6 小时），不参与轮询。
   void refreshHealth();
@@ -888,6 +907,55 @@ function renderHealth() {
   }));
 }
 
+// ---- 评价邀请 ----------------------------------------------------------------
+
+elements.reviewGo.href = elements.aboutReview.href = REVIEW_URL;
+// 两个入口都是普通链接（新标签页打开）：点击时只记「不再追问」，不拦截跳转。
+// 弹窗会在新标签获得焦点时关闭，所以状态必须在点击当下同步发起写入。
+elements.reviewGo.addEventListener("click", () => updateReviewState(completeReviewPrompt));
+elements.aboutReview.addEventListener("click", () => updateReviewState(completeReviewPrompt));
+elements.reviewLater.addEventListener("click", () => closeReviewCard((review) => snoozeReviewPrompt(review, Date.now())));
+elements.reviewNever.addEventListener("click", () => closeReviewCard(dismissReviewPrompt));
+
+/** 读取持久状态并补记首次打开时间；读取失败按默认处理（最坏情况只是晚一点出现）。 */
+async function loadReviewState() {
+  let review = defaultReviewState();
+  try {
+    const stored = await chrome.storage.local.get(REVIEW_PROMPT_KEY);
+    review = normalizeReviewState(stored?.[REVIEW_PROMPT_KEY]);
+  } catch { /* 测试夹具或存储不可用：当作首次。 */ }
+  state.review = review;
+  updateReviewState((current) => markFirstSeen(current, Date.now()));
+}
+
+/** 状态变更统一入口：值没变就不写存储、不重绘。 */
+function updateReviewState(change) {
+  if (!state.review) return;
+  const next = change(state.review);
+  if (next === state.review) return;
+  state.review = next;
+  try { void chrome.storage.local.set({ [REVIEW_PROMPT_KEY]: next }).catch(() => {}); } catch { /* 存储不可用：本次弹窗内仍按内存状态生效。 */ }
+  renderReviewCard();
+}
+
+/** 关闭卡片：焦点还在卡片里时先挪到「片库」页签，否则卡片 inert 后键盘焦点会丢到 body。 */
+function closeReviewCard(change) {
+  if (elements.reviewCard.contains(document.activeElement)) elements.tabs.find((tab) => tab.dataset.panelView === "library")?.focus();
+  updateReviewState(change);
+}
+
+/**
+ * 卡片只切 data-open / inert，不重建节点：片库每 700ms 刷新一次，
+ * 这里必须幂等，否则 hover 与展开动画会随轮询重启（见 AGENTS.md 8.1）。
+ */
+function renderReviewCard() {
+  const completedCount = libraryVideos().filter((video) => video.status === "complete").length;
+  const busy = state.videos.some((video) => video.status === "downloading");
+  const open = Boolean(state.review) && shouldShowReviewPrompt(state.review, { completedCount, busy, now: Date.now() });
+  setAttr(elements.reviewCard, "data-open", String(open));
+  elements.reviewCard.inert = !open;
+}
+
 function renderAbout() {
   try { setText(elements.aboutVersion, chrome.runtime.getManifest?.().version || "—"); } catch { /* 测试夹具里没有 manifest。 */ }
 }
@@ -912,6 +980,7 @@ function renderLibrary() {
   const bytes = videos.reduce((sum, video) => sum + committedBytes(video), 0);
   setText(elements.librarySummary, videos.length ? t("library.summary", { count: videos.length, bytes: formatBytes(bytes) }) : "");
   elements.librarySummary.hidden = !videos.length;
+  renderReviewCard();
   const ids = new Set(videos.map((video) => video.id));
   for (const row of elements.videoList.querySelectorAll(".video-item")) {
     if (!ids.has(row.dataset.videoId)) { state.speedSamples.delete(row.dataset.videoId); row.remove(); }

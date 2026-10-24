@@ -106,6 +106,12 @@ html, body {
   background: var(--surface);
 }
 
+/* 弹窗内容一旦超过 Chrome 的 600px 高度上限（例如 Windows 的微软雅黑行高更大、画质折成两行、展开「详情」），
+   Windows 上会出现 15px 的经典滚动条，并把内容向左挤。弹窗里不要滚动条：隐藏后内容仍可滚轮 / 键盘滚动，
+   但不再占宽。scrollbar-width 管新版 Chrome，::-webkit-scrollbar 兜住其余。 */
+html { scrollbar-width: none; }
+html::-webkit-scrollbar { display: none; }
+
 button, a, input, summary { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :is(button, a, input, summary):focus-visible {
@@ -540,7 +546,7 @@ svg { flex: none; }
 
 /* 详细数据：读数表——标签左、数值右，中间点线引导视线对齐。 */
 .assist-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; margin-top: 4px; }
-.assist-metrics div { display: flex; align-items: baseline; gap: 6px; min-width: 0; padding: 3px 0; }
+.assist-metrics div { display: flex; align-items: baseline; gap: 6px; min-width: 0; padding: 2px 0; }
 .assist-metrics div::before {
   content: "";
   order: 1;
@@ -558,6 +564,33 @@ svg { flex: none; }
 /* ---- 片库 ------------------------------------------------------------------- */
 
 .library-summary { margin-bottom: 2px; color: var(--ink-soft); font-size: 12px; }
+/* 评价邀请卡片：grid 行高 0fr→1fr 展开收起，高度不用写死；收起时 inert（见 popup.html）。 */
+.review-card {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: grid-template-rows 280ms var(--ease-out), opacity 200ms ease, transform 280ms var(--ease-out), margin 280ms var(--ease-out);
+}
+.review-card[data-open="true"] { grid-template-rows: 1fr; margin-bottom: 10px; opacity: 1; transform: none; pointer-events: auto; }
+.review-card-inner { display: grid; gap: 8px; min-height: 0; overflow: hidden; }
+.review-card[data-open="true"] .review-card-inner { padding: 10px 12px; border-radius: 10px; background: var(--blue-wash); box-shadow: inset 0 0 0 1px var(--line); }
+.review-copy strong { font-size: 13px; font-weight: 620; }
+.review-copy p { margin-top: 2px; color: var(--ink); font-size: 12px; line-height: 1.45; }
+.review-actions { display: flex; align-items: center; gap: 14px; }
+.review-go {
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: var(--selected-bg);
+  color: var(--selected-ink);
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: none;
+  transition: filter 140ms ease, transform 140ms var(--ease-out);
+}
+.review-go:hover { filter: brightness(1.12); }
+.review-go:active { transform: scale(0.97); }
 .video-list { display: grid; }
 .video-item {
   display: grid;
