@@ -1,7 +1,33 @@
-// 海内存知 官网的三处交互：英文入口提示、瓶中水位随滚动上涨、演示弹窗按内容自适应高度。
+// 海内存知 官网的四处交互：顶栏随滚动变色、英文入口提示、瓶中水位随滚动上涨、演示弹窗按内容自适应高度。
 // 不依赖任何库；脚本失败时页面仍完整可读（水位停在半瓶，演示保持默认高度）。
 
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+
+// 顶栏：压在深海蓝首屏上时是深色，首屏底边滑到顶栏下方时混合成正文底色。
+// 混合区间取首屏底部 120px：前半段底色 0 → 45%，过半时跳到 75% 并切 .is-light（深字），后半段 75% → 100%。
+// 跳过的中灰段上白字与深字都不够读（原因见 site.css 的 .topbar 注释）。值不变就不写，避免每帧改样式。
+const topbar = document.querySelector(".topbar");
+const hero = document.querySelector(".hero");
+if (topbar && hero) {
+  const BLEND = 120;
+  let frame = 0;
+  let last = "";
+  const update = () => {
+    frame = 0;
+    const overlap = hero.getBoundingClientRect().bottom - topbar.offsetHeight;
+    const value = Math.min(1, Math.max(0, 1 - overlap / BLEND)).toFixed(2);
+    if (value === last) return;
+    last = value;
+    const t = Number(value);
+    const mix = t < 0.5 ? t * 2 * 45 : 75 + (t - 0.5) * 2 * 25;
+    topbar.style.setProperty("--bar-mix", `${mix.toFixed(1)}%`);
+    topbar.classList.toggle("is-light", t >= 0.5);
+  };
+  const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
+  addEventListener("scroll", schedule, { passive: true });
+  addEventListener("resize", schedule);
+  update();
+}
 
 // 中文首页：浏览器偏好语言里没有中文的访客（多半从商店主页链接过来）看到一行英文入口。
 // 只提示不跳转：自动跳转会让想看中文的人无法停留，也会干扰搜索引擎按 hreflang 收录。

@@ -22,6 +22,9 @@
   /* 琥珀色用作文字时加深一档：瓶塞色 #e9a15b 在白底上只有约 2.3:1。 */
   --amber-ink: #a35c12;
   --verse-soft: #9cc3d6;
+  /* 顶栏进入正文后的描边与悬停底色：浅色正文上用深色细线，深色模式见下方。 */
+  --bar-edge-body: rgba(18, 48, 61, 0.22);
+  --bar-hover-body: rgba(18, 48, 61, 0.06);
   /* 进度条三色与扩展默认配色一致：已播放 / 播放器缓冲 / 提前加载。 */
   --played: #00aeec;
   --buffer: #b9c3cc;
@@ -42,6 +45,8 @@
     --accent: #6fd0f5;
     --buffer: #5b6874;
     --amber-ink: #f0b27a;
+    --bar-edge-body: rgba(255, 255, 255, 0.3);
+    --bar-hover-body: rgba(255, 255, 255, 0.1);
   }
 }
 
@@ -60,20 +65,40 @@ p { text-wrap: pretty; }
 /* ---------- 顶栏 ---------- */
 /* 不用半透明 + backdrop-filter：下方一直有动画（漂流瓶、海浪、进度条）和演示 iframe，
    毛玻璃每帧都要重新采样，Chrome 合成时会闪，偶尔把下方合成层画到顶栏上面。
-   改成不透明底色；正文 main 单独隔离成一个层叠上下文，里面再怎么提层也越不过顶栏。 */
+   改成不透明底色；正文 main 单独隔离成一个层叠上下文，里面再怎么提层也越不过顶栏。
+   颜色随滚动变化：site.js 按首屏底边的位置写入 --bar-mix（正文底色所占比例）并在过半时加 .is-light。
+   - 底色混合（深海蓝 → 正文底色），只占首屏底部约 120px 的滚动距离；两端都不透明，混合结果也不透明；
+   - 文字与描边不跟着混合：底色与文字同时渐变会在中段一起变成灰色、几乎看不见。改为过半时一次切到深字；
+   - 底色跳过 45%–75% 这段中灰：45% 以内白字对比度仍 ≥ 3，75% 起深色导航字 ≥ 3，中间没有两者都够读的颜色。
+     跳变本身由 160ms 过渡抹平，其余时候颜色紧跟滚动位置。
+   深色模式下 --surface / --ink 本身是深底浅字，顶栏自然保持深色。没有脚本时 --bar-mix 为 0%，退回原来的深色顶栏。 */
 .topbar {
+  --bar-mix: 0%;
+  --bar-ink: #ffffff;
+  /* 导航文字比品牌名弱一档；用不透明色而不是半透明白，对比度可算、可测。 */
+  --bar-ink-soft: #c9d0d4;
+  --bar-edge: rgba(255, 255, 255, 0.3);
+  --bar-hover: rgba(255, 255, 255, 0.1);
   position: sticky; top: 0; z-index: 10;
   display: flex; align-items: center; gap: 10px;
   height: 60px; padding: 0 var(--gutter);
-  background: var(--sea-deep);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 18px -12px rgba(0, 0, 0, 0.5);
-  color: #fff;
+  background: color-mix(in srgb, var(--sea-deep), var(--surface) var(--bar-mix));
+  transition: background-color 160ms ease;
+  box-shadow: 0 1px 0 var(--line), 0 6px 18px -12px rgba(0, 0, 0, 0.5);
+  color: var(--bar-ink);
 }
+.topbar.is-light {
+  --bar-ink: var(--ink);
+  --bar-ink-soft: var(--ink-soft);
+  --bar-edge: var(--bar-edge-body);
+  --bar-hover: var(--bar-hover-body);
+}
+.topbar-brand, .topbar-links a, .github-link, .lang-switch { transition: color 160ms ease, box-shadow 160ms ease, background-color 160ms ease; }
 main { isolation: isolate; }
-.topbar-brand { display: flex; align-items: center; gap: 8px; color: #fff; text-decoration: none; font-weight: 650; letter-spacing: 0.06em; white-space: nowrap; }
+.topbar-brand { display: flex; align-items: center; gap: 8px; color: var(--bar-ink); text-decoration: none; font-weight: 650; letter-spacing: 0.06em; white-space: nowrap; }
 .topbar-links { display: flex; gap: 22px; margin-left: auto; margin-right: 14px; }
-.topbar-links a { color: rgba(255, 255, 255, 0.78); text-decoration: none; font-size: 15px; }
-.topbar-links a:hover { color: #fff; }
+.topbar-links a { color: var(--bar-ink-soft); text-decoration: none; font-size: 15px; }
+.topbar-links a:hover { color: var(--bar-ink); }
 
 /* ---------- 按钮 ---------- */
 .button {
@@ -89,11 +114,11 @@ main { isolation: isolate; }
 .button-ghost:hover { background: rgba(255, 255, 255, 0.08); }
 .button-small { min-height: 36px; padding: 0 16px; font-size: 14px; background: var(--sky); color: #04263a; }
 /* GitHub 入口：顶栏里与「添加到 Chrome」并列，图标 + 文字；窄屏只留图标。 */
-.github-link { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 14px; border-radius: 999px; color: #fff; text-decoration: none; font-size: 14px; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3); }
-.github-link:hover { background: rgba(255, 255, 255, 0.1); }
+.github-link { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 14px; border-radius: 999px; color: var(--bar-ink); text-decoration: none; font-size: 14px; font-weight: 600; box-shadow: inset 0 0 0 1px var(--bar-edge); }
+.github-link:hover { background: var(--bar-hover); }
 /* 语言切换：与 GitHub 入口同一种描边胶囊，文字短，窄屏也保留。 */
-.lang-switch { display: inline-flex; align-items: center; white-space: nowrap; min-height: 36px; padding: 0 12px; border-radius: 999px; color: #fff; text-decoration: none; font-size: 14px; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3); }
-.lang-switch:hover { background: rgba(255, 255, 255, 0.1); }
+.lang-switch { display: inline-flex; align-items: center; white-space: nowrap; min-height: 36px; padding: 0 12px; border-radius: 999px; color: var(--bar-ink); text-decoration: none; font-size: 14px; font-weight: 600; box-shadow: inset 0 0 0 1px var(--bar-edge); }
+.lang-switch:hover { background: var(--bar-hover); }
 /* 中文首页给不读中文的访客的英文入口：默认隐藏，site.js 按浏览器语言决定是否显示。 */
 .lang-hint { margin: 0 auto 18px; font-size: 15px; }
 .lang-hint a { color: var(--sky); }

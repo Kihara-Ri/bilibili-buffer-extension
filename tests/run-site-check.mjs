@@ -84,7 +84,9 @@ try {
       return { backdrop: bar.backdropFilter, background: bar.backgroundColor, isolation: getComputedStyle(document.querySelector("main")).isolation };
     });
     assert.equal(stacking.backdrop, "none", `${name}：顶栏仍在用 backdrop-filter`);
-    assert.match(stacking.background, /^rgb\(/, `${name}：顶栏底色应不透明 ${stacking.background}`);
+    // 顶栏底色随滚动在深海蓝与正文底色之间混合，计算值可能是 rgb() 或 color(srgb …)；只要求不带透明度。
+    assert.match(stacking.background, /^(?:rgb\(|color\(srgb )/, `${name}：顶栏底色应不透明 ${stacking.background}`);
+    assert.doesNotMatch(stacking.background, /rgba|\//, `${name}：顶栏底色应不透明 ${stacking.background}`);
     assert.equal(stacking.isolation, "isolate", `${name}：正文应隔离为独立层叠上下文`);
     // 滚到演示与动画区域时，顶栏区域的命中目标必须仍是顶栏自身。
     for (const selector of [".hero-bottle", ".demo-frame", ".bar"]) {
@@ -97,6 +99,61 @@ try {
     results[name] = { demoHeight: before, meta: layout.meta.length };
     await page.close();
   }
+
+  // 顶栏随滚动变色：首屏是深海蓝，顶栏也是深色；滚进浅色正文后顶栏变成正文底色、文字变深，
+  // 并且每个入口的文字对比度都够读。深色模式下正文本身是深色，顶栏保持深色。
+  const barColors = await (async () => {
+    const result = {};
+    for (const colorScheme of ["light", "dark"]) {
+      for (const pathname of ["/", "/en/"]) {
+        const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme });
+        await page.goto(`${origin}${pathname}`);
+        const sample = async (y) => {
+          await page.evaluate((top) => { document.documentElement.style.scrollBehavior = "auto"; scrollTo(0, top); }, y);
+          await page.waitForTimeout(260); // 等 160ms 的颜色过渡结束
+          return page.evaluate(() => {
+            const parse = (value) => {
+              const rgb = value.match(/^rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)/);
+              if (rgb) return rgb.slice(1, 4).map((part) => Number(part) / 255);
+              const srgb = value.match(/^color\(srgb ([\d.e-]+) ([\d.e-]+) ([\d.e-]+)/);
+              return srgb.slice(1, 4).map(Number);
+            };
+            const luminance = (value) => {
+              const [r, g, b] = parse(value).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+              return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            };
+            const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+            const bar = document.querySelector(".topbar");
+            const background = luminance(getComputedStyle(bar).backgroundColor);
+            const texts = [".topbar-brand span", ".topbar-links a", ".lang-switch", ".github-link span"].map((selector) => {
+              const element = bar.querySelector(selector);
+              return [selector, Number(contrast(background, luminance(getComputedStyle(element).color)).toFixed(2))];
+            });
+            return { background: Number(background.toFixed(3)), texts };
+          });
+        };
+        const top = await sample(0);
+        // 混合中段：首屏底边在顶栏下方 0–120px 之间，-60 正好是切换点。底色与文字同时渐变时这里会变成灰底灰字。
+        const heroBottom = await page.evaluate(() => document.querySelector(".hero").getBoundingClientRect().bottom + scrollY - document.querySelector(".topbar").offsetHeight);
+        for (const offset of [-110, -84, -61, -60, -36, -10]) {
+          const middle = await sample(heroBottom + offset);
+          for (const [selector, ratio] of middle.texts) assert(ratio >= 3, `${colorScheme}${pathname}：变色中段（${offset}px）${selector} 对比度只有 ${ratio}`);
+        }
+        const far = await page.evaluate(() => document.querySelector("#far").getBoundingClientRect().top + scrollY);
+        const below = await sample(far);
+        const key = `${colorScheme}${pathname}`;
+        result[key] = { top: top.background, below: below.background };
+        assert(top.background < 0.05, `${key}：首屏处顶栏应为深色 ${JSON.stringify(top)}`);
+        if (colorScheme === "light") assert(below.background > 0.85, `${key}：滚进浅色正文后顶栏应变浅 ${JSON.stringify(below)}`);
+        else assert(below.background < 0.05, `${key}：深色模式下顶栏应保持深色 ${JSON.stringify(below)}`);
+        for (const [state, data] of [["首屏", top], ["正文", below]]) {
+          for (const [selector, ratio] of data.texts) assert(ratio >= 4.5, `${key}：${state}处 ${selector} 对比度只有 ${ratio}`);
+        }
+        await page.close();
+      }
+    }
+    return result;
+  })();
 
   // 中文首页的英文入口：浏览器语言不含中文才显示，中文浏览器里不打扰。
   for (const [locale, shown] of [["en-US", true], ["zh-CN", false]]) {
@@ -126,7 +183,7 @@ try {
   }
   assert.notEqual(backgrounds.light, backgrounds.dark, "深色模式没有生效");
 
-  console.log(JSON.stringify({ ok: true, ...results, reducedMotion: true, backgrounds }, null, 2));
+  console.log(JSON.stringify({ ok: true, ...results, reducedMotion: true, backgrounds, barColors }, null, 2));
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
