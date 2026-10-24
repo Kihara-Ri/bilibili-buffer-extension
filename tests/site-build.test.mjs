@@ -15,6 +15,8 @@ const out = await mkdtemp(path.join(tmpdir(), "haineicunzhi-site-"));
 test.after(() => rm(out, { recursive: true, force: true }));
 const result = await buildSite(out);
 const page = await readFile(path.join(out, "index.html"), "utf8");
+const enPage = await readFile(path.join(out, "en", "index.html"), "utf8");
+const sectionIds = (html) => [...html.matchAll(/<section id="(\w+)"/g)].map((match) => match[1]);
 
 test("首页填好版本、商店链接与诗句，没有残留占位符", () => {
   assert.doesNotMatch(page, /\{\{\w+\}\}/);
@@ -71,12 +73,14 @@ test("renderChangelog 只取版本小节、处理「补充」、转义正文", (
 });
 
 test("页面引用的本地文件都存在，且不加载任何第三方资源", async () => {
-  const local = [...page.matchAll(/\s(?:src|href)="([^"#]+)"/g)].map((match) => match[1]).filter((url) => !/^(https?:|mailto:)/.test(url) && !url.includes("{{"));
-  assert.ok(local.length >= 5);
-  for (const url of local) await stat(path.join(out, url.split("?")[0]));
-  // 外链只能是可点击的 <a>：脚本、样式、图片、iframe 都必须同源。
-  const external = [...page.matchAll(/<(script|link|img|iframe)\b[^>]*\s(?:src|href)="(https?:[^"]+)"/g)].filter((match) => !(match[1] === "link" && /rel="canonical"/.test(match[0])));
-  assert.deepEqual(external.map((match) => match[2]), []);
+  for (const [html, base] of [[page, out], [enPage, path.join(out, "en")]]) {
+    const local = [...html.matchAll(/\s(?:src|href)="([^"#]+)"/g)].map((match) => match[1]).filter((url) => !/^(https?:|mailto:)/.test(url) && !url.includes("{{"));
+    assert.ok(local.length >= 5);
+    for (const url of local) await stat(path.join(base, url.split("?")[0]));
+    // 外链只能是可点击的 <a>：脚本、样式、图片、iframe 都必须同源；canonical / hreflang 只是给搜索引擎的声明。
+    const external = [...html.matchAll(/<(script|link|img|iframe)\b[^>]*\s(?:src|href)="(https?:[^"]+)"/g)].filter((match) => !(match[1] === "link" && /rel="(?:canonical|alternate)"/.test(match[0])));
+    assert.deepEqual(external.map((match) => match[2]), []);
+  }
 });
 
 test("投喂区：收款码图片与「打开支付宝」链接都在，并写明自愿、不解锁功能", async () => {
@@ -103,4 +107,46 @@ test("弹窗演示只带弹窗用到的模块，不含后台、Offscreen 与热�
   for (const file of ["background.js", "offscreen.js", "content.js", "dev-reload.js"]) {
     await assert.rejects(stat(path.join(out, "demo", "src", file)), `演示里不应出现 src/${file}`);
   }
+});
+
+test("英文页：/en/ 与中文首页 hreflang 互指，分节与导航一一对应", async () => {
+  assert.doesNotMatch(enPage, /\{\{\w+\}\}/);
+  assert.match(enPage, /<html lang="en">/);
+  assert.ok(enPage.includes(`v${manifest.version}`));
+  for (const html of [page, enPage]) {
+    assert.ok(html.includes('<link rel="alternate" hreflang="zh-CN" href="https://haineicunzhi.kihara.cn/">'));
+    assert.ok(html.includes('<link rel="alternate" hreflang="en" href="https://haineicunzhi.kihara.cn/en/">'));
+    assert.ok(html.includes('<link rel="alternate" hreflang="x-default" href="https://haineicunzhi.kihara.cn/en/">'));
+  }
+  assert.match(page, /<a class="lang-switch" href="en\/" hreflang="en"/);
+  assert.match(enPage, /<a class="lang-switch" href="\.\.\/" hreflang="zh-CN"/);
+  assert.deepEqual(sectionIds(enPage), sectionIds(page), "两页的分节必须一致，改版时要一起改");
+  // 导航关键字同样写进标题句
+  const nav = enPage.slice(enPage.indexOf('<nav class="topbar-links"'), enPage.indexOf("</nav>"));
+  const labels = [...nav.matchAll(/<a href="#(\w+)">([^<]+)<\/a>/g)];
+  assert.equal(labels.length, 5);
+  for (const [, id, label] of labels) {
+    const start = enPage.indexOf(`id="${id}"`);
+    const heading = enPage.slice(start, enPage.indexOf("</section>", start)).match(/<h2>(.*?)<\/h2>/)?.[1] || "";
+    // 英文关键字可能在句中，大小写随句子走
+    assert.ok(heading.toLowerCase().includes(`<em class="key">${label.toLowerCase()}</em>`), `#${id} 的标题应包含高亮的「${label}」：${heading}`);
+  }
+  assert.match(enPage, /<iframe class="demo-frame" src="\.\.\/demo\/store\/scene\/popup-scene\.html\?lang=en"/, "英文页的演示弹窗用英文界面");
+  assert.ok(enPage.includes(`href="${ALIPAY_URL}"`));
+  await stat(path.join(out, "og-en.png"));
+  assert.match(await readFile(path.join(out, "sitemap.xml"), "utf8"), /\/en\/<\/loc>/);
+});
+
+test("英文页除了弹幕装饰、中文入口和中文更新记录，不留中文", () => {
+  const visible = enPage
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<div class="danmaku"[\s\S]*?<div class="section-head">/, "")
+    .replace(/<ol class="changelog-list">[\s\S]*?<\/ol>/, "")
+    .replace(/<a [^>]*lang="zh-CN"[^>]*>[^<]*<\/a>/g, "");
+  assert.deepEqual(visible.match(/[\u4e00-\u9fff][^<]*/g) || [], []);
+});
+
+test("中文首页的英文入口默认隐藏，由脚本按浏览器语言显示", async () => {
+  assert.match(page, /<p class="lang-hint" lang="en" hidden><a href="en\/" hreflang="en">/);
+  assert.match(await readFile(path.join(out, "site.js"), "utf8"), /navigator\.languages/);
 });

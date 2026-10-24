@@ -99,8 +99,9 @@ Chrome Web Store 的政策要求与代码之间有几处「改代码就会踩到
 
 官网是纯静态页面，源码在 `site/`，由 `scripts/build-site.mjs` 构建到 `dist/site/`；`.github/workflows/pages.yml` 在每次推送 `main` 时发布到 GitHub Pages（自定义域名 `haineicunzhi.kihara.cn`，DNS 为指向 `kihara-ri.github.io` 的 CNAME）。
 
+- **中英双语**：中文首页 `site/index.html` 输出到 `/`，英文页 `site/en/index.html` 输出到 `/en/`，两页结构一一对应（测试比对分节），用 `hreflang` 互指，`x-default` 指向英文；顶栏有语言切换。中文首页对浏览器语言不含中文的访客显示一行英文入口（`site.js`），只提示不跳转。英文页的演示弹窗用 `?lang=en` 渲染英文界面，社交预览图用 `og-en.png`（英文顶部宣传图），更新记录仍为中文标题并注明。隐私说明沿用 `privacy.html`（末尾已有英文版）。
 - **内容来自仓库**：版本号读 `manifest.json`；页尾折叠的「更新记录」取 `开发日志.md` 里最近 8 个 `## x.y.z · 标题` 小节的标题（只认这种格式，汇总类小节不进网站），完整日志链接到 GitHub；`privacy.html` 原样发布，旧地址 `kihara-ri.github.io/bilibili-buffer-extension/privacy.html` 由 GitHub 跳转到新域名。
 - **真实弹窗演示**：复用 `store/scene` 场景夹具，只复制 `src/popup.js` 静态 import 到的模块；后台、Offscreen、内容脚本和热更新代码不会出现在网站上。演示与页面同源，页面按弹窗内容高度调整 iframe，窄屏时整体缩放。
 - **投喂**：`#tip` 一节放作者的支付宝收款码（`site/assets/alipay-qr.png`，金额由付款人填写）和四张菜单卡片（甜筒 ¥5 / 薯条 ¥10 / 咖啡 ¥20 / 随你心意）。图标是 `site/index.html` 里自绘的 SVG symbol，刻意不用餐饮品牌标识，以免被误认为商业合作。触屏设备另显示「打开支付宝投喂」按钮，链接 `ALIPAY_URL`（即二维码内容）。页面明确写明自愿、不解锁任何功能；扩展本身不含任何打赏入口。
 - **不加载第三方资源**：没有网络字体、统计或 CDN 脚本。扩展也从不访问官网域名，`host_permissions` 不变。
-- **测试**：`tests/site-build.test.mjs`（纳入 `npm test`）校验占位符、GitHub 入口、更新记录首条等于当前版本、本地引用都存在、无第三方资源、演示不含后台代码；`npm run test:site` 在 375 / 1280 宽度下检查无横向滚动、演示加载且高度贴合、诗句不被拆行、减少动态时无动画、深色模式生效。
+- **测试**：`tests/site-build.test.mjs`（纳入 `npm test`）校验占位符、GitHub 入口、更新记录首条等于当前版本、本地引用都存在、无第三方资源、演示不含后台代码；`npm run test:site` 对中英文两页在 320 / 375 / 1280 宽度下检查无横向滚动、顶栏元素不重叠，并检查英文入口提示只对非中文浏览器显示、、演示加载且高度贴合、诗句不被拆行、减少动态时无动画、深色模式生效。

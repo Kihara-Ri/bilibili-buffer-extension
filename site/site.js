@@ -1,7 +1,15 @@
-// 海内存知 官网的两处交互：瓶中水位随滚动上涨、演示弹窗按内容自适应高度。
+// 海内存知 官网的三处交互：英文入口提示、瓶中水位随滚动上涨、演示弹窗按内容自适应高度。
 // 不依赖任何库；脚本失败时页面仍完整可读（水位停在半瓶，演示保持默认高度）。
 
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+
+// 中文首页：浏览器偏好语言里没有中文的访客（多半从商店主页链接过来）看到一行英文入口。
+// 只提示不跳转：自动跳转会让想看中文的人无法停留，也会干扰搜索引擎按 hreflang 收录。
+const langHint = document.querySelector(".lang-hint");
+if (langHint) {
+  const languages = navigator.languages?.length ? navigator.languages : [navigator.language || ""];
+  langHint.hidden = languages.some((tag) => /^zh\b/i.test(tag));
+}
 
 // 「存」一节：水位＝已缓存。区块从视口底部进入到离开视口顶部，水位从 15% 涨到 90%。
 const bottle = document.querySelector(".keep-bottle");

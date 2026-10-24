@@ -9,6 +9,7 @@ import { STORE_EXTENSION_ID } from "./lib/release-checks.mjs";
  *
  * 输出纯静态文件到 dist/site/：
  * - site/ 下的页面源码，占位符 {{VERSION}} {{CHANGELOG}} 等在这里填入，版本与更新记录永远来自仓库本身；
+ *   中文首页 site/index.html 输出到 /，英文页 site/en/index.html 输出到 /en/，两页用 hreflang 互指；
  * - privacy.html：商店「隐私权政策网址」指向它，旧的 github.io 地址由 GitHub 自动跳转到自定义域名；
  * - demo/：真实弹窗演示。复用 store/scene 场景夹具（真实 popup.html / popup.css / popup.js，chrome.* 换成固定数据），
  *   只复制弹窗实际 import 到的模块，后台、Offscreen 与热更新代码不会出现在网站上。
@@ -85,12 +86,16 @@ export async function buildSite(out = path.join(root, "dist", "site")) {
   await mkdir(path.join(out, "assets"), { recursive: true });
 
   const values = { SITE_URL, STORE_URL, REPO_URL, ALIPAY_URL, VERSION: manifest.version, CHANGELOG: changelog.html };
-  const template = await readFile(path.join(root, "site", "index.html"), "utf8");
-  const page = template.replace(/\{\{(\w+)\}\}/g, (whole, key) => {
-    if (!(key in values)) throw new Error(`site/index.html 里有未知占位符 ${whole}`);
-    return values[key];
-  });
-  await writeFile(path.join(out, "index.html"), page);
+  // 更新记录只有中文：英文页同样列出版本与标题，摘要里注明 in Chinese。
+  for (const page of ["index.html", "en/index.html"]) {
+    const template = await readFile(path.join(root, "site", page), "utf8");
+    const html = template.replace(/\{\{(\w+)\}\}/g, (whole, key) => {
+      if (!(key in values)) throw new Error(`site/${page} 里有未知占位符 ${whole}`);
+      return values[key];
+    });
+    await mkdir(path.dirname(path.join(out, page)), { recursive: true });
+    await writeFile(path.join(out, page), html);
+  }
   for (const file of ["site.css", "site.js"]) await cp(path.join(root, "site", file), path.join(out, file));
   // 网站自己的图片（如打赏二维码）放在 site/assets，与扩展图标同一个输出目录。
   await cp(path.join(root, "site", "assets"), path.join(out, "assets"), { recursive: true });
@@ -100,10 +105,11 @@ export async function buildSite(out = path.join(root, "dist", "site")) {
   await cp(path.join(root, "privacy.html"), path.join(out, "privacy.html"));
   // 社交分享预览图用商店的顶部宣传图（1400×560，与网站同一套配色）。
   await cp(path.join(root, "store", "assets", "marquee-1400x560.png"), path.join(out, "og.png"));
+  await cp(path.join(root, "store", "assets", "en", "marquee-1400x560.png"), path.join(out, "og-en.png"));
   await writeFile(path.join(out, "robots.txt"), `User-agent: *\nAllow: /\nSitemap: ${SITE_URL}/sitemap.xml\n`);
   await writeFile(
     path.join(out, "sitemap.xml"),
-    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${SITE_URL}/</loc></url>\n  <url><loc>${SITE_URL}/privacy.html</loc></url>\n</urlset>\n`
+    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${SITE_URL}/</loc></url>\n  <url><loc>${SITE_URL}/en/</loc></url>\n  <url><loc>${SITE_URL}/privacy.html</loc></url>\n</urlset>\n`
   );
 
   const demo = path.join(out, "demo");

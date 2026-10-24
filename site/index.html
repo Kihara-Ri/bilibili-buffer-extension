@@ -7,6 +7,9 @@
     <meta name="description" content="海内存知是一个 Chrome 扩展：播放时提前加载 B 站视频的后续内容，并把最高可用画质缓存到本机离线播放。无服务器，不收集任何数据。">
     <meta name="theme-color" content="#08283a">
     <link rel="canonical" href="{{SITE_URL}}/">
+    <link rel="alternate" hreflang="zh-CN" href="{{SITE_URL}}/">
+    <link rel="alternate" hreflang="en" href="{{SITE_URL}}/en/">
+    <link rel="alternate" hreflang="x-default" href="{{SITE_URL}}/en/">
     <meta property="og:type" content="website">
     <meta property="og:title" content="海内存知己，天涯若比邻">
     <meta property="og:description" content="把 B 站视频提前存到身边：海外播放少卡顿，断网也能接着看。">
@@ -39,6 +42,7 @@
         <a href="#friend">知己</a>
         <a href="#tip">投喂</a>
       </nav>
+      <a class="lang-switch" href="en/" hreflang="en" lang="en" aria-label="English version">EN</a>
       <a class="github-link" href="{{REPO_URL}}" rel="noopener" aria-label="GitHub 源码仓库"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><use href="#icon-github"/></svg><span>GitHub</span></a>
       <a class="button button-small" href="{{STORE_URL}}" rel="noopener">添加到 Chrome</a>
     </header>
@@ -48,6 +52,7 @@
       <section class="hero">
         <div class="hero-inner">
           <img class="hero-bottle" src="assets/icon-master.svg" alt="" width="200" height="200">
+          <p class="lang-hint" lang="en" hidden><a href="en/" hreflang="en">This page is also available in English →</a></p>
           <p class="eyebrow">Chrome 扩展 · 免费开源</p>
           <h1 class="verse">
             <span class="verse-line"><span class="verse-name">海内存知</span><span class="verse-soft">己，</span></span><span class="verse-line verse-soft">天涯若比邻</span>
@@ -227,6 +232,7 @@
         <a href="{{REPO_URL}}/issues" rel="noopener">问题反馈</a>
         <a href="#tip">投喂作者</a>
         <a href="privacy.html">隐私说明</a>
+        <a href="en/" hreflang="en" lang="en">English</a>
       </p>
       <!-- 更新记录默认折叠，只在页尾留一个小入口：多数访问者不需要它。 -->
       <details id="changelog" class="changelog">

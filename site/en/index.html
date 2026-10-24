@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Kindred Afar · Keep Bilibili videos close</title>
+    <meta name="description" content="Kindred Afar is a Chrome extension that prefetches Bilibili videos ahead of playback and caches the best available quality on your device for offline viewing. No server, no data collection.">
+    <meta name="theme-color" content="#08283a">
+    <link rel="canonical" href="{{SITE_URL}}/en/">
+    <link rel="alternate" hreflang="zh-CN" href="{{SITE_URL}}/">
+    <link rel="alternate" hreflang="en" href="{{SITE_URL}}/en/">
+    <link rel="alternate" hreflang="x-default" href="{{SITE_URL}}/en/">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Kindred Afar · far, yet near">
+    <meta property="og:description" content="Keep Bilibili videos close: less buffering from abroad, and they keep playing when the network drops.">
+    <meta property="og:url" content="{{SITE_URL}}/en/">
+    <meta property="og:image" content="{{SITE_URL}}/og-en.png">
+    <link rel="icon" href="../assets/icon-small.svg" type="image/svg+xml">
+    <link rel="icon" href="../assets/icon-32.png" sizes="32x32" type="image/png">
+    <link rel="stylesheet" href="../site.css">
+    <!-- 英文页：结构与中文首页 site/index.html 一一对应，改版时两边一起改；tests/site-build.test.mjs 会比对两页的分节与导航。 -->
+  </head>
+  <body>
+    <!-- GitHub 标志只定义一次，顶栏、首屏与页脚用 <use> 引用；颜色跟随所在文字（currentColor）。 -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="icon-github" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></symbol>
+      <symbol id="food-cone" viewBox="0 0 48 48"><path d="M16 22h16l-8 22z" fill="#d9954a"/><path d="M18.5 26l9 8M21 32l5-4.5M29.5 26l-9 8" stroke="#b8762f" stroke-width="1.4"/><path d="M14 22c0-4 3-6 5-6 0-5 4-8 5-10 1 2 5 5 5 10 2 0 5 2 5 6z" fill="#fff6e8" stroke="#e8d5bb" stroke-width="1.2"/><path d="M18 18c3 1.5 9 1.5 12 0" stroke="#e8d5bb" stroke-width="1.2" fill="none"/></symbol>
+      <symbol id="food-fries" viewBox="0 0 48 48"><g fill="#f6c33b" stroke="#e0a91f" stroke-width=".8"><rect x="14" y="8" width="4" height="20" rx="1" transform="rotate(-8 16 18)"/><rect x="19" y="5" width="4" height="22" rx="1"/><rect x="24" y="6" width="4" height="22" rx="1" transform="rotate(5 26 17)"/><rect x="29" y="9" width="4" height="19" rx="1" transform="rotate(10 31 18)"/></g><path d="M11 20h26l-3 22H14z" fill="#e2412f"/><path d="M11 20c5 5 21 5 26 0" fill="none" stroke="#b92f20" stroke-width="1.4"/><circle cx="24" cy="32" r="3.2" fill="none" stroke="#ffd9d2" stroke-width="1.6"/></symbol>
+      <symbol id="food-coffee" viewBox="0 0 48 48"><path d="M14 14h20l-2.6 28H16.6z" fill="#fbfbf8" stroke="#d9d6cc" stroke-width="1.2"/><rect x="12" y="10" width="24" height="5" rx="2" fill="#5b3a29"/><path d="M15.4 22h17.2l-1 11H16.4z" fill="#2f7a55"/><circle cx="24" cy="27.5" r="3" fill="none" stroke="#e9f4ee" stroke-width="1.4"/><path d="M21 4c-1 2 1 3 0 5M27 4c-1 2 1 3 0 5" stroke="#b9a99c" stroke-width="1.4" fill="none" stroke-linecap="round"/></symbol>
+      <symbol id="food-bottle" viewBox="0 0 48 48"><g transform="rotate(30 24 24)"><rect x="20" y="4" width="8" height="6" rx="2" fill="#e9a15b"/><path d="M20.5 10h7v5c0 2 2 3 3.5 4.5 2 2 3 4 3 7V39c0 3-2 5-5 5H19c-3 0-5-2-5-5V26.5c0-3 1-5 3-7C18.5 18 20.5 17 20.5 15z" fill="#2bb3e6"/><path d="M14 30h20v9c0 3-2 5-5 5H19c-3 0-5-2-5-5z" fill="#1587c6"/></g><path d="M20 26l7 4-7 4z" fill="#fff"/></symbol>
+    </svg>
+    <a class="skip-link" href="#far">Skip to content</a>
+    <header class="topbar">
+      <a class="topbar-brand" href="#top" aria-label="Kindred Afar home">
+        <img src="../assets/icon-small.svg" alt="" width="22" height="22">
+        <span>Kindred Afar</span>
+      </a>
+      <nav class="topbar-links" aria-label="Page sections">
+        <a href="#far">Afar</a>
+        <a href="#keep">Keep</a>
+        <a href="#near">Near</a>
+        <a href="#friend">Kindred</a>
+        <a href="#tip">Tip</a>
+      </nav>
+      <a class="lang-switch" href="../" hreflang="zh-CN" lang="zh-CN" aria-label="中文版">中文</a>
+      <a class="github-link" href="{{REPO_URL}}" rel="noopener" aria-label="GitHub repository"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><use href="#icon-github"/></svg><span>GitHub</span></a>
+      <a class="button button-small" href="{{STORE_URL}}" rel="noopener">Add to Chrome</a>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-inner">
+          <img class="hero-bottle" src="../assets/icon-master.svg" alt="" width="200" height="200">
+          <p class="eyebrow">Chrome extension · Free and open source</p>
+          <h1 class="verse">
+            <span class="verse-line"><span class="verse-name">Kindred Afar</span></span> <span class="verse-line verse-soft">far, yet near</span>
+          </h1>
+          <p class="lead">Keeps Bilibili videos close to you. Smooth playback from anywhere in the world, and it keeps playing when the network drops.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="{{STORE_URL}}" rel="noopener">Add to Chrome</a>
+            <a class="button button-ghost" href="{{REPO_URL}}" rel="noopener"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><use href="#icon-github"/></svg>Source on GitHub</a>
+          </div>
+          <p class="hero-meta"><span>v{{VERSION}}</span><span>Chrome 116+</span><span>No server</span><span>No data collected</span></p>
+        </div>
+        <svg class="hero-waves" viewBox="0 0 1440 120" preserveAspectRatio="none" aria-hidden="true">
+          <path class="wave wave-back" d="M0 60 Q180 20 360 60 T720 60 T1080 60 T1440 60 T1800 60 T2160 60 T2520 60 T2880 60 V120 H0 Z"/>
+          <path class="wave wave-front" d="M0 76 Q180 44 360 76 T720 76 T1080 76 T1440 76 T1800 76 T2160 76 T2520 76 T2880 76 V120 H0 Z"/>
+        </svg>
+      </section>
+
+      <section id="far" class="section">
+        <div class="section-head">
+          <h2>Your videos live <em class="key">afar</em></h2>
+          <p>Most of Bilibili's video servers are in mainland China. From abroad, every chunk of data crosses an ocean and back; the player only buffers a few seconds ahead, so the slightest hiccup means spinning.</p>
+        </div>
+        <div class="compare" role="img" aria-label="Comparison: without the extension the buffer is only a few seconds ahead and stalls; with Kindred Afar a long stretch ahead is already prefetched">
+          <div class="compare-row">
+            <span class="compare-label">Plain playback</span>
+            <div class="bar bar-stall">
+              <span class="bar-buffer"></span><span class="bar-played"></span>
+              <span class="bar-spinner" aria-hidden="true"></span>
+            </div>
+          </div>
+          <div class="compare-row">
+            <span class="compare-label">With Kindred Afar</span>
+            <div class="bar bar-smooth">
+              <span class="bar-preload"></span><span class="bar-buffer"></span><span class="bar-played"></span>
+            </div>
+          </div>
+          <ul class="legend" aria-hidden="true">
+            <li><i class="dot dot-played"></i>Played</li>
+            <li><i class="dot dot-buffer"></i>Player buffer</li>
+            <li><i class="dot dot-preload"></i>Prefetched</li>
+          </ul>
+        </div>
+        <p class="section-foot">Kindred Afar fetches the segments ahead onto your device before the player even asks. The orange stretch on the progress bar is what's already close at hand.</p>
+      </section>
+
+      <section id="keep" class="section section-tint">
+        <div class="keep-grid">
+          <svg class="keep-bottle" viewBox="0 0 128 128" role="img" aria-label="The water level in the bottle is the part already cached on your device">
+            <defs>
+              <clipPath id="keep-glass"><path d="M55 26H73V40Q73 45 78 48Q90 55 90 69V96Q90 108 78 108H50Q38 108 38 96V69Q38 55 50 48Q55 45 55 40Z"/></clipPath>
+            </defs>
+            <path class="glass" d="M55 26H73V40Q73 45 78 48Q90 55 90 69V96Q90 108 78 108H50Q38 108 38 96V69Q38 55 50 48Q55 45 55 40Z"/>
+            <g clip-path="url(#keep-glass)">
+              <g class="water">
+                <path class="water-wave" d="M0 0Q8 -4 16 0T32 0T48 0T64 0T80 0T96 0T112 0T128 0T144 0T160 0T176 0T192 0T208 0T224 0T240 0T256 0V140H0Z"/>
+              </g>
+            </g>
+            <path class="glint" d="M44 72Q44 64 50 60V94Q50 99 47 99Q44 99 44 94Z"/>
+            <rect class="cork" x="52" y="14" width="24" height="16" rx="5"/>
+            <path class="play" d="M57 68L73 78L57 88Z"/>
+          </svg>
+          <div>
+            <div class="section-head section-head-left">
+              <h2><em class="key">Keep</em> them close</h2>
+              <p>From the moment you press play, Kindred Afar quietly fills the bottle in the background.</p>
+            </div>
+            <div class="features">
+              <article class="feature">
+                <h3>Prefetch while you watch</h3>
+                <p>After the player's first request it warms up the segments ahead. When local data covers a request it goes straight to the player; otherwise the original request goes through, so playback never breaks.</p>
+              </article>
+              <article class="feature">
+                <h3>One-click full cache</h3>
+                <p>Downloads the best quality your account actually gets and joins video and audio into one MP4 on your device, without re-encoding. Or keep just the audio in its original quality (Hi-Res lossless / Dolby Atmos / AAC).</p>
+              </article>
+              <article class="feature">
+                <h3>Keeps going after you close the tab</h3>
+                <p>Downloads run on their own in the background. Network drops, expired addresses or rate limits are refreshed and resumed from where they stopped; pause and resume anytime without reopening the video.</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="near" class="section">
+        <div class="near-grid">
+          <div>
+            <div class="section-head section-head-left">
+              <h2>As <em class="key">near</em> as next door</h2>
+              <p>On the right is the extension's real popup (with demo data). Go ahead and click: switch between "This video" and "Library", or open the settings in the top right.</p>
+            </div>
+            <ul class="checks">
+              <li>Play anything in your library offline; resume paused downloads anytime</li>
+              <li>Reopen the original video and it plays from local data, with the native controls, speed and danmaku as usual</li>
+              <li>Need to take it with you? Save it as a local MP4 or audio file in one click</li>
+            </ul>
+          </div>
+          <figure class="demo">
+            <iframe class="demo-frame" src="../demo/store/scene/popup-scene.html?lang=en" title="Kindred Afar popup demo (demo data)" width="360" height="560" loading="lazy"></iframe>
+            <figcaption>Real interface · demo data</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- Kindred：名字的来历与「知己」一节同义——人在远方，最懂你的还是同一个社区。弹幕保留中文原样，它们本来就是 B 站的样子。 -->
+      <section id="friend" class="section friend">
+        <div class="danmaku" aria-hidden="true">
+            <div class="danmaku-lane danmaku-lane-1"><div class="danmaku-track"><span>前方高能</span><span>空降成功</span><span>海外党报到</span><span>这就是我的青春</span><span>泪目</span><span>梗百科在此</span><span>前方高能</span><span>空降成功</span><span>海外党报到</span><span>这就是我的青春</span><span>泪目</span><span>梗百科在此</span></div></div>
+            <div class="danmaku-lane danmaku-lane-2"><div class="danmaku-track"><span>同款回忆 +1</span><span>在异乡看到这条弹幕好亲切</span><span>懂的都懂</span><span>下次一定</span><span>名场面</span><span>同款回忆 +1</span><span>在异乡看到这条弹幕好亲切</span><span>懂的都懂</span><span>下次一定</span><span>名场面</span></div></div>
+            <div class="danmaku-lane danmaku-lane-3"><div class="danmaku-track"><span>凌晨三点的伦敦打卡</span><span>这个梗我笑了一年</span><span>弹幕护体</span><span>前排</span><span>全体起立</span><span>凌晨三点的伦敦打卡</span><span>这个梗我笑了一年</span><span>弹幕护体</span><span>前排</span><span>全体起立</span></div></div>
+        </div>
+        <div class="section-head">
+          <h2><em class="key">Kindred</em> spirits, even afar</h2>
+          <p>The name comes from a Tang dynasty poem: with a kindred spirit somewhere in the world, even the ends of the earth feel next door. Bilibili is where that community lives: the same memes, the same danmaku, the same shared references. Far from home, the people who get you are still here. Kindred Afar just makes the distance stop spinning.</p>
+        </div>
+      </section>
+
+      <section id="privacy" class="section section-tint">
+        <div class="section-head">
+          <h2>Only you know</h2>
+          <p>Kindred Afar has no server. Everything it remembers stays in your own browser.</p>
+        </div>
+        <div class="promises">
+          <article class="promise"><h3>No server</h3><p>Nothing is collected or uploaded. No analytics, no tracking, no ads.</p></article>
+          <article class="promise"><h3>Sign-in: only "whether"</h3><p>It only checks whether you're signed in, to show which qualities are available. Cookie values are never read.</p></article>
+          <article class="promise"><h3>Data stays on your device</h3><p>Caches and settings live in your Chrome profile. Delete the cache or uninstall to remove them.</p></article>
+          <article class="promise"><h3>Open source</h3><p>Every line of code is on GitHub, and release packages can be checked against the source.</p></article>
+        </div>
+        <p class="section-foot"><a href="../privacy.html">Read the full privacy policy</a> (the English version is at the end). This site likewise uses no cookies, analytics or third-party resources.</p>
+      </section>
+
+      <section class="section section-tint">
+        <div class="section-head">
+          <h2>What it does, and doesn't</h2>
+        </div>
+        <ul class="scope">
+          <li><b>Supports</b> standard BV / av videos, multi-part videos and Watch Later pages with a bvid; bangumi, interactive videos and courses aren't supported yet.</li>
+          <li><b>Never bypasses</b> Premium, paid, regional or licensing restrictions; it only uses the viewing and quality rights your account already has.</li>
+          <li><b>Requires</b> Chrome 116 or later. Only cache content you're allowed to watch, and follow the platform's terms and copyright rules.</li>
+        </ul>
+      </section>
+      <!-- Tip：与中文页同一个支付宝收款码；境外访客未必能用支付宝，这里写明只有这一种方式。 -->
+      <section id="tip" class="section">
+        <div class="tip-grid">
+          <div>
+            <div class="section-head section-head-left">
+              <h2><em class="key">Tip</em> the author some fries</h2>
+              <p>Kindred Afar is free and open source, and will never show ads. If it saved you a few spinning wheels, feel free to tip a little.</p>
+            </div>
+            <ul class="food-cards" aria-label="Suggested tips">
+              <li class="food-card"><svg class="food" viewBox="0 0 48 48" aria-hidden="true"><use href="#food-cone"/></svg><span class="food-name">Ice cream</span><span class="food-price">¥5</span></li>
+              <li class="food-card is-popular"><span class="food-badge">Most popular</span><svg class="food" viewBox="0 0 48 48" aria-hidden="true"><use href="#food-fries"/></svg><span class="food-name">Fries</span><span class="food-price">¥10</span></li>
+              <li class="food-card"><svg class="food" viewBox="0 0 48 48" aria-hidden="true"><use href="#food-coffee"/></svg><span class="food-name">Coffee</span><span class="food-price">¥20</span></li>
+              <li class="food-card is-free"><svg class="food" viewBox="0 0 48 48" aria-hidden="true"><use href="#food-bottle"/></svg><span class="food-name">Your call</span><span class="food-price">Any</span></li>
+            </ul>
+            <p class="tip-note">Prices are in Chinese yuan and only a suggestion; you enter the amount in Alipay yourself. Alipay is the only option for now. Tipping is entirely voluntary, unlocks nothing, and collects none of your information.</p>
+          </div>
+          <figure class="tip-card">
+            <img src="../assets/alipay-qr.png" alt="The author's Alipay QR code" width="372" height="435" loading="lazy">
+            <figcaption>Scan with Alipay</figcaption>
+            <a class="button button-alipay" href="{{ALIPAY_URL}}" rel="noopener">Tip in Alipay</a>
+          </figure>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p class="footer-verse"><span class="verse-name">Kindred Afar</span><span class="verse-soft"> · far, yet near</span></p>
+      <p class="footer-links">
+        <a href="{{STORE_URL}}" rel="noopener">Chrome Web Store</a>
+        <a class="footer-github" href="{{REPO_URL}}" rel="noopener"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><use href="#icon-github"/></svg>GitHub</a>
+        <a href="{{REPO_URL}}/issues" rel="noopener">Feedback</a>
+        <a href="#tip">Tip the author</a>
+        <a href="../privacy.html">Privacy</a>
+        <a href="../" hreflang="zh-CN" lang="zh-CN">中文</a>
+      </p>
+      <details id="changelog" class="changelog">
+        <summary>v{{VERSION}} · Changelog (in Chinese)</summary>
+        <ol class="changelog-list">
+{{CHANGELOG}}
+        </ol>
+        <p class="changelog-more"><a href="{{REPO_URL}}/releases" rel="noopener">All releases</a></p>
+      </details>
+      <p class="footer-note">This extension is not an official Bilibili product and is not affiliated with or endorsed by Bilibili.</p>
+    </footer>
+    <script src="../site.js" defer></script>
+  </body>
+</html>

@@ -15,12 +15,12 @@ const server = await serveSite(out);
 const origin = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch(chromiumLaunchOptions({ headless: true }));
 
-/** 打开首页并等演示弹窗就绪、高度自适应完成。 */
-async function open(options) {
+/** 打开首页（中文 / 或英文 /en/）并等演示弹窗就绪、高度自适应完成。 */
+async function open(options, pathname = "/") {
   const page = await browser.newPage(options);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`${origin}/`);
+  await page.goto(`${origin}${pathname}`);
   await page.locator(".demo-frame").scrollIntoViewIfNeeded();
   await page.waitForFunction(() => document.querySelector(".demo-frame").contentDocument?.querySelector("#scene-result")?.textContent === "ready", null, { timeout: 15000 });
   await page.waitForFunction(() => document.querySelector(".demo-frame").style.height !== "");
@@ -29,8 +29,12 @@ async function open(options) {
 
 const results = {};
 try {
-  for (const [name, options] of [["phone", { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true }], ["desktop", { viewport: { width: 1280, height: 800 } }]]) {
-    const { page, errors } = await open(options);
+  // 320 宽是最窄的常见手机：顶栏要同时放下图标、语言切换、GitHub 与添加按钮。
+  const devices = [["small", { viewport: { width: 320, height: 640 }, isMobile: true, hasTouch: true }], ["phone", { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true }], ["desktop", { viewport: { width: 1280, height: 800 } }]];
+  const pages = [["zh", "/", "海内存知"], ["en", "/en/", "Kindred Afar"]];
+  for (const [[device, options], [lang, pathname, brandName]] of devices.flatMap((entry) => pages.map((target) => [entry, target]))) {
+    const name = `${lang}/${device}`;
+    const { page, errors } = await open(options, pathname);
     const layout = await page.evaluate(() => {
       const frame = document.querySelector(".demo-frame");
       const box = frame.getBoundingClientRect();
@@ -51,21 +55,27 @@ try {
         // 投喂卡片：电脑上一行四张、手机上两两一排；菜名不折行，卡片不超出视口。
         cardRows: new Set(cards.map((card) => Math.round(card.getBoundingClientRect().top))).size,
         cardNames: cards.map((card) => card.querySelector(".food-name").getClientRects().length),
-        cardsInside: cards.every((card) => card.getBoundingClientRect().right <= innerWidth)
+        cardsInside: cards.every((card) => card.getBoundingClientRect().right <= innerWidth),
+        // 顶栏：品牌、语言切换、GitHub、添加按钮依次排开，互不重叠、不越出右边
+        topbar: [...document.querySelector(".topbar").children].filter((el) => el.getClientRects().length).map((el) => el.getBoundingClientRect()).map((box) => [Math.round(box.left), Math.round(box.right)])
       };
     });
     assert.equal(layout.scrollWidth, layout.innerWidth, `${name}：页面出现横向滚动 ${JSON.stringify(layout)}`);
     assert(layout.demoInside && layout.demoInnerScroll <= 360 && layout.demoFits, `${name}：演示弹窗越界或高度不对 ${JSON.stringify(layout)}`);
-    assert.equal(layout.brand, "海内存知", "演示弹窗没有加载真实界面");
+    assert.equal(layout.brand, brandName, `${name}：演示弹窗没有加载真实界面或语言不对`);
+    assert(layout.topbar.every(([left, right], index) => right <= layout.innerWidth && (index === 0 || left >= layout.topbar[index - 1][1])), `${name}：顶栏元素重叠或越界 ${JSON.stringify(layout.topbar)}`);
     // 「打开支付宝投喂」只在触屏手机上出现：电脑上扫码即可，按钮没有意义。
     const alipayShown = await page.evaluate(() => getComputedStyle(document.querySelector(".button-alipay")).display !== "none");
-    assert.equal(alipayShown, name === "phone", `${name}：打开支付宝按钮的显示状态不对`);
-    assert.equal(layout.cardRows, name === "phone" ? 2 : 1, `${name}：投喂卡片排布不对 ${JSON.stringify(layout)}`);
+    assert.equal(alipayShown, device !== "desktop", `${name}：打开支付宝按钮的显示状态不对`);
+    assert.equal(layout.cardRows, device !== "desktop" ? 2 : 1, `${name}：投喂卡片排布不对 ${JSON.stringify(layout)}`);
     assert(layout.cardNames.every((lines) => lines === 1) && layout.cardsInside, `${name}：投喂卡片菜名折行或越界 ${JSON.stringify(layout)}`);
     assert(layout.meta.every((lines) => lines === 1) && layout.verse.every((lines) => lines === 1), `${name}：信息行或诗句被拆行 ${JSON.stringify(layout)}`);
     // 演示可交互：切到片库后高度随内容变化。
     const before = await page.evaluate(() => document.querySelector(".demo-frame").clientHeight);
-    await page.frameLocator(".demo-frame").locator('[data-panel-view="library"]').click();
+    const libraryTab = page.frameLocator(".demo-frame").locator('[data-panel-view="library"]');
+    // 窄于 360 时演示 iframe 用 CSS zoom 缩小，Playwright 按未缩放坐标点击会落空；这里只验证高度联动，改用 DOM 点击。
+    if (device === "small") await libraryTab.evaluate((tab) => tab.click());
+    else await libraryTab.click();
     await page.waitForFunction((height) => document.querySelector(".demo-frame").clientHeight !== height, before);
     // 顶栏不得用 backdrop-filter：它每帧重新采样下方正在动画的漂流瓶、海浪和演示 iframe，
     // Chrome 合成时会闪烁，偶尔把下方合成层画到顶栏之上。顶栏改为不透明底色，正文单独成一个层叠上下文。
@@ -85,6 +95,15 @@ try {
     await page.evaluate(() => scrollTo(0, 0));
     assert.deepEqual(errors, [], `${name}：页面报错`);
     results[name] = { demoHeight: before, meta: layout.meta.length };
+    await page.close();
+  }
+
+  // 中文首页的英文入口：浏览器语言不含中文才显示，中文浏览器里不打扰。
+  for (const [locale, shown] of [["en-US", true], ["zh-CN", false]]) {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, locale });
+    await page.goto(`${origin}/`);
+    const visible = await page.evaluate(() => !document.querySelector(".lang-hint").hidden);
+    assert.equal(visible, shown, `${locale}：英文入口提示的显示状态不对`);
     await page.close();
   }
 
