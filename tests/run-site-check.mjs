@@ -67,6 +67,22 @@ try {
     const before = await page.evaluate(() => document.querySelector(".demo-frame").clientHeight);
     await page.frameLocator(".demo-frame").locator('[data-panel-view="library"]').click();
     await page.waitForFunction((height) => document.querySelector(".demo-frame").clientHeight !== height, before);
+    // 顶栏不得用 backdrop-filter：它每帧重新采样下方正在动画的漂流瓶、海浪和演示 iframe，
+    // Chrome 合成时会闪烁，偶尔把下方合成层画到顶栏之上。顶栏改为不透明底色，正文单独成一个层叠上下文。
+    const stacking = await page.evaluate(() => {
+      const bar = getComputedStyle(document.querySelector(".topbar"));
+      return { backdrop: bar.backdropFilter, background: bar.backgroundColor, isolation: getComputedStyle(document.querySelector("main")).isolation };
+    });
+    assert.equal(stacking.backdrop, "none", `${name}：顶栏仍在用 backdrop-filter`);
+    assert.match(stacking.background, /^rgb\(/, `${name}：顶栏底色应不透明 ${stacking.background}`);
+    assert.equal(stacking.isolation, "isolate", `${name}：正文应隔离为独立层叠上下文`);
+    // 滚到演示与动画区域时，顶栏区域的命中目标必须仍是顶栏自身。
+    for (const selector of [".hero-bottle", ".demo-frame", ".bar"]) {
+      await page.evaluate((target) => { document.documentElement.style.scrollBehavior = "auto"; const el = document.querySelector(target); scrollTo(0, el.getBoundingClientRect().top + scrollY - 20); }, selector);
+      const onTop = await page.evaluate(() => [0.1, 0.5, 0.9].every((x) => document.elementFromPoint(innerWidth * x, 30)?.closest(".topbar")));
+      assert(onTop, `${name}：滚到 ${selector} 时顶栏被下方内容盖住`);
+    }
+    await page.evaluate(() => scrollTo(0, 0));
     assert.deepEqual(errors, [], `${name}：页面报错`);
     results[name] = { demoHeight: before, meta: layout.meta.length };
     await page.close();

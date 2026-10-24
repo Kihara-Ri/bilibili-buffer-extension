@@ -58,15 +58,18 @@ p { text-wrap: pretty; }
 .skip-link:focus { top: 12px; }
 
 /* ---------- 顶栏 ---------- */
+/* 不用半透明 + backdrop-filter：下方一直有动画（漂流瓶、海浪、进度条）和演示 iframe，
+   毛玻璃每帧都要重新采样，Chrome 合成时会闪，偶尔把下方合成层画到顶栏上面。
+   改成不透明底色；正文 main 单独隔离成一个层叠上下文，里面再怎么提层也越不过顶栏。 */
 .topbar {
   position: sticky; top: 0; z-index: 10;
   display: flex; align-items: center; gap: 10px;
   height: 60px; padding: 0 var(--gutter);
-  background: color-mix(in srgb, var(--sea-deep) 88%, transparent);
-  backdrop-filter: saturate(1.4) blur(12px);
-  -webkit-backdrop-filter: saturate(1.4) blur(12px);
+  background: var(--sea-deep);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 18px -12px rgba(0, 0, 0, 0.5);
   color: #fff;
 }
+main { isolation: isolate; }
 .topbar-brand { display: flex; align-items: center; gap: 8px; color: #fff; text-decoration: none; font-weight: 650; letter-spacing: 0.06em; }
 .topbar-links { display: flex; gap: 22px; margin-left: auto; margin-right: 14px; }
 .topbar-links a { color: rgba(255, 255, 255, 0.78); text-decoration: none; font-size: 15px; }
