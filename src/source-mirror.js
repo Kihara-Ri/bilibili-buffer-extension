@@ -1,17 +1,10 @@
 // 离线下载的源范围镜像写入器：有配额、有熔断、串行发送，任何失败都静默降级。
 // 只镜像「CDN 直接下载并逐字节校验过」的范围，合并/抽音轨产物永不进入；
-// 与 IndexedDB 镜像库（source-range-store.js）通过后台消息解耦，便于单独测试。
-export const SOURCE_MIRROR_BUDGET = 96 * 1024 * 1024;
+// 真正的写入由 send 决定（下载文档里是 source-range-store.js 的 createSourceWriter 直写镜像库），便于单独测试。
+// 配额与镜像库总上限（SOURCE_LIMIT）一致：库按最旧优先回收，多写的部分只会把本视频开头挤掉。
+export const SOURCE_MIRROR_BUDGET = 64 * 1024 * 1024;
 export const SOURCE_MIRROR_RANGE = 2 * 1024 * 1024;
 export const SOURCE_MIRROR_FAILURES = 3;
-
-/** 把 Blob 转成 base64；分块拼接避免大范围触发参数上限。 @param {Blob} blob @returns {Promise<string>} */
-export async function blobToBase64(blob) {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let text = "";
-  for (let at = 0; at < bytes.length; at += 8192) text += String.fromCharCode(...bytes.subarray(at, at + 8192));
-  return btoa(text);
-}
 
 /**
  * @param {{send:(request:object)=>Promise<{ok?:boolean}|any>, budget?:number, failures?:number}} options
@@ -23,9 +16,10 @@ export function createSourceMirror({ send, budget = SOURCE_MIRROR_BUDGET, failur
     const size = Number(end) - Number(start);
     if (disabled || !send || !data || !Number.isSafeInteger(size) || size <= 0 || size > SOURCE_MIRROR_RANGE || remaining < size) { skipped += 1; return; }
     remaining -= size;
-    // 严格串行：并发的 base64 与消息往返只会推高内存峰值，收益为 0。
+    // 严格串行：一次只有一个镜像事务，不与分块提交抢 IndexedDB。
+    // 原始 Blob 原样交出：不在下载文档主线程上做 base64，后台降优先级时这正是吃掉 CPU 的地方。
     queue = queue.then(async () => {
-      const result = await send({ op: "write", url, start, end, total, contentType, body: await blobToBase64(data) });
+      const result = await send({ op: "write", url, start, end, total, contentType, data });
       if (result?.ok === false) throw new Error("源范围未写入镜像");
       failed = 0; sent += 1;
     }).catch(() => {

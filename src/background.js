@@ -126,12 +126,12 @@ async function handleMessage(message, sender) {
     case "SOURCE_RANGE": {
       const request = message.request;
       if (!request || typeof request !== "object") return {};
-      // 写入只允许扩展自己的下载文档，读取只允许 B 站视频页；其余来源直接拒绝。
+      // 写入与取分区只允许扩展自己的下载文档，读取只允许 B 站视频页；其余来源直接拒绝。
       const scope = sourceRangeScope(sender, {
         runtimeId: chrome.runtime.id,
         offscreenUrl: chrome.runtime.getURL(OFFSCREEN_PATH)
       });
-      if (!scope || (request.op === "write") !== (scope === "writer")) return {};
+      if (!scope || (request.op === "write" || request.op === "partition") !== (scope === "writer")) return {};
       return sourceRanges.handle(request, scope);
     }
     case "GET_POPUP_SNAPSHOT": {

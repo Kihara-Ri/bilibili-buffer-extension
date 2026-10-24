@@ -1,7 +1,7 @@
 # 持久化源范围复用（离线已下载字节 → 在线播放）
 
-> 适用版本：v2.13.0 · 最后核对：2026-10-24
-> 对应实现：`src/source-range-store.js`（镜像仓库与校验）、`src/source-mirror.js`（下载侧写入器）、
+> 适用版本：v2.14.1 · 最后核对：2026-10-25
+> 对应实现：`src/source-range-store.js`（镜像仓库、校验与 `createSourceWriter` 直写）、`src/source-mirror.js`（下载侧配额与熔断）、
 > `src/offscreen.js` 的 `createSourceMirror` 调用点、`src/playback-reuse.js`（页面侧读取）、`src/playback-bridge.js`、
 > `src/background.js` 的 `SOURCE_RANGE` 分支、`src/playback-observer.js` 的 `loadPlayerRange`。
 > 页面内存缓存见[播放提前加载](playback-assist.md)，缺口拼接见[部分命中复用](partial-cache-reuse.md)。
@@ -16,9 +16,9 @@
 
 ```text
 offscreen 离线下载（逐字节校验过的源范围）
-        │  SOURCE_RANGE{op:write}
+        │  直写 Blob（账户分区经 SOURCE_RANGE{op:partition} 向后台取一次）
         ▼
-   Service Worker 镜像（IndexedDB，64 MiB / 256 行 / ≤1 小时）
+   镜像库（扩展源共享的 IndexedDB，64 MiB / 256 行 / ≤1 小时）
         │  SOURCE_RANGE{op:read}
         ▼
 隔离桥 → 页面 playback-reuse → 观察器 loadPlayerRange → 播放器 206
@@ -60,12 +60,31 @@ offscreen 离线下载（逐字节校验过的源范围）
 | 行数 | 256 | `SOURCE_ROWS` |
 | 单行范围 | 2 MiB | `SOURCE_RANGE_LIMIT` |
 | 单次读取 | 4 MiB | `SOURCE_READ_LIMIT`，超限直接未命中 |
-| 每下载任务镜像配额 | 96 MiB | `createSourceMirror` 的 `budget` |
+| 每下载任务镜像配额 | 64 MiB | `SOURCE_MIRROR_BUDGET`，与镜像库总上限一致：再多只会把本视频开头挤掉 |
 | 页面在途读取 | 1 | `playback-reuse.js` 的 `inFlight` |
 | 会话授权地址表 | 256 条 | `MAX_URLS`，超出淘汰最早 |
-| 消息大小 | ≤ 2 MiB 原文（base64 约 2.7 MB） | 桥与后台各自校验 |
+| 读取回包大小 | ≤ 4 MiB 原文（base64 约 5.4 MB） | 桥与后台各自校验 |
 
 镜像写入串行、失败静默：连续 3 次失败即在本下载任务内熔断，绝不影响下载主流程。
+
+### 4.1 为什么下载侧直写，而不是发消息给后台（2.14.1）
+
+2.14.0 及以前，下载文档把每个 2 MiB 范围转成 base64（约 2.7 MB 字符串）发给后台，后台再解码入库。
+这些 CPU 活和分块读取、IndexedDB 提交挤在同一个主线程上。前台时看不出来；扩展进程一旦被浏览器或系统
+降优先级（Windows 效率模式、macOS 后台 QoS——切走窗口或关掉弹窗后就会发生），前 96 MiB 的下载会塌到
+1~2 MB/s，提交耗时成倍上升，弹窗里表现为「速度还在、百分比不动」。
+
+用 CDP 给 offscreen 文档施加 20 倍 CPU 限速对照（真实 B 站 1.2 GB 视频）：
+
+| 版本 | 限速后前 ~100 MB 的落盘速度 | 同期 IndexedDB 写入累计耗时 |
+| --- | --- | --- |
+| base64 消息（2.14.0） | ~1.8 MB/s，配额耗尽后才恢复 | 1 s → 17 s |
+| 关闭镜像（对照） | 7~8 MB/s | ~2 s |
+| 直写 Blob（2.14.1） | ~10 MB/s | ~2 s |
+
+下载文档与后台同属扩展源，IndexedDB 是同一个库；Blob 入库不经过 JS 主线程拷贝。账户分区仍只能由后台计算
+（cookies API 不在 offscreen 里），所以每个下载任务向后台取一次不透明分区摘要；后台的 `write` 消息入口保留，
+两条路径共用 `storeSourceRange` 的同一套校验。
 
 ## 5. 读取语义
 

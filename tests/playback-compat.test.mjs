@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { createFakeIndexedDB } from './fake-indexeddb.mjs';
-import { createSourceRepository, createSourceService } from '../src/source-range-store.js';
+import { SOURCE_LIMIT, createSourceRepository, createSourceService, createSourceWriter } from '../src/source-range-store.js';
 import { ASSIST_DEFAULTS, sanitizeAssistConfig } from '../src/assist-config.js';
-import { SOURCE_MIRROR_RANGE, createSourceMirror } from '../src/source-mirror.js';
+import { SOURCE_MIRROR_BUDGET, SOURCE_MIRROR_RANGE, createSourceMirror } from '../src/source-mirror.js';
 
 const reuseSource = await readFile(new URL('../src/playback-reuse.js', import.meta.url), 'utf8');
 const bridgeSource = await readFile(new URL('../src/playback-bridge.js', import.meta.url), 'utf8');
@@ -125,6 +125,42 @@ test('镜像写入器按任务配额跳过超额范围，且不阻塞调用方',
   assert.equal(mirror.sent, 2);
   assert.equal(mirror.skipped, 1);
   assert.deepEqual(requests.map((request) => request.start).sort((a, b) => a - b), [0, SOURCE_MIRROR_RANGE]);
+});
+
+test('镜像写入器直接交出原始 Blob，不做 base64 编码；默认配额不超过镜像库上限', async () => {
+  // 2.14.0 每块都在下载文档主线程上做 base64 + 2.7 MB 消息：后台降优先级（Windows 效率模式等）时
+  // CPU 被它吃光，前 96 MiB 的下载速度塌到 1~2 MB/s。写入器拿到的必须是原始字节。
+  const requests = [];
+  const mirror = createSourceMirror({ send: async (request) => { requests.push(request); return { ok: true }; } });
+  const range = entry(0, 64);
+  mirror.onVerifiedRange(range);
+  await mirror.drain();
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].data, range.data);
+  assert.equal('body' in requests[0], false);
+  // 超出镜像库上限的配额只会把本视频最早写入的范围立即挤掉，纯属浪费。
+  assert.ok(SOURCE_MIRROR_BUDGET <= SOURCE_LIMIT);
+});
+
+test('下载文档直写镜像库：同账户分区可读回，账户分区只向后台取一次', async () => {
+  const repository = createSourceRepository(createFakeIndexedDB(new Map()));
+  const service = createSourceService({ repository, account: async () => 'a' });
+  let partitionRequests = 0;
+  const write = createSourceWriter({ repository, partition: async () => { partitionRequests += 1; return 'a'; } });
+  const bytes = Uint8Array.from({ length: 64 }, (_, index) => index);
+  assert.deepEqual(await write({ op: 'write', url: mediaUrl, start: 0, end: 64, total: 4096, data: new Blob([bytes]), contentType: 'video/mp4' }), { ok: true });
+  assert.deepEqual(await write({ op: 'write', url: mediaUrl, start: 64, end: 128, total: 4096, data: new Blob([bytes]), contentType: 'video/mp4' }), { ok: true });
+  assert.equal(partitionRequests, 1);
+  const hit = await service.handle({ op: 'read', url: mediaUrl, start: 0, end: 64, total: 4096 }, 'reader');
+  assert.equal(hit.hit, true);
+  assert.deepEqual([...Buffer.from(hit.body, 'base64')], [...bytes]);
+
+  // 长度与声明范围不符、签名过期、非媒体主机一律不写。
+  assert.deepEqual(await write({ op: 'write', url: mediaUrl, start: 0, end: 64, total: 4096, data: new Blob([new Uint8Array(63)]) }), { ok: false });
+  assert.deepEqual(await write({ op: 'write', url: 'https://evil.example/a.m4s?deadline=9999999999', start: 0, end: 64, total: 4096, data: new Blob([bytes]) }), { ok: false });
+  // 其他账户读不到。
+  const other = createSourceService({ repository, account: async () => 'b' });
+  assert.deepEqual(await other.handle({ op: 'read', url: mediaUrl, start: 0, end: 64, total: 4096 }, 'reader'), {});
 });
 
 test('镜像写入器串行发送，连续失败后熔断但绝不抛错', async () => {

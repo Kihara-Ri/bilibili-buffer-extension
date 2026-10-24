@@ -48,9 +48,16 @@ import {
   rankRangeCandidates
 } from "./range-downloader.js";
 import { createSourceMirror } from "./source-mirror.js";
+import { createSourceRepository, createSourceWriter } from "./source-range-store.js";
 
-// 后台负责账户分区与有界校验；这里只负责把校验过的范围送过去。
-const sendSourceRange = (request) => chrome.runtime.sendMessage({ target: "background", type: "SOURCE_RANGE", request });
+// 镜像直写共享的 IndexedDB（原因见 createSourceWriter）；账户分区仍由后台用 cookies API 计算。
+const sourceRepository = typeof indexedDB === "undefined" ? null : createSourceRepository();
+const requestSourcePartition = async () => {
+  const response = await chrome.runtime.sendMessage({ target: "background", type: "SOURCE_RANGE", request: { op: "partition" } });
+  return response?.partition;
+};
+/** 每个下载任务一个写入器：账户分区按任务取一次。 */
+const createMirrorWriter = () => createSourceWriter({ repository: sourceRepository, partition: requestSourcePartition });
 
 import { isRecoverableDownloadError, makeDownloadRetryState } from "./download-retry.js";
 import { startDevReloadPolling } from "./dev-reload.js";
@@ -656,7 +663,7 @@ async function downloadProgressiveSource(video, existing, source, job) {
     };
   }
 
-  const mirror = createSourceMirror({ send: sendSourceRange });
+  const mirror = createSourceMirror({ send: createMirrorWriter() });
   const coordinator = createDownloadCoordinator({ ...meta, totalBytes: ranking.totalBytes }, {
     media: { resumeBytes, chunkCount: resumeChunks, totalBytes: ranking.totalBytes }
   });
@@ -1112,7 +1119,7 @@ async function downloadTrackSource(video, existing, source, job) {
   else job.controller.signal.addEventListener("abort", abortFromJob, { once: true });
   let primaryError = null;
   // 每个下载任务共享一份镜像配额与熔断状态；轨道各自的回调都指向同一个 mirror。
-  const mirror = createSourceMirror({ send: sendSourceRange });
+  const mirror = createSourceMirror({ send: createMirrorWriter() });
 
   const tasks = sourceEntries.map(async ([trackName, sourceTrack]) => {
     try {

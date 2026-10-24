@@ -105,6 +105,48 @@ export function createSourceRepository(factory = globalThis.indexedDB, name = "b
   };
 }
 
+/** 校验一条已下载的源范围并写进镜像库；后台的消息入口与下载文档的直写共用这一处校验。
+ * @param {object} repository @param {object} request @param {string} partition @param {Blob} data @param {number} now
+ * @returns {Promise<boolean>} 事务成功且真实写入才为 true
+ */
+async function storeSourceRange(repository, request, partition, data, now) {
+  const facts = sourceFacts(request, now);
+  if (!facts || facts.start !== request.start || facts.end !== request.end) return false;
+  if (!data || typeof data.size !== "number" || data.size !== facts.end - facts.start) return false;
+  const contentType = /^(video|audio)\/[-\w.+]+$/.test(request.contentType || "") ? request.contentType : "application/octet-stream";
+  // 停用/被拒的仓库返回 false，调用方据此判未命中。
+  const stored = await repository.put({
+    id: `${facts.source}\u0000${partition}\u0000${facts.start}`,
+    source: facts.source, partition, start: facts.start, end: facts.end, total: facts.total,
+    expires: facts.expires, created: now, contentType, data
+  });
+  return stored !== false;
+}
+
+/** 下载文档（offscreen）直写镜像库的写入器，与 createSourceMirror 的 send 接口一致。
+ * 为什么不走后台消息：消息只能传 JSON，2 MiB 范围要先 base64（约 2.7 MB 字符串）、再序列化、
+ * 后台再解码。扩展进程在后台被降优先级（Windows 效率模式、macOS 后台 QoS）时，这些 CPU 活
+ * 会和分块读取、IndexedDB 提交抢同一个主线程，实测前 96 MiB 下载从 ~8 MB/s 塌到 ~1.8 MB/s。
+ * 两个上下文同属扩展源、共用同一个 IndexedDB，Blob 直接入库不经主线程拷贝。
+ * 账户分区只能由后台算（cookies API 不在 offscreen 里），每个写入器只取一次；
+ * 期间账户切换只会让这些行在新账户下未命中，读取侧仍会再次校验分区。
+ * @param {{repository:object, partition:() => Promise<string>, now?:() => number}} options
+ * @returns {(request:{url:string,start:number,end:number,total:number,data:Blob,contentType?:string}) => Promise<{ok:boolean}>}
+ */
+export function createSourceWriter({ repository, partition, now = Date.now }) {
+  let partitionOnce = null;
+  return async (request) => {
+    if (!repository || repository.disabled) return { ok: false };
+    partitionOnce ||= Promise.resolve().then(partition).then((value) => {
+      if (!value) throw new Error("账户分区不可用");
+      return String(value).slice(0, 64);
+    });
+    // 分区取不到时抛给镜像写入器计入熔断；同一个失败的 Promise 不缓存，下一次重新取。
+    const owner = await partitionOnce.catch((error) => { partitionOnce = null; throw error; });
+    return { ok: await storeSourceRange(repository, request, owner, request?.data, now()) };
+  };
+}
+
 /** 后台侧的镜像服务：唯一入口，负责账户隔离与有界校验。
  * @param {{repository:object, account:Function, now?:Function}} options
  * @returns {{handle:Function, clear:Function}}
@@ -139,19 +181,8 @@ export function createSourceService({ repository, account, now = Date.now }) {
     return { start: facts.start, end: facts.end, total: facts.total, body: bytes, contentType: rows[0].contentType };
   };
   const write = async (request, partition) => {
-    const facts = sourceFacts(request, now());
-    if (!facts || facts.start !== request.start || facts.end !== request.end) return false;
     if (typeof request.body !== "string" || request.body.length > Math.ceil(SOURCE_RANGE_LIMIT / 3) * 4) return false;
-    const bytes = unb64(request.body);
-    if (bytes.length !== facts.end - facts.start) return false;
-    const contentType = /^(video|audio)\/[-\w.+]+$/.test(request.contentType || "") ? request.contentType : "application/octet-stream";
-    // 事务成功且真实写入才算成功；停用/被拒的仓库返回 false，调用方据此判未命中。
-    const stored = await repository.put({
-      id: `${facts.source}\u0000${partition}\u0000${facts.start}`,
-      source: facts.source, partition, start: facts.start, end: facts.end, total: facts.total,
-      expires: facts.expires, created: now(), contentType, data: new Blob([bytes])
-    });
-    return stored !== false;
+    return storeSourceRange(repository, request, partition, new Blob([unb64(request.body)]), now());
   };
   return {
     /** 串行处理，避免并发写入时同一 source 的回收互相覆盖。
@@ -165,6 +196,8 @@ export function createSourceService({ repository, account, now = Date.now }) {
           const hit = await read(request, partition);
           return hit ? { hit: true, ...hit, body: b64(hit.body) } : {};
         }
+        // 下载文档直写镜像库前取一次账户分区（不透明摘要，不含 cookie 原文）。
+        if (request.op === "partition") return scope === "writer" ? { partition } : {};
         // 只有扩展自己的下载上下文可以写入；页面只能读。
         if (request.op !== "write" || scope !== "writer") return {};
         return (await write(request, partition)) ? { stored: true } : {};

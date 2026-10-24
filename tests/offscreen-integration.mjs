@@ -45,11 +45,13 @@ globalThis.fetch = async function (url, init = {}) {
   if (this !== undefined && this !== globalThis) throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
   if (!String(url).includes(".test/")) return nativeFetch(url, init);
   mediaRequests += 1;
-  if (slowMediaMs) await delay(slowMediaMs);
   const source = String(url).includes("/audio") ? audioBytes : videoBytes;
   const match = String(init.headers?.Range || "").match(/^bytes=(\d+)-(\d+)$/);
   if (!match) return new Response("Range required", { status: 400 });
   const start = Number(match[1]);
+  // 视频轨只有 5 块、并发能一次发完：首块之后的分块再多拖一截，保证「已有落盘」时任务确实还在下载，
+  // 而不是靠下载文档主线程恰好忙（2.14.0 的镜像 base64 曾无意中提供了这份慢）。
+  if (slowMediaMs) await delay(slowMediaMs + (start >= 2 * MiB ? slowMediaMs * 4 : 0));
   const end = Math.min(Number(match[2]), source.length - 1);
   if (!String(url).includes("renewed.test") && start >= 4 * MiB) {
     return new Response("expired", { status: 403 });
