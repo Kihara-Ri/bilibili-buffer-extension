@@ -19,7 +19,7 @@ import { readZip } from "./lib/zip.mjs";
  *
  * 对着 dist/unpacked 与 dist/*.zip 做静态检查，覆盖的是“构建成功但审不过”的问题：
  * 清单字段超长、图标带不透明底、开发态热更新代码漏进包里、权限超范围、
- * 换了 key 却没同步 DNR 规则、打包进 .DS_Store 之类。
+ * 换了 key 却没同步 DNR 规则、商店包里残留开发 key、打包进 .DS_Store 之类。
  * 判断逻辑在 scripts/lib/release-checks.mjs（有单元测试），这里只负责读文件与退出码。
  *
  * 运行：npm run verify（npm run build 结束时自动执行）
@@ -47,7 +47,10 @@ try {
 }
 const pkg = await readJson(path.join(root, "package.json"));
 
-failures.push(...checkManifestFields(manifest, pkg));
+failures.push(...checkManifestFields(manifest, pkg, { release: true }));
+// 发布包不带 key，开发 ID 只能从源码清单推导；DNR 规则要同时放行开发 ID 与商店 ID。
+const sourceManifest = await readJson(path.join(root, "manifest.json"));
+failures.push(...checkManifestFields(sourceManifest, pkg));
 failures.push(...checkHostPermissions(manifest));
 
 for (const size of [16, 32, 48, 128]) {
@@ -98,8 +101,8 @@ for (const entry of new Set(referenced)) {
   );
 }
 
-if (manifest.key) {
-  const derivedId = extensionIdFromKey(manifest.key);
+if (sourceManifest.key) {
+  const derivedId = extensionIdFromKey(sourceManifest.key);
   try {
     failures.push(...checkDnrRules(await readJson(path.join(unpacked, "rules", "cdn-headers.json")), [derivedId, STORE_EXTENSION_ID]));
   } catch (error) {

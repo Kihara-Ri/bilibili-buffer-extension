@@ -57,10 +57,19 @@ export function extensionIdFromKey(key) {
 export function toReleaseManifest(manifest) {
   const release = structuredClone(manifest);
   release.host_permissions = (release.host_permissions || []).filter((entry) => !entry.startsWith("http://127.0.0.1/"));
+  // key 只用来固定本地开发 ID。已发布商品的公钥由商店持有，上传的包带着开发 key 会被拒收
+  // （「清单中“key”字段的值与当前内容不符」），所以商店包不带 key，ID 由商店决定。
+  delete release.key;
   return release;
 }
 
-export function checkManifestFields(manifest, pkg) {
+/**
+ * @param {object} manifest 待检查的清单
+ * @param {object} pkg package.json
+ * @param {{ release?: boolean }} [options] release=true 表示检查商店发布包（禁止 key），否则检查源码清单（必须有 key）
+ * @returns {string[]} 失败说明
+ */
+export function checkManifestFields(manifest, pkg, { release = false } = {}) {
   const failures = [];
   if (manifest.manifest_version !== 3) failures.push("manifest_version 必须是 3");
   if (manifest.version !== pkg.version) {
@@ -73,7 +82,8 @@ export function checkManifestFields(manifest, pkg) {
   if ((manifest.description || "").length > MAX_DESCRIPTION_LENGTH) {
     failures.push(`描述 ${manifest.description.length} 字，超过 manifest 的 ${MAX_DESCRIPTION_LENGTH} 字上限`);
   }
-  if (!manifest.key) failures.push("缺少 key：扩展 ID 会变，DNR 规则与已有缓存全部失效");
+  if (release && manifest.key) failures.push("发布包不得包含 key：商店会以「key 字段与当前内容不符」拒收");
+  if (!release && !manifest.key) failures.push("缺少 key：本地开发 ID 会随目录变化，DNR 规则与已有缓存全部失效");
   for (const size of [16, 32, 48, 128]) {
     const icon = manifest.icons?.[String(size)];
     if (!icon) failures.push(`icons 缺少 ${size} 尺寸`);

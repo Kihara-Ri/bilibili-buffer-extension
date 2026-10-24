@@ -55,6 +55,18 @@ test("坏清单会被拒绝：超长描述、缺图标、版本不一致、缺 k
   assert.ok(checkManifestFields(mismatched, pkg).some((m) => m.includes("不一致")));
 });
 
+test("商店包不带 key：已发布商品的 key 由商店持有，带开发 key 上传会被拒收", () => {
+  // 商店提示「清单中“key”字段的值与当前内容不符」：开发 key 推导出的是本地 ID，
+  // 与商品 bjegpandnhmeinmennpfpkholhmbllam 的公钥不符。源码清单保留 key 固定开发 ID，发布态清单必须剔除。
+  assert.ok(manifest.key, "源码清单必须保留 key，否则本地开发 ID 会随目录变化");
+  assert.equal("key" in releaseManifest, false);
+  assert.deepEqual(checkManifestFields(releaseManifest, pkg, { release: true }), []);
+  assert.ok(
+    checkManifestFields(manifest, pkg, { release: true }).some((m) => m.includes("key")),
+    "发布校验必须拒绝仍带 key 的清单"
+  );
+});
+
 test("权限不超出已评审范围，且不含本地开发地址", () => {
   assert.deepEqual(checkHostPermissions(releaseManifest), []);
   // 开发目录必须保留本地热更新域名，发布包必须剔除；两个方向都要钉住。

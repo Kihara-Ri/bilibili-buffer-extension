@@ -60,8 +60,9 @@ npm run store:assets
      `npm run build` 的发布校验会检查两者）。**ID 对不上就必须停下**：
      防盗链 `Referer` 规则会失效，缓存会开始大面积 403。
      本地可以直接核对：`node -e 'const c=require("crypto");const k=require("./manifest.json").key;const d=c.createHash("sha256").update(Buffer.from(k,"base64")).digest().subarray(0,16);console.log([...d].map(b=>String.fromCharCode(97+(b>>4))+String.fromCharCode(97+(b&15))).join(""))'`
-   - 若想让商店沿用本地开发 ID，保持 `manifest.json` 里的 `key` 不变即可；
-     删掉 `key` 会换 ID，已有用户的缓存与 DNR 规则都会跟着失效。
+   - 发布包**不带** `key`（构建时由 `toReleaseManifest` 剔除）：已发布商品的公钥由商店持有，
+     带着开发 key 上传会被拒收（「清单中“key”字段的值与当前内容不符」）。源码 `manifest.json`
+     里的 `key` 要保留，删掉它本地开发 ID 会随目录变化，开发 profile 里的缓存与 DNR 规则都会失效。
 4. **填 Store listing**：按 `listing.md` 第 1 节逐项粘贴。
 5. **填 Privacy practices**：按 `listing.md` 第 2 节逐项粘贴；权限列表必须与 `manifest.json` 完全一致，
    多出来的权限请删权限而不是编理由。
@@ -103,7 +104,7 @@ npm run store:assets
 
 `npm run build` 结尾自动执行 `npm run verify`（也可单独 `npm run verify`），逐项检查：
 
-- 清单：MV3、版本与 `package.json` 一致、名称与描述字数、`key` 存在；
+- 清单：MV3、版本与 `package.json` 一致、名称与描述字数、源码清单有 `key`、发布包清单没有 `key`；
 - 图标：16/32/48/128 齐全、尺寸正确、四角透明、图形留白符合 Chrome 图标规范；
 - 权限：只允许白名单内的权限、`host_permissions` 全为 https 且不含本地地址；
 - 代码：无开发态热更新残留、无 `eval` / `new Function` / `importScripts` / 内联脚本 / 远程脚本；
