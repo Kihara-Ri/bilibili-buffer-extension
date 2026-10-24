@@ -4,12 +4,14 @@
 
 # 海内存知
 
+[English](README.en.md) · **简体中文**
+
 **海内存知**己，天涯若比邻。
 
 在海外看 B 站的 Chrome 扩展：**播放时提前加载、少转圈，也能把视频完整存到本机离线看**。<br>
 沿用 B 站原生播放器，不转码、无服务器，数据全部留在本机。
 
-<sub><i>A Chrome extension for watching Bilibili from overseas: prefetches ahead of playback to cut buffering, and caches full videos locally for offline viewing. No server, no telemetry.</i></sub>
+<sub><i>English name: <b>Kindred Afar</b>. The extension follows Chrome's language, and there is an <a href="README.en.md">English README</a>.</i></sub>
 
 [![Chrome 商店](https://img.shields.io/chrome-web-store/v/bjegpandnhmeinmennpfpkholhmbllam?label=Chrome%20%E5%95%86%E5%BA%97&color=2bb3e6&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/bjegpandnhmeinmennpfpkholhmbllam)
 [![用户](https://img.shields.io/chrome-web-store/users/bjegpandnhmeinmennpfpkholhmbllam?label=%E7%94%A8%E6%88%B7&color=0d425d)](https://chromewebstore.google.com/detail/bjegpandnhmeinmennpfpkholhmbllam)
@@ -17,11 +19,14 @@
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-1587c6)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-12303d)](LICENSE)
 
-[**官网**](https://haineicunzhi.kihara.cn) · [**添加到 Chrome**](https://chromewebstore.google.com/detail/bjegpandnhmeinmennpfpkholhmbllam) · [隐私说明](https://haineicunzhi.kihara.cn/privacy.html) · [投喂作者](https://haineicunzhi.kihara.cn/#tip)
+[**官网**](https://haineicunzhi.kihara.cn) · [**添加到 Chrome**](https://chromewebstore.google.com/detail/bjegpandnhmeinmennpfpkholhmbllam) · [隐私说明](https://haineicunzhi.kihara.cn/privacy.html) · [English site](https://haineicunzhi.kihara.cn/en/) · [投喂作者](https://haineicunzhi.kihara.cn/#tip)
 
 </div>
 
 ![海内存知：把 B 站视频提前存到身边](store/assets/marquee-1400x560.png)
+
+> [!NOTE]
+> 界面跟随 Chrome 语言：中文（简繁）显示中文，其余显示英文（英文名 **Kindred Afar**）。
 
 ## 安装
 
