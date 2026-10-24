@@ -1,0 +1,443 @@
+# 早期开发记录（1.x – 2.6）
+
+> **历史记录，内容冻结。** 本文原是《开发日志.md》的后半部分：项目最初的需求、技术路线和踩过的坑，2.6 之前写成，
+> 之后没有随代码更新。文中「三个互斥视图」「丢弃预热正文」「按字节比例着色」「冷区间」等说法都是旧方案。
+> 当前行为以[技术文档](../../技术文档.md)和[文档索引](../README.md)里的现状文档为准；
+> 「遇到的问题」一节记录的根因与排查方法仍有参考价值。
+
+## 1. 最初的背景
+
+在海外使用bilibili网页版看视频的时候经常出现加载速度过慢的问题，推测是本地网络CDN并没有保存一些播放量较低的视频的数据，而一些播放量较高且时间比较近的视频则没有这样的问题，由此需要就这个问题开发出一款用于将视频缓存在chrome浏览器中的插件
+
+## 2. 最初的设想
+
+这个插件的原理是通过预先完全缓存需要看的整条视频，这样当需要看的时候就不必因为实时加载卡顿而烦恼了
+
+## 3. 需求清单
+
+- [x] 拥有一个适合的图标，需要跟bilibili相关
+- [x] 点击插件图标，有一个紧凑的圆角矩形按钮，点击后可以自动开始缓存当前访问的bilibili网站的视频，如果当前的网站不是bilibili则按钮变成灰色并且提示用户无法操作。点击开始缓存后，在按钮内显示缓存进度条和实时的下载速度。缓存完毕后按钮提示已经缓存完毕
+- [x] 在下方提供一个列表，用于查看已经缓存的视频，可以对视频进行删除缓存的操作，点击跳转到播放该视频
+- [x] 能否做到在原视频界面下通过缓存播放，以此来达到无感使用的目的？如果可以给出可行的技术方案；如果不可以，给出原因
+- [x] 提供视频质量选项，默认选择当前账号能够访问的最高画质
+- [x] 对需要登录或大会员的内容，尝试使用当前 Chrome 的 B 站 Cookie 访问，同时不展示、导出或持久化 Cookie 原始值
+- [x] 提供自动/AV1/HEVC/AVC 编码选项；自动模式优先同画质下更低码率的可播放轨道
+- [x] 增加播放侧 CDN 冷区间观测、受控预热、带宽估计器护栏和实时可观测面板
+- [x] 预热区间使用无高光的纯色显示，支持持久化预设/自定义颜色，并在播放边缘与预热段相接时显示动态白色分界
+- [x] Popup 按缓存、播放、片库划分互斥一级视图，低频设置按需展开，避免把全部内容纵向堆叠
+- [x] 播放页只保留提前加载的开启 / 关闭；开启后在首个媒体范围响应头到达时立即衔接后续请求，不再显示或等待准备流程
+
+## 4. 早期技术路线
+
+### 1. 扩展运行结构
+
+项目采用 Chrome Manifest V3，按职责拆成五条运行链路：
+
+| 运行环境 | 主要文件 | 职责 |
+| --- | --- | --- |
+| Popup | `popup.html`、`src/popup.js` | 以缓存、播放、片库三个互斥视图组织画质/编码、播放提前加载开关和本地视频；只负责交互，不承担长时间下载 |
+| Service Worker | `src/background.js` | 消息路由、B 站视频信息解析、创建 Offscreen Document、徽标状态、热更新检查和重载后的任务恢复 |
+| Offscreen Document | `offscreen.html`、`src/offscreen.js` | 持续下载、CDN 续传、MP4 或 DASH 双轨分块写入 IndexedDB、完整性校验，以及为本地播放组合 Blob |
+| 隔离世界 Content Script | `src/content.js`、`src/playback-bridge.js` | 使用页面登录会话请求播放清单、恢复本地播放，并在 `chrome.storage` / Popup 与页面主世界之间只转发配置和汇总指标 |
+| 页面主世界观察器 | `src/playback-observer.js` | 在 `document_start` 包装 XHR/fetch 与 Storage，观测播放器 Range TTFB、卡顿和缓冲；独立执行受控预热与关联估计器清洗，不拦截播放器响应 |
+
+选择 Offscreen Document 的原因是 Popup 关闭后会被销毁，Manifest V3 Service Worker 也可能随时休眠；将长时间网络流和 IndexedDB 写入放在隐藏文档中，能避免用户关闭弹窗后下载立即中断。Service Worker 只保留可恢复的协调逻辑，不依赖常驻内存状态。
+
+### 2. 页面识别与视频源选择
+
+页面解析支持：
+
+- 标准 `https://www.bilibili.com/video/BV...` 地址；
+- 标准 `av...` 地址；
+- 带 `bvid` 参数的稍后再看 `/list/watchlater` 页面；
+- `?p=N` 分 P，缓存键包含 `bvid` 与当前分 P 的 `cid`，不同分 P 不会互相覆盖。
+
+后台先请求 `https://api.bilibili.com/x/web-interface/view` 获取标题、作者、封面、分 P、时长与 `cid`。播放清单改用 `fnval=4048` 请求 DASH：优先让当前 B 站页面的 Content Script 发起带 `credentials: "include"` 的请求，使 `.bilibili.com` 登录 Cookie 按页面同源规则送往 `api.bilibili.com`；如果页面通道不可用，再回退到扩展 Service Worker 请求。
+
+画质面板不能只相信 `accept_quality`。该数组可能声明 1080P60、1080P、720P，但匿名响应实际只下发 480P、360P 的 `dash.video`。v1.3.0 改为遍历真实 `dash.video` 表示，只保留具有 URL、MP4 MIME 和编码信息的画质，再按画质代码降序排列，第一项才是“最高可缓存画质”。v2.0.0 又在每档画质内生成实际编码选项：自动模式先过滤 Chrome MediaSource 不支持的表示，再按 `bandwidth` 从低到高选择，带宽相同才按 AV1、HEVC、AVC 排序；用户显式选 AV1/HEVC/AVC 时必须取得对应轨道，不允许静默换编码。音频轨仍选择可播放的高质量表示；单段 MP4 保留为 AVC 兼容回退。
+
+### 3. IndexedDB 数据结构
+
+缓存数据库名称为 `bili-buffer-cache`，当前 schema 版本为 1，包含两个对象仓库：
+
+- `videos`：v1.1 旧缓存继续使用 `${bvid}:${cid}`，v1.3–v1.7 使用 `${bvid}:${cid}:q${quality}`；v2.0 新任务扩展为 `${bvid}:${cid}:q${quality}:c${codecPreference}`，不同画质/编码可以共存；已有 ID 不改名；
+- `chunks`：以 `[videoId, track, index]` 为复合主键保存二进制 Blob 分块。
+
+媒体主路由 v1.6.0 起使用 2 MiB 固定 Range 分块；不支持固定 Range 的 progressive 兼容回退仍按约 4 MiB 流式块写入。视频元数据中的关键字段包括：
+
+| 字段 | 含义 |
+| --- | --- |
+| `status` | `downloading`、`error` 或 `complete` |
+| `downloadedBytes` | 当前界面可见的实时接收字节数，可能包含尚未落盘的内存数据 |
+| `resumeBytes` | 已经作为完整 Blob 分块提交到 IndexedDB 的安全续传位置 |
+| `totalBytes` | 播放接口或 `Content-Range` 报告的完整媒体大小 |
+| `chunkCount` | 已经落盘的连续分块数 |
+| `quality` / `qualityLabel` | B 站清晰度代码及界面标签 |
+| `requestedQuality` | 用户明确选择的画质；恢复任务时继续请求同一画质 |
+| `codec` / `codecLabel` | 实际落盘视频轨的编码族及界面标签；旧记录缺失时从轨道 `codecs` 推断 |
+| `requestedCodec` | 用户的自动/AV1/HEVC/AVC 选择；恢复任务时不把显式编码静默替换 |
+| `mediaKind` | `progressive` 或 `dash`；旧记录缺失时按 progressive 兼容 |
+| `tracks.video` / `tracks.audio` | DASH 各轨的编码、表示身份、字节数、分块数和安全续传位置 |
+| `progress` / `speed` | 弹窗进度条和实时速度所需数据 |
+| `autoRetryCount` / `nextRetryAt` | v2.2.0 的持久自动续传次数与下次唤醒时间；Service Worker 重启后仍可恢复等待状态 |
+| `ownerId` / `ownerUrl` | UP 主数字 ID 与 B 站空间地址；v1.5.0 新增的可选元数据，旧记录缺失时不影响缓存读取 |
+| `downloadMetrics` | v2.0.0 记录并发、分块、CDN 主机、请求/重试、慢请求、主动切换、TTFB p50/p95、正文吞吐、网络字节和 IndexedDB 写入耗时；不记录签名 URL 或 Cookie |
+
+这里刻意区分 `downloadedBytes` 与 `resumeBytes`。并发时后面的 Range 可能先完成，它们会暂存内存并计入实时 `downloadedBytes`，但只有从当前水位开始连续的分块才能进入同一个 IndexedDB 事务，连同 `videos` 元数据一起提交并推进 `resumeBytes`。热更新或崩溃后仍只从 `resumeBytes` 继续，不会因为乱序完成而在文件中留下缺口。
+
+插件申请 `unlimitedStorage`，并在 Offscreen Document 初始化时尝试调用持久化存储 API。视频数据不写入 `chrome.storage`，避免把大二进制对象放入更适合配置项的小型键值存储。
+
+### 4. CDN 下载与断点续传
+
+下载流程如下：
+
+1. 通过页面登录会话读取最新 DASH / MP4 播放地址；
+2. progressive 检查画质和总大小；DASH 逐轨检查 `representationId + codecid + codecs` 身份；
+3. 从主 URL 和最多两个备用 URL 各取 64 KiB 固定 Range 并行探测，仅接受起点、终点和总大小合法的 HTTP 206；排序采用端到端有效吞吐，同时独立记录响应头到达时间（TTFB）与正文读取吞吐；单个探测 8 秒超时，不让卡死节点拖住任务；
+4. 单文件 progressive 使用 3 路并发；DASH 视频轨与音频轨同时下载，视频轨 2 路、音频轨 1 路，保持全局最多 3 个主动媒体连接；
+5. 每个请求使用精确的 `Range: bytes=<start>-<end>`，默认分块 2 MiB；完整校验 HTTP 206、`Content-Range`、总大小和实收字节数；
+6. 某个分块失败或 30 秒无法完成时，保持相同起止范围切换到下一个 CDN；HTTP 206 成功但 TTFB 高于 `max(800ms, 该节点热 TTFB 中位数 × 6)` 时不浪费已到手分块，但将该节点降级，让后续分块先尝试其他候选；接收了但失败的字节会从界面临时进度回滚；
+7. 乱序完成的分块先留在内存，只将从当前 `resumeBytes` 连续延伸的一批块写入数据库；`chunks` 与新 `resumeBytes` 在同一个读写事务中原子提交；
+8. 界面状态仍最快每 450 ms 广播，普通元数据持久化降频到约 1500 ms；完整分块提交不受该降频影响；
+9. 如果 progressive CDN 根本不支持固定 HTTP 206，回退到旧的单流兼容路线；其他错误保留最后已原子提交的安全水位；
+10. 遇到 HTTP 403、408、425、429、5xx、网络中断、超时或响应体提前结束时，先刷新播放地址并从已持久化的 `resumeBytes` 续传；连续刷新仍失败则写入带退避时间的 `downloading` 状态，由 `chrome.alarms` 看门狗再次接管，最多自动重试 8 次；
+11. progressive 要求完整单文件；DASH 要求视频轨和音频轨分别完整，才允许把聚合状态改成 `complete`。
+
+兼容回退路线如果续传请求意外收到 HTTP 200，会先清空旧块和续传位置，不会把完整文件错接在已有分块之后。并发主路对 HTTP 200、响应长度、`Content-Range` 起点/终点或总大小不一致都会拒绝提交，不会标记完成。
+
+### 5. CDN 防盗链请求头
+
+目标视频的 CDN 地址在缺少 B 站来源头时会返回 HTTP 403。扩展使用静态 `declarativeNetRequest` 规则，在请求真正发送前设置：
+
+```text
+Referer: https://www.bilibili.com/
+```
+
+规则同时限制：
+
+- 发起者必须是固定 ID `ppoagkhgdcfchiodhgadpenibndbnhcj` 的本扩展；
+- 目标域名只能是 `bilivideo.com` 或 `akamaized.net`；
+- 资源类型只能是扩展发起的 `xmlhttprequest`。
+
+因此不会修改用户访问其他网站时的普通请求，也不会全局伪造 Referer。固定 Manifest 公钥既用于稳定扩展 ID，也保证 DNR 的 `initiatorDomains` 在热更新后仍然匹配。
+
+### 6. 登录态与大会员访问
+
+Manifest 增加 `cookies` 权限，但读取范围仍受已有 `https://*.bilibili.com/*` 主机权限限制。Service Worker 只调用 `chrome.cookies.get()` 检查当前 Chrome 的 `SESSDATA` 是否存在，然后把“是否检测到会话”这个布尔状态交给下载模块；Cookie 值本身不会经扩展消息发送，不会写入 IndexedDB，也不会显示在 Popup 或日志中。
+
+视频信息请求仍可由 Service Worker 完成；播放地址请求优先发送给当前 B 站 Content Script，由页面源调用 `api.bilibili.com`。该接口响应允许 `Origin: https://www.bilibili.com` 且支持 credentials，因此 HttpOnly 登录 Cookie 不需要也不应该由扩展手工拼接。所有请求使用 `cache: "no-store"`，避免把匿名响应复用成登录响应。播放接口返回的 `vip_status` / `vip_type` 只用于提示，最终权限以实际返回的 DASH 表示为准。
+
+此方案的边界是“使用用户已经拥有的权限”，不是绕过权限：没有登录、会话过期、账号不是大会员、内容需要额外付费、存在地区限制或 B 站拒绝扩展请求时，插件会显示明确错误。扩展不会手工拼接 Cookie 请求头，也不会把 `SESSDATA` 提供给第三方程序。
+
+### 7. 播放侧 CDN 预热与带宽估计器护栏
+
+v2.0.0 参考 BiliLoader 对海外 CDN 冷命中的实测结论，但没有直接把固定参数照搬为不可变常数，而是将“完整离线缓存”和“当前播放加速”做成互补的两条链路。
+
+`src/playback-observer.js` 以 Manifest `world: "MAIN"`、`run_at: "document_start"` 注入，原因是播放器创建 XHR 和读取本地带宽估计发生得很早，隔离世界无法直接包装页面原生对象。它对播放器请求只做以下被动观察：
+
+1. 包装 `XMLHttpRequest.open / setRequestHeader / send`，只处理带 `Range` 且 host 属于 B 站媒体 CDN 的请求；`readyState=2` 记录响应头 TTFB，`loadend` 记录正文长度与总耗时；
+2. 对 `fetch` 只记录响应头，不 `clone()` 或二次读取播放器 body，避免额外内存和网络路径干扰；
+3. 以 `host + pathname` 识别媒体轨。pathname 可跨签名续期保持稳定，但 host 必须保留，因为不同海外边缘节点的缓存热度不能互相冒充；
+4. 观察页面 `<video>` 的播放、waiting/stalled、缓冲区间和标签页可见性；只向隔离世界发送主机级 p50/p95、慢请求数、卡顿、缓冲秒数、预热 MB 等聚合数据，不发送签名 URL、Cookie 或媒体正文。
+
+v2.0.0 至 v2.4.0 曾把累计播放 20 秒、已经出现慢 TTFB、标签页可见和本地播放余量至少 10 秒设为自动预热闸门，用于减少健康链路上的额外流量。v2.5.0 根据实际使用目标取消这些人为等待：开关开启时，XHR 在 `readyState=2`、fetch 在 Promise 返回响应对象时读取首个合法 `Content-Range`，直接以该响应末尾的下一字节作为提前加载起点；400 ms 调度器随即可以请求后续范围，不等待首个响应正文读完。前方窗口仍按“媒体总字节 / 视频时长 × 45 秒”估算并限制在 8–48 MB；初始 512 KiB × 2 路，成功较快时加性提高到 1 MiB / 最多 4 路，失败时并发减半并退回 512 KiB。单轨仍最多额外读取 200 MB，连续错误使用 2–30 秒指数退避，6 次仍失败则关闭该轨，避免对永久失效地址无限重试。每次必须收到合法 HTTP 206、匹配的 `Content-Range` 和完整字节数，body 读完后立即丢弃；提前加载的目的是促使边缘节点回源，不把这份数据写进播放器或片库。
+
+带宽估计器仍针对 `localStorage["bilibili_dash_throughput_lru_v1"]`，但不使用 BiliLoader 的固定 8000 kbps 下限。v2.0.0 为每个 CDN 收集热请求正文吞吐；至少有 3 个样本后取 p25 的 55%，并限制为 1000–12000 kbps，作为当前设备/线路的动态下限。只有同 host 在最近 15 秒刚发生冷命中时，才过滤低于下限的样本、重算 p25/p50/ewma，并把异常延迟限制到热 TTFB 推导出的上限。没有热基线、无关联慢请求、其他 host、非法 JSON 和普通 localStorage key 都原样保留。底层保留旧版备份 / 恢复命令以兼容既有实现，v2.5.0 的精简 Popup 不再显示手动入口。
+
+页面主世界不能使用 `chrome.storage`，因此 `src/playback-bridge.js` 运行在 ISOLATED world，只负责从 `chrome.storage.local["playbackAssistConfigV1"]` 读取配置、通过 `window.postMessage` 下发，并把聚合统计保存在该标签页内存中供 Popup 查询。v2.5.0 的界面只公开“开启 / 关闭”：底层以 `always` 表示开启、`off` 表示关闭，并把旧 `auto` / `always` 规范为开启、旧 `observe` / `off` 规范为关闭，不建立新存储键或迁移 IndexedDB。v2.3.0 加入的 `preheatColor` 继续原位使用，缺失时补入默认橙色 `#ff8a1f`。关闭 Popup 不会停止页面观察或提前加载，关闭视频标签页则自然终止这条页面内链路，不影响已交给 Offscreen 的完整缓存任务。
+
+### 8. 本地播放路线
+
+本地播放保留两条兼容路线：
+
+1. Content Script 在页面加载或收到 `CACHE_READY` 后询问后台当前 `bvid + cid` 是否存在完整缓存；
+2. progressive：Offscreen Document 验证并组合 `media` 分块，Content Script 读取 Blob 后创建页面同源 URL；
+3. DASH：Offscreen Document 分别验证并组合 `video` / `audio` Blob，返回两个扩展 Blob URL 及 MIME/codec；
+4. Content Script 读取两个 Blob 为 ArrayBuffer，创建页面 `MediaSource`；
+5. 为视频轨和音频轨分别创建 SourceBuffer，追加完整的 fragmented MP4，全部 `updateend` 后调用 `endOfStream()`；
+6. 两条路线都复用原 `<video>`，恢复切换前的播放时间、暂停状态、静音、音量和倍速；
+7. `loadedmetadata` 成功后记录 `playbackState=local`，并把工具栏徽标改为“本地”。
+
+两条路线都会在播放前把完整媒体复制到页面进程，DASH 还需要两份 ArrayBuffer，因而高画质视频的临时内存开销更明显。缓存仍由 B 站原播放器元素播放，所以控制条、宽屏、倍速和弹幕时间轴仍在原页面中。
+
+### 9. 开发态热更新、发布构建与数据连续性
+
+运行 `npm run dev` 后，本地服务只监听 `127.0.0.1:17321`。它通过文件系统监听 JS、JSON、HTML、CSS、PNG 与 SVG 的变化，并在 `/health` 返回递增修订号。最初把 750 ms 轮询器放在 MV3 Service Worker 中，但后台空闲休眠后定时器会停止，因此出现“服务正常、文件已变、浏览器却没有自动加载”的假热更新。v2.0.0 改由开发版 Offscreen Document 持续轮询；它只使用 Offscreen 可用的 `chrome.runtime` 通知后台。后台先把待刷新修订写入可跨 `runtime.reload()` 保留的 `chrome.storage.local`，再重载扩展。新 Service Worker 启动后消费并删除标记，只刷新匹配 `www.bilibili.com/video/*` / `list/*` 的现有标签页，使新增或修改的普通 Content Script 以及 MAIN/ISOLATED `document_start` 脚本真正重新注入；其他网站标签页不动。
+
+由于旧热更新器自己已经可能处于休眠状态，从旧实现升级到这一版时必须在扩展管理页手动重新加载一次；新版代码启动 Offscreen 监听器后，后续改动不再需要重复手动操作。本轮真实 Chrome 已确认普通 Content Script、MAIN 与 ISOLATED 三条注入链在 v2.0.0 页面共同运行；新的“Offscreen 发现修订 → 后台写入 local → runtime 重载 → 消费标记并刷新标签页”链路另用两项隔离回归覆盖。浏览器集成测试仍验证 Popup 即时恢复、后台快照以及 11,534,546 字节双轨下载。
+
+热更新的连续性依赖以下约束：
+
+- Manifest 中保存固定公钥，扩展 ID 不变；
+- IndexedDB 属于扩展 ID 对应的固定源，代码重载不会删除数据库；
+- Service Worker 启动时扫描 `status=downloading` 的任务并重新创建 Offscreen Document；
+- 开发态扩展重载后自动刷新已打开的 B 站视频页；页面刷新会打断当下播放，但不会删除片库或安全续传水位；
+- 如果发现历史记录写成 `complete` 但实际字节数不等于 `totalBytes`，先降级为下载任务，再从安全分块自动续传；
+- 下载恢复时优先向 B 站播放接口刷新 URL；如果原标签页已经关闭或页面会话不可用，则由扩展后台使用当前 Chrome 登录会话请求播放清单，再以任务开始时保存的 CDN 候选地址作为最后回退。候选地址不含 Cookie；地址过期、限流或临时断网时会保留安全水位并进入持久自动续传，不再要求原页面保持打开。
+
+热更新服务仅用于本地开发。v2.0.0 增加 `npm run build`：复制运行所需文件到 `dist/unpacked`，从发布版后台剥离 `startDevReload` 导入/调用，删除 `src/dev-reload.js` 和 `http://127.0.0.1/*` 权限，校验 Manifest 引用文件后生成根目录结构正确的 zip。开发目录不被改写；固定公钥、IndexedDB 名称/schema 和所有旧缓存键保持不变。
+
+### 10. Popup 画质、编码、辅助面板与状态刷新
+
+Popup 每 700 ms 拉取一次本地片库，以显示下载字节、速度和完成状态。画质菜单不能因此被重新创建：v1.5.0 使用 Chrome 116 已支持的 Popover API，把选项放在浏览器顶层弹出层中，避免被圆角外壳的 `overflow: hidden` 裁切；触发按钮和菜单项都由扩展自己的 HTML / CSS 绘制，不再依赖不同系统外观不一致的原生 `<select>`。
+
+Chrome 工具栏 Popup 关闭后会销毁其 Document，无法让 DOM 本身常驻。v1.7.0 将“已加载状态”移到 Popup 之外：Service Worker 按“标签页 ID + 视频/分 P”维护不含媒体 URL 与 Cookie 原文的界面快照，同时写入 `chrome.storage.session`。追踪参数、播放时间和 `vd_source` 变化不会造成错误失效；切换视频、分 P 或标签页时必须重新解析，不会闪现上一个视频的信息。
+
+首次打开同一视频时，后台将视频信息和画质解析合并为一条链路，从原来的两次 `view` + 一次 `playurl` 减少为一次 `view` + 一次 `playurl`。后续打开在 30 分钟有效期内直接恢复快照，不请求 B 站接口；超期时也先显示旧快照，再静默刷新。`SESSDATA` 变化会立即将快照标记为过期，但不删除首屏；用户在静默刷新期间刚选的画质以最新选择为准，不会被较早发出的请求覆盖。
+
+片库列表改为 Service Worker 直接读取共享 IndexedDB，不再为仅查看列表创建 Offscreen Document。正在下载的任务仍由 Offscreen 广播实时状态，快照只用于标题、画质、选择和登录提示的首屏恢复，不参与下载续传水位和完成判定。
+
+画质项会生成只包含“画质代码 + 显示文字”的稳定签名。片库轮询只更新下载状态时，签名不变，现有菜单节点、展开状态和焦点都保留；只有 B 站实际返回的画质集合改变时才重建选项。用户点击或通过方向键、Home、End、Enter 选择后，`selectedQuality` 立即更新，随后再按该值寻找同画质缓存并提交缓存任务。下载进行中会禁用并收起菜单，避免切换到与当前任务不同的轨道。
+
+视频信息接口同时返回 `owner.mid`。后台只保存数字 ID 和标准 `https://space.bilibili.com/<mid>` 地址，Popup 当前视频区与新写入片库记录中的 UP 主名称都可打开对应空间；旧缓存没有作者 ID 时仍可显示作者名称和继续播放、保存或删除。
+
+### 11. 播放器进度条中的预热区间
+
+B 站原生进度条用亮灰色表示播放器已经写入 MediaSource 的本地内存缓冲，深灰色表示尚未缓冲。插件预热则是另一种状态：Range 正文读完后立即丢弃，留下的是特定 CDN host 的边缘缓存副作用，不能修改 `HTMLMediaElement.buffered`，也不应伪装成原生灰色缓冲。
+
+v2.1.0 在 MAIN world 为每条媒体轨新增独立的 `prefetchedRanges`，只在插件预热请求收到合法 HTTP 206、范围一致且正文完整后写入；播放器自己的请求仍只进入 `covered`，不会被误标成插件贡献。预热字节区间按 `start / totalBytes`、`end / totalBytes` 映射成 0–100% 的近似时间轴比例。v2.2.0 进一步发现旧版显示的是各轨范围的并集，音频单轨成功也会把该比例段画蓝；现改为只显示当前 DASH 视频轨与音频轨的交集，单文件 MP4 仍直接显示自身范围。由于媒体可能是可变码率，这只是位置近似值，而不是精确秒数。
+
+页面观察器按照真实 B 站 DOM 同时覆盖两处：展开控制栏时的 `.bpx-player-progress-schedule` 和控制栏隐藏时的 `.bpx-player-shadow-progress-schedule-wrap`。v2.3.0 去掉色段原有的顶部内阴影，改为不透明纯色；默认橙色 `#ff8a1f`，Popup 提供橙、黄、青、蓝、紫、粉六种预设和浏览器调色器，选择经 Service Worker 持久化后由 ISOLATED bridge 同步到 MAIN world。层级高于灰色 buffer、低于当前播放进度；覆盖层 `pointer-events: none`，不会抢走拖动、点击跳转或悬停预览。B 站重建播放器 DOM 时 750 ms 内自动补回；SPA 切换视频时清空旧轨道和色块；同 pathname 切换 CDN host 时只把最新 host 标为活动轨道，避免把另一个边缘节点的预热误显示为当前节点可用。
+
+v2.3.1 修复多分段时间轴：B 站会为章节/分段分别创建多个 `.bpx-player-progress-schedule`，旧代码把全片归一化区间原样注入每一个节点，因而每段都出现相同比例的橙色块。新实现按同一主进度条或影子进度条分组，读取各子段实际宽度，建立互不重叠的全片起止比例；随后对全片预取范围求交并换算到段内坐标。没有交集的子段不创建覆盖层，白色播放分界也只投影到当前播放位置所属的子段。
+
+为了区分已经播放的原生色块与其前方相接的插件预热段，v2.3.0 另放置一个独立的 2 px 白色竖线：用活动 `<video>` 的 `currentTime / duration` 取得播放边缘，每约 33 ms 更新一次 `translate3d()`，只在该比例位于预热交集内或距离边界不超过 0.2% 时显示。使用 transform 而不是持续改写 `left` 或色段宽度，避免每帧触发布局；进度条处于 `:hover` 或 `:focus-within` 时用 CSS 隐藏白线，不干扰用户拖动与悬停预览。白线只是播放/预热状态的视觉分界，不改变预热数据或播放器进度。
+
+### 12. 整体运行时状态图
+
+```mermaid
+stateDiagram-v2
+    [*] --> 扩展启动
+    扩展启动 --> 修复历史记录: Service Worker 启动
+    扩展启动 --> 注入页面观察器: document_start / MAIN world
+    注入页面观察器 --> 观测网络与播放器: 不拦截原请求
+    观测网络与播放器 --> 等待首个媒体范围: 尚无真实 URL / 字节位置
+    等待首个媒体范围 --> 继续观察: 提前加载关闭
+    等待首个媒体范围 --> 立即提前加载: 开启 / 收到合法 Content-Range 响应头
+    立即提前加载 --> 继续观察: 读完即丢弃 / 达 200MB 上限
+    立即提前加载 --> 自适应降档: 超时 / 范围不完整
+    自适应降档 --> 立即提前加载: 并发减半 / 512KiB
+    观测网络与播放器 --> 高延迟响应: TTFB 超动态阈值
+    高延迟响应 --> 关联估计器护栏: 同 host 正常样本≥3 / 开关开启
+    关联估计器护栏 --> 继续观察: 过滤关联低样本并重算
+    修复历史记录 --> 空闲: 无待恢复任务
+    修复历史记录 --> 恢复任务: 存在 downloading / 伪 complete
+    空闲 --> 读取Popup快照: Popup 查询当前标签页
+    读取Popup快照 --> 可选画质: 同标签页同视频，立即恢复
+    读取Popup快照 --> 解析页面: 首次打开 / 页面已切换
+    读取Popup快照 --> 后台静默刷新: 快照过期 / 登录态变化
+    后台静默刷新 --> 可选画质: 保留当前首屏并更新快照
+    解析页面 --> 不可缓存: 非 B 站视频 / 格式不支持
+    解析页面 --> 可选画质: 获得 bvid、cid 与真实媒体轨
+    可选画质 --> 可选编码: 自动 / AV1 / HEVC / AVC
+    可选编码 --> 空闲: 用户未开始
+    可选编码 --> 创建任务: 点击缓存
+    恢复任务 --> 创建任务
+    创建任务 --> CDN探测: Offscreen 接管，Popup/原页可关闭
+    CDN探测 --> 并发分块: 存在合法 HTTP 206 候选
+    CDN探测 --> 单流兼容: progressive 不支持固定 Range
+    CDN探测 --> 刷新播放地址: 无合法候选 / 403 / 网络中断
+    并发分块 --> 节点回退: 分块失败 / 30s 超时
+    并发分块 --> 动态节点降级: HTTP 206 成功但 TTFB 慢
+    动态节点降级 --> 并发分块: 后续分块优先其他 CDN
+    节点回退 --> 并发分块: 备用 CDN 成功
+    节点回退 --> 刷新播放地址: 候选用尽
+    并发分块 --> 原子提交: 连续 Range 批次就绪
+    原子提交 --> 并发分块: 仍有后续范围
+    原子提交 --> 完整性校验: 所有范围已提交
+    单流兼容 --> 完整性校验: 读取结束
+    单流兼容 --> 刷新播放地址: 可恢复网络错误
+    完整性校验 --> 已完成: progressive 单文件完整 / DASH 双轨完整
+    完整性校验 --> 错误可续传: 字节、分块或轨道不完整
+    刷新播放地址 --> 创建任务: 页面会话或后台会话取得新 URL
+    刷新播放地址 --> 等待自动续传: 连续刷新失败 / 保留安全水位
+    等待自动续传 --> 恢复任务: 定时看门狗到期 / 后台重启
+    等待自动续传 --> 错误可续传: 超过 8 次
+    错误可续传 --> 创建任务: 用户重试 / 热更新恢复
+    已完成 --> 本地播放: 打开同视频
+    已完成 --> 保存文件: 点击保存
+    已完成 --> 删除: 点击删除
+    错误可续传 --> 删除
+    等待自动续传 --> 删除
+    删除 --> 空闲: 终止活跃请求并删除元数据/分块
+    本地播放 --> 网络播放回退: Blob / MediaSource 加载失败
+    本地播放 --> 已完成: 页面关闭
+    保存文件 --> 已完成: Chrome Downloads 已接管
+```
+
+热更新是与上述业务状态并行的运行事件：修订号变化后先持久化待刷新标记，再执行 `chrome.runtime.reload()`；新 Service Worker 从最后原子提交的 `resumeBytes` 重新进入“恢复任务”，并刷新现有 B 站视频页以重新注入页面脚本。两步都不清除 IndexedDB。
+
+## 5. 早期遇到的问题与解决过程
+
+### 问题一：目标视频下载立即返回 HTTP 403
+
+**现象**：`BV1Kg8t6NEmN` 点击缓存后显示“CDN 下载失败（HTTP 403）”。
+
+**复现**：对播放接口返回的同一个签名 CDN URL 请求 `bytes=0-31`：
+
+- 不带 B 站 Referer：HTTP 403，返回 nginx 错误页；
+- 带 `Referer: https://www.bilibili.com/`：HTTP 206，返回正确的 32 字节范围。
+
+**根因**：该 CDN 节点启用了来源校验，而扩展 Offscreen Document 的 `fetch()` 默认不会自动带上 B 站页面 Referer。
+
+**修复**：增加范围严格受限的 DNR `modifyHeaders` 规则，由浏览器在请求发送阶段补充 Referer。修复热加载后，同一视频从 0% 正常开始下载，确认越过 403。
+
+### 问题二：零字节错误任务进入“已缓存”片库
+
+**现象**：请求在收到第一个媒体字节前就失败，但元数据已经写入 `videos`，Popup 按“存在记录”把它显示在本地片库中。
+
+**根因**：任务状态和可用缓存被当成同一个概念，没有区分“当前视频的失败重试入口”与“片库中的真实本地数据”。
+
+**修复**：
+
+- 当前视频卡片仍显示错误和“继续 / 重新缓存”，用户无需先删除记录；
+- 片库使用 `shouldShowInLibrary()` 过滤：错误任务只有 `resumeBytes > 0` 时才显示；
+- 零字节错误不会计入片库数量和容量；已有真实分块的错误任务继续显示，便于续传或删除。
+
+### 问题三：热更新后 11.7 MB 被错误标记为完整 78.1 MB
+
+**现象**：下载到约 13% 时触发热更新。扩展恢复后，当前按钮一度显示“已缓存完成，78.1 MB”，但片库实际只统计 11.7 MB。
+
+**根因**：B 站 CDN 即使收到开放式 `Range: bytes=<offset>-`，也可能只返回几 MiB 的 HTTP 206 响应。旧逻辑用“这次响应流结束”代表“整个文件结束”，并用 `offset + Content-Length` 计算总大小，因此把 CDN 的一个短分段误认为完整媒体。
+
+**修复**：
+
+- 解析 `Content-Range` 的 `start`、`end` 与完整 `total`；
+- 验证响应起点必须等于请求偏移，实际读取长度必须等于该响应声明的范围；
+- 如果 `end + 1 < total`，自动从下一偏移继续请求同一 CDN；
+- 完成状态同时要求实际字节数等于播放接口给出的预期大小；
+- Service Worker 启动时自动修复历史上的“元数据 complete、字节数不完整”记录并继续下载。
+
+Chrome 实测该错误记录被自动识别，从已有安全分块继续，依次观察到 23.0 MB、44.0 MB、62.5 MB、77.0 MB，最终达到完整 81,871,821 字节。
+
+### 问题四：热更新时最后一段内存数据可能消失
+
+**现象**：下载进度可能已经显示 10.5 MB，但数据库中只有两个完整 4 MiB 分块。若此时扩展重载，剩余约 2.5 MB 尚在内存中。
+
+**根因**：界面接收进度与 IndexedDB 事务提交进度不同。直接从 `downloadedBytes` 续传会跳过没有落盘的尾部。
+
+**修复**：新增并严格使用 `resumeBytes`。进度条可以显示实时 `downloadedBytes`，但重启只从最后一个成功提交的完整分块继续。重复下载少量尾部比产生永久文件空洞更安全。
+
+### 问题五：跨源 iframe 播放桥收不到消息
+
+**最初方案**：在 B 站页面插入隐藏的 `chrome-extension://.../playback-bridge.html` iframe，让 iframe 读取扩展 IndexedDB，再通过 `postMessage` 把 Blob 传给 Content Script。
+
+**现象**：iframe 一直停在 loading。Chrome 错误页记录：目标源设置为扩展源，但接收窗口当时仍被识别为 `https://www.bilibili.com`。后续加入 load 事件、就绪握手、随机令牌和经典脚本引导，仍无法在 B 站隔离世界中稳定完成通信。
+
+**根因**：Content Script 的隔离世界、iframe 初始 `about:blank` 窗口、扩展源导航和 `WindowProxy` 身份之间存在不稳定时序；即使加握手，也不能把本地播放建立在这种浏览器实现细节上。
+
+**处理**：彻底移除 iframe 和 `web_accessible_resources`，改为 Offscreen Document 组合 Blob，再通过后台返回 Blob URL 字符串。
+
+### 问题六：网页不能直接播放扩展源 Blob URL
+
+**现象**：Content Script 把 `blob:chrome-extension://...` 直接赋给 B 站 `<video>` 后，元素触发 error；B 站播放器随后自动恢复为自己的网络 MediaSource。调试时曾看到 `marker=local`，但页面状态已经变成 error，说明只看标记不足以证明本地播放成功。
+
+**根因**：Blob URL 绑定创建它的源和存储分区。B 站页面不能稳定读取由扩展源创建的媒体 URL。
+
+**修复**：Content Script 先 `fetch()` 扩展 Blob URL，校验 Blob 大小，再在页面上下文创建新的对象 URL。最终 URL 形如 `blob:https://www.bilibili.com/...`，与页面播放器同源。只有 `loadedmetadata` 成功后才把状态设为 local；媒体 error 会清除本地标记并保留网络播放作为回退。
+
+### 问题七：片尾自动连播干扰验证
+
+**现象**：目标视频历史进度接近结尾，等待本地 Blob 组合时页面自动跳到推荐视频，读取到的时长变成约 735 秒，造成一次无效验证。
+
+**处理**：最终回归使用目标地址加 `?t=1` 从开头打开，同时核对当前 URL、`bvid`、视频时长、本地状态和就绪状态，避免只凭当前 `<video>` 是否为 Blob URL 下结论，因为 B 站网络播放器本身也使用 Blob MediaSource。
+
+### 问题八：指定高画质可能被接口静默降级
+
+**现象**：B 站播放接口即使收到较高 `qn`，在未登录、会员失效或该格式不可用时，也可能以 `code=0` 返回较低的 `data.quality`。如果只判断请求成功，界面会声称缓存了用户选择的画质，实际文件却更低。
+
+**处理**：画质选择来自当前会话的 `accept_quality`；真正开始任务后再次请求并严格比较“请求画质”和“实际画质”。不相等时停止任务并给出登录/会员提示。断点续传还要求已有记录的 `quality` 与新媒体源完全一致，否则先清除不兼容分块，防止两个清晰度被拼接。
+
+### 问题九：Offscreen Document 不能直接使用 Cookies API
+
+**现象**：Offscreen Document 适合长时间下载，但 Chrome 对它开放的扩展 API 很有限，不能把 `chrome.cookies` 读取逻辑放在该文档中。
+
+**处理**：由 Service Worker 读取 `SESSDATA` 是否存在，只传递布尔状态；v1.3.0 起播放清单优先由 B 站 Content Script 使用页面会话请求，Offscreen Document 只接收已解析的媒体清单并负责 CDN 下载。这样既符合运行环境限制，也避免 Cookie 原始值跨上下文传播和落盘。
+
+### 问题十：v1.2.0 的“最高画质”实际仍停在 720P
+
+**用户复验**：画质选择器没有默认到真正最高画质，大会员登录后能够观看的更高画质也没有出现。
+
+**根因一**：v1.2.0 仍使用 `fnval=1` 请求 progressive MP4。这种响应在目标视频上只提供 720P、360P；1080P60、1080P、4K 等主流高画质实际位于 `dash.video`，因此仅增加选择器无法取得它们。
+
+**根因二**：画质列表使用 `accept_quality`，但该字段可能声明并未实际下发的档位。匿名 DASH 实测声明 `[116, 80, 64, 32, 16]`，实际视频表示只有 480P 和 360P。直接展示声明值会制造又一个“看似最高、实际无法缓存”的错误。
+
+**根因三**：扩展源 `fetch(credentials: "include")` 是否获得页面会话受请求来源和 Cookie 规则影响；仅检测到 `SESSDATA` 存在，不等于这次播放地址请求已经以页面登录态完成。
+
+**v1.3.0 修复**：播放清单切换到 `fnval=4048`，并由当前 B 站 Content Script 优先发起带 credentials 的请求；画质列表只取实际返回的 DASH 视频表示。缓存层加入视频/音频双轨、独立范围续传与完整性校验；播放层加入双 SourceBuffer MediaSource。新画质使用独立 `:q<quality>` 缓存键，旧 720P 不再锁住默认选择，也不会在下载高画质时被覆盖。
+
+### 问题十一：展开画质选项时偶发没有反应或切换失败
+
+**现象**：原生画质选择框有时可以正常选择，有时点击选项后界面仍显示旧画质，或者展开的系统选项突然消失，看起来像点击没有反应。
+
+**复现条件**：Popup 打开后每 700 ms 执行一次 `LIST_VIDEOS`。每次请求完成都会调用 `renderCurrent()`，旧版 `renderQualityControl()` 又无条件执行 `replaceChildren()`，删除全部 `<option>` 后重新创建。只要轮询响应恰好落在用户展开原生选择框到提交 `change` 事件之间，正在操作的 `<select>` 内部选项就被替换；浏览器原生弹层会关闭，或者将选择结果落到已经失效的节点上。
+
+**根因**：下载状态是高频变化数据，画质集合是低频稳定数据；旧实现把两者绑定到同一次破坏性渲染中。问题不是 B 站拒绝了某个画质，也不是 `START_CACHE` 没有读取选中值，而是 Popup 自己在交互过程中销毁了原生控件状态。
+
+**v1.5.0 修复**：改为自定义 Popover 下拉菜单，并按画质项稳定签名决定是否重建。下载进度刷新只更新按钮和提示，不替换菜单 DOM；选择后先更新内存中的 `selectedQuality`，再刷新当前卡片。实测菜单展开 1.7 秒、跨过至少两次 700 ms 轮询后仍保持展开；选择 720P 后再等待 1.7 秒仍显示 720P。鼠标选择及方向键、Home、End、Enter、Escape 均可操作。
+
+### 问题十二：重复启动热更新服务后出现空转进程
+
+**现象**：同一项目重复执行 `npm run dev`，第二个服务正确收到 `EADDRINUSE`，但对应的 Node 进程仍然存在。端口仍由第一个服务正常监听，因此功能看起来没有异常，却会留下无用的文件监听器。
+
+**根因**：端口错误处理只设置了 `process.exitCode = 1`。此时 HTTP Server 没有监听成功，但已经创建的递归文件监听器仍持有事件循环，Node 不会自动退出。
+
+**v1.5.0 修复**：在 `EADDRINUSE` 分支先关闭文件监听器，再保留非零退出码。回归时再次执行 `npm run dev`，副本打印“热更新服务可能已经启动”后以退出码 1 立即结束；已经占用 17321 端口的正常服务继续监听，不再留下长期空转进程。
+
+### 问题十三：缓存吞吐量偏低的性能分析
+
+**现象**：缓存能够稳定进行，但界面显示的下载速度低于用户对当前网络带宽的预期，高画质 DASH 完成时间尤其明显。
+
+**v1.5.2 旧链路的主动取舍**：下载器以正确续传优先，每条媒体轨只打开一个 CDN 流，按连续偏移顺序读取；每累计约 4 MiB 等待一次 IndexedDB 分块事务，每约 450 ms 等待一次视频元数据事务。DASH 还使用 `for...of + await` 依次下载视频轨和音频轨。主 CDN 只有发生错误时才尝试备用 URL，不会因为“能下载但速度慢”主动换节点。这套路线容易证明 `resumeBytes` 连续、`Content-Range` 正确和最终字节完整，但没有利用多连接带宽，并会把数据库事务延迟纳入下载墙钟时间。
+
+**可能的外部瓶颈**：签名播放地址已经由 B 站选择 CDN，海外线路的节点距离、晚高峰拥塞、运营商跨境路由或 CDN 对单连接的限速都不受扩展直接控制。高画质文件更大只会延长完成时间，不必然说明扩展吞吐变差；同时缓存多个视频还会共享同一网络带宽。
+
+**实施前的可行优化清单**：
+
+1. 将进度广播与持久化解耦：界面仍可约 450 ms 更新，但小型元数据只每 1–2 秒或在完整分块落盘后提交；`resumeBytes` 继续只指向已提交分块。风险低，预期收益有限到中等。
+2. 并行下载 DASH 视频轨与音频轨：两个轨道本来就使用独立的 IndexedDB 键，可以并行网络读取；但必须由单一协调器合并两边状态，不能让两个异步任务互相覆盖同一条 `videos` 元数据。风险中等，音频轨占比较小时总收益有限；若 CDN 按连接限速则收益更明显。
+3. 对主 URL 和备用 URL 做短时测速或持续低速切换：在相同安全偏移处比较候选 CDN，只保留最快且返回合法 `Content-Range` 的连接。可以改善节点选错，但会增加少量重复流量，且签名 URL 可能同时受同一上游限速。
+4. 为单轨增加 2–4 路固定范围并发：把媒体切为有明确起止位置的 Range 段，并行请求、逐段校验；完成段可按索引写入，但只有从零开始连续存在的段才能推进安全续传水位。这是最可能突破单连接限速的方案，也是改动最大的方案，必须补充乱序完成、某段失败、备用 CDN、热更新恢复、删除中止和最终拼接顺序测试。
+
+**v1.6.0 实施结果**：按上述顺序完成了受控并发实现。进度广播保持约 450 ms，普通元数据持久化改为约 1500 ms；DASH 视频/音频轨并行，但总连接限制为 2+1；CDN 候选先用 64 KiB 范围探测并排序；正式下载采用 2 MiB 固定 Range，progressive 默认 3 路并发。分块请求失败或 30 秒超时时按同一范围切换备用 CDN。
+
+**4 MiB 实测问题**：对目标视频的匿名 DASH 轨做短范围测试时，4 MiB 请求两次在约 3.5–3.99 MiB 后被对端关闭，Node 网络层报 `UND_ERR_SOCKET` / `terminated`。这不是 HTTP 403，而是响应体未读完时的连接中断；新下载器会回滚该尝试的临时进度并切换候选，不会提交半块。为降低这类中途断开的成本，最终默认分块收紧为 2 MiB。
+
+**真实 CDN 速度对比**：2026-08-23 对 `BV1Kg8t6NEmN` 公开匿名播放清单中实际可用的 480P AVC 视频轨测试，媒体总大小 42,214,618 字节；使用同一优选节点读取 3 个 2 MiB 范围，顺序请求为 16.55 Mbps，3 路并发为 50.21 Mbps，该次样本提速 3.03 倍，两轮均未发生候选重试。这是当时网络与 CDN 的短样本，不保证所有视频和时段都有同样倍数。
+
+**浏览器完整性回归**：在真实 Chrome IndexedDB 中用确定性假 CDN 完整执行 Offscreen 任务，视频轨 9,437,321 字节分成 5 块，音频轨 2,097,225 字节分成 2 块；乱序并发后组合结果逐字节一致，指标显示视频轨 2 路、音频轨 1 路，且优先选中模拟的更快备用 CDN。
+
+### 问题十四：`Failed to execute 'fetch' on 'Window': Illegal invocation`
+
+**现象**：v1.6.0 热更新后开始缓存，任务在 CDN 探测或固定 Range 请求前立即失败，界面显示 `Failed to execute 'fetch' on 'Window': Illegal invocation`。
+
+**根因**：为了在单元测试中注入假网络实现，并发下载器使用了 `const fetchImpl = options.fetchImpl || fetch`。这会把浏览器原生 `Window.fetch` 取出为脱离所属对象的普通函数；某些 Chrome 执行上下文会对 Web API 进行接收者校验，不以 `Window` 为调用者时抛出 `Illegal invocation`。旧下载路线直接写 `fetch(...)`，因此之前没有这个问题。
+
+**v1.6.1 修复**：默认路线不再保存脱离上下文的原生函数，而是经由 `platformFetch(...args) { return globalThis.fetch(...args); }` 调用，确保 `fetch` 始终以当前全局 `Window` 为接收者；测试注入的 `fetchImpl` 仍保持可用。CDN 探测与正式分块两个入口同时修复。
+
+**回归**：新增一个会主动校验 `this === globalThis` 的原生方法模拟，覆盖探测和正式下载两条路线；23 项单元测试全部通过。随后在真实 Chrome 重新执行 Offscreen + IndexedDB 双轨集成测试，11,534,546 字节组合结果仍逐字节一致；B 站页面已读到 `biliBufferVersion=1.6.1`。
+
+### 问题十六：Chrome 更新后整个插件「没反应」
+
+**现象**：用户 Chrome 升到 154 后，弹窗打不开、网页侧没有加速、图标点不动，只能得到「貌似不能用了」。
+
+**第一层排查（排除代码不兼容）**：用与用户完全同构建的 Chrome for Testing 154.0.8037.57 加载扩展：MAIN/ISOLATED 注入、播放加速、页面缓存命中、Offscreen 离线下载与 IndexedDB 落盘、共享下载预算租约、DNR 规则集全部正常；仓库四个浏览器套件在 154 上全绿。因此不是 Chrome 154 的 API 变更导致。
+
+**第二层排查（真正的直接原因）**：读用户配置发现扩展处于被停用状态——`Profile 1/Secure Preferences` 里 `extensions.settings.ppoagkhgdcfchiodhgadpenibndbnhcj.disable_reasons = [1]`（`DISABLE_USER_ACTION`），安装形态是解包安装（`location = 4`，路径位于 `Profile 1/UnpackedExtensions/bili-buffer-extension-2.8.7_FQlf2e`）。扩展被停用后内容脚本、DNR 规则与 Service Worker 全部不运行，表现就是「完全没反应」。同时验证过「关闭开发者模式不会自动停用解包扩展」（153/154 均不触发），因此没有证据把这次停用归因于 Chrome 的自动行为，但恢复方式一致：`chrome://extensions` 打开开发者模式并重新启用。这一点写进 README，并作为弹窗自检区块的固定提示文案。
+
+**第三层排查（为什么没有提前发现）**：仓库的浏览器验收跑在 Playwright 自带的 Chrome for Testing 153 上，比用户的 154 低一档；而覆盖弹窗与离线下载的 `npm run test:popup` 自 2026-09-22 引入共享下载预算后就一直是失败的。原因是两个 Offscreen 夹具的消息桩只回 `{ok:true}`，下载器申请不到 `lease`，会一直等到 15 秒预算超时，于是套件在「等待下载完成」处超时——而浏览器套件不在 `npm test` 里，红灯长期无人察觉。两件事叠加，等于「验收全绿」与「插件不可用」可以同时成立。
+
+**修复**：夹具改为直接调用生产状态机 `transitionBudget`（`tests/fixtures/fake-budget.mjs`），并断言租约申请与归还；新增 Chrome 版本兼容门禁（`browser-compat.json` + `scripts/check-browser-compat.mjs`，纳入 `npm run check`）；新增同版验收命令 `npm run test:chrome`；新增运行期浏览器自检 `src/health-check.js`，弹窗在能力缺失时列出具体失败项与排查入口。
+
+**验证**：`npm run check`、`npm test`（227 例）、`npm run test:popup` 在 153/154 均通过；`npm run test:chrome` 自动下载 154.0.8037.57 并跑完四个套件；真实浏览器确认自检全绿且健康时弹窗不显示该区块，模拟能力缺失时区块出现、列出失败项、重复检测不重建节点、恢复后收起。
+
+### 问题十五：每次打开 Popup 都重新显示加载状态
+
+**现象**：同一视频页没有变化，关闭再打开插件后仍会先显示“正在识别视频 / 正在读取可用画质”，随后才恢复标题、画质和按钮。
+
+**平台边界**：Chrome Action Popup 不是可隐藏的常驻窗口。它失去焦点后 Document 会被销毁，下次点击必然重新加载 HTML/JS；无法用扩展代码要求 Chrome 永久保留该 DOM。能够改变的是把界面所需状态移出 Popup，使新 Document 在打开后立即恢复。
+
+**旧链路的额外延迟**：`initialize()` 每次都同时发起 `GET_PAGE_INFO` 和 `LIST_VIDEOS`；页面信息返回后又发起 `GET_QUALITY_OPTIONS`，而后台在这个分支中再次调用 `getPageInfo()`。因此每次打开至少包含两次视频信息请求和一次播放清单请求；`LIST_VIDEOS` 还会先确保 Offscreen Document 存在，仅查看本地数据也要等待隐藏文档创建。
+
+
+[Showing lines 1-458 of 936 (50.0KB limit). Use offset=459 to continue.]

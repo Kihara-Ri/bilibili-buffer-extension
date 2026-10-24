@@ -46,7 +46,7 @@ npm run store:assets
 
 1. **先补两个决定**（见 `listing.md` 第 0 节）：
    - 名称与商标：图标已采用原创「漂流瓶」造型；名称 `海内存知` 的说明与非官方身份仍按 `listing.md` 第 0.1 节处理。
-   - 隐私政策网址：随官网发布在 `https://haineicunzhi.kihara.cn/privacy.html`（部署见 listing.md 0.2 与技术文档 15.5）。
+   - 隐私政策网址：随官网发布在 `https://haineicunzhi.kihara.cn/privacy.html`（部署见 listing.md 0.2 与 `docs/development/build-and-release.md` 第 4 节）。
 2. **跑通校验并出包**
    ```bash
    npm run check && npm test && npm run build

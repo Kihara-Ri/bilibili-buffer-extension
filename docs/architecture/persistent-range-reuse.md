@@ -1,17 +1,18 @@
 # 持久化源范围复用（离线已下载字节 → 在线播放）
 
-> 对应实现：`src/source-range-store.js`（镜像与校验）、`src/offscreen.js` 的 `createSourceMirror`、
-> `src/playback-reuse.js`（页面侧）、`src/playback-bridge.js`、`src/background.js` 的 `SOURCE_RANGE` 分支、
-> `src/playback-observer.js` 的 `loadPlayerRange`。
-> 本文只描述这项能力；页面内存缓存本身见 [播放缓存设计](playback-cache-design.md)，
-> 缺口拼接见 [部分缓存复用](partial-cache-reuse.md)。
+> 适用版本：v2.12.6 · 最后核对：2026-10-24
+> 对应实现：`src/source-range-store.js`（镜像仓库与校验）、`src/source-mirror.js`（下载侧写入器）、
+> `src/offscreen.js` 的 `createSourceMirror` 调用点、`src/playback-reuse.js`（页面侧读取）、`src/playback-bridge.js`、
+> `src/background.js` 的 `SOURCE_RANGE` 分支、`src/playback-observer.js` 的 `loadPlayerRange`。
+> 页面内存缓存见[播放提前加载](playback-assist.md)，缺口拼接见[部分命中复用](partial-cache-reuse.md)。
+> 2.8.6 引入。
 
 ## 1. 目标与边界
 
-离线缓存已经把原始 CDN 字节写进 IndexedDB。播放同一个视频时，这些字节本可以直接服务播放器的 Range 请求，
-但原实现的页面缓存只认「本次会话内存里的字节」+「本次会话已验证的 URL」，两者之间没有通道。
+离线缓存把校验过的原始 CDN 字节写进了 IndexedDB。播放同一个视频时，这些字节本可以直接服务播放器的 Range 请求，
+但页面缓存只认「本次会话内存里的字节」和「本次会话验证过的 URL」，两者之间原本没有通道。
 
-本次打通的方向是**单一方向**：
+这项能力只打通**一个方向**：
 
 ```text
 offscreen 离线下载（逐字节校验过的源范围）
@@ -23,7 +24,7 @@ offscreen 离线下载（逐字节校验过的源范围）
 隔离桥 → 页面 playback-reuse → 观察器 loadPlayerRange → 播放器 206
 ```
 
-**明确不做**（并已在测试中固定）：
+**明确不做**（已在测试中固定）：
 
 - 不从页面往离线片库回写字节：离线分块要求从 0 连续推进，页面请求范围是任意的，
   混入会产生第二写者与半成品风险。
@@ -84,7 +85,8 @@ offscreen 离线下载（逐字节校验过的源范围）
 
 - 首次请求通常拿不到该 URL 的总长（要等站点自己的 `Content-Range` 或 playurl 的 `size` 字段），
   因此**同一个 URL 的第一次请求一般不会命中**，命中从第二次开始。
-- 复用命中不计入 CDN 吞吐样本、节点健康度与黄色进度条（另有 `reuseHits` / `reuseMB` 统计）。
+- 复用命中不计入 CDN 吞吐样本与节点健康度，单独统计为 `reuseHits` / `reuseMB`。命中的字节会写入页面缓存，
+  之后的播放器请求可以直接命中，满足条件时也参与进度条着色。
 - 删除某个离线视频不会立即清理它的镜像行；镜像行由签名有效期与 LRU 上限共同约束（≤1 小时、≤64 MiB）。
 - 镜像会给离线缓存额外写入最多 64 MiB 的重复字节，这是刻意的磁盘换播放延迟权衡。
 - 只覆盖 IndexedDB 可用的环境；镜像不可用时功能整体降级，不报错、不阻塞。

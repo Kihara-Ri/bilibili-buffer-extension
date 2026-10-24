@@ -22,7 +22,7 @@
 
 ### 0.2 隐私政策网址
 
-隐私政策随官网发布（技术文档 15.5）：`https://haineicunzhi.kihara.cn/privacy.html`。
+隐私政策随官网发布（见 `docs/development/build-and-release.md` 第 4 节）：`https://haineicunzhi.kihara.cn/privacy.html`。
 
 1. DNS：`haineicunzhi.kihara.cn` 添加 CNAME 指向 `kihara-ri.github.io.`。
 2. 仓库 `Settings → Pages`：Source 选 **GitHub Actions**，Custom domain 填 `haineicunzhi.kihara.cn`，勾选 **Enforce HTTPS**。

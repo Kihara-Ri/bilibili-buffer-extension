@@ -1,8 +1,10 @@
 # 兼容与回退
 
-> 适用版本：v2.8.7。本文汇总「能力缺失」与「运行期失败」两类情况下插件的行为承诺，
-> 以及对应的自动化证据。对应实现分散在 `src/playback-reuse.js`、`src/source-range-store.js`、
-> `src/source-mirror.js`、`src/playback-cache.js`、`src/playback-observer.js`、`src/playback-bridge.js`。
+> 适用版本：v2.12.6 · 最后核对：2026-10-24
+> 本文汇总「能力缺失」与「运行期失败」两类情况下插件的行为承诺，以及对应的自动化证据。
+> 对应实现分散在 `src/playback-reuse.js`、`src/source-range-store.js`、`src/source-mirror.js`、
+> `src/playback-cache.js`、`src/playback-observer.js`、`src/playback-bridge.js`。
+> 浏览器能力的运行期自检见[浏览器版本兼容与自检](../development/browser-compat.md)。2.8.7 引入。
 
 ## 1. 原则
 
@@ -21,7 +23,7 @@
 | `atob` / `btoa` / `window.postMessage` 缺失 | 页面侧复用读取 | 读取器直接返回未命中，不注册消息监听 | 同上 |
 | `crypto.randomUUID` 缺失 | 页面侧复用读取 | 回退到时间戳 + 计数器 ID，仍完成读取 | 同上 |
 | `MutationObserver` 缺失 | 视频元素补扫 | 观察器照常加载，1 秒定时器继续扫描 | 同上 |
-| Playwright/桥不可用、`chrome.runtime.sendMessage` 失败 | 复用读取 | 桥回未命中；页面等满超时后走网络 | 同上 |
+| 隔离桥未注入、`chrome.runtime.sendMessage` 失败 | 复用读取 | 桥回未命中；页面等满超时后走网络 | 同上 |
 | `BiliPlaybackReuse` 模块整体缺失 | 持久源范围复用 | 观察器不尝试复用，直接走网络 | `tests/playback-reuse.test.mjs` |
 | `window.fetch` / `XMLHttpRequest` 缺失 | 缓存适配器 | 适配器不安装，全部走原生 | `tests/playback-cache*.test.mjs` |
 
@@ -32,7 +34,7 @@
 | 页面 → 桥 → 镜像读取 | 1.5 秒 | 连续 3 次失败暂停 60 秒 | 任意一次成功清零计数 |
 | 桥 → 后台回包 | 1.4 秒（迟到即丢） | — | — |
 | 离线镜像写入 | 串行队列 | 同一下载任务连续 3 次失败即停写 | 新任务重新开始 |
-| 缓存→网络回退 | 首字节 8 秒 / 正文停滞 4 秒，每片最多 3 轮 | 403 按地址隔离 60 秒、其他 1→16 秒指数退避 | 健康度按成功请求恢复 |
+| 分片引擎 → 原生回退 | 首字节 8 秒 / 正文停滞 4 秒；后台分片最多 3 轮，急需分片 2 轮 | 403 按地址隔离 60 秒、其他 1→16 秒指数退避 | 健康度按成功请求恢复 |
 
 **取消语义**：观察器的 `loadPlayerRange` 先校验 `signal.aborted`、`cfg.mode` 与页面世代，
 再尝试复用；取消或导航后不写入页面缓存、不交付旧字节、不回退原请求。
@@ -45,10 +47,10 @@
 
 ## 5. 默认配置与权限
 
-- `ASSIST_DEFAULTS` 只含用户可见字段（`mode=always`、估计器护栏、两种颜色、是否单独标出）；
-  2.9.0 起网络策略是页面侧常量，历史存储里的 `cdnMode` / `maxConcurrency` 等字段在归一化时丢弃。
+- `ASSIST_DEFAULTS` 只含用户可见字段（`mode=always`、已播放颜色、提前加载颜色、是否单独标出）；
+  网络策略是页面侧常量，历史存储里的 `cdnMode` / `maxConcurrency` / `leadSeconds` / `estimatorGuard` 等字段在归一化时丢弃。
 - `manifest.permissions` / `host_permissions` 未新增条目；热重载入口仍不在生产注入列表。
-- 模块顺序固定为 `playback-cache → network → playback-reuse → observer`，
+- MAIN world 模块顺序固定为 `playback-cache → playback-network → playback-reuse → playback-observer`，
   保证观察器读取 `BiliPlaybackReuse` 时它已就绪。
 
 ## 6. 验证
