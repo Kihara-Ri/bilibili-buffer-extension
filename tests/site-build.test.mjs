@@ -66,6 +66,10 @@ test("投喂区：收款码图片与「打开支付宝」链接都在，并写�
   assert.ok(ALIPAY_URL.startsWith("https://qr.alipay.com/"));
   assert.ok(tip.includes(`href="${ALIPAY_URL}"`));
   assert.match(tip, /完全自愿，不会解锁任何功能/);
+  // 菜单卡片：四档参考价各配一个自绘图标，图标引用的 symbol 必须真的定义在页面里。
+  const cards = [...tip.matchAll(/<li class="food-card[^"]*">.*?<use href="#(food-[\w-]+)"\/>.*?<span class="food-name">([^<]+)<\/span><span class="food-price">([^<]+)<\/span><\/li>/g)];
+  assert.deepEqual(cards.map((card) => card[3]), ["¥5", "¥10", "¥20", "自定"]);
+  for (const [, id] of cards) assert.ok(page.includes(`<symbol id="${id}"`), `缺少图标 ${id}`);
   assert.match(page, /<a href="#tip">投喂<\/a>/, "顶栏导航要有投喂入口");
 });
 

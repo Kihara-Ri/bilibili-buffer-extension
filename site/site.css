@@ -181,10 +181,6 @@ h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
 /* ---------- 投喂 ---------- */
 .tip-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: clamp(32px, 6vw, 80px); align-items: center; max-width: 960px; margin: 0 auto; }
 /* 菜单式参考价：像小票一样左右对齐，点线连接。 */
-.menu { display: grid; gap: 12px; max-width: 360px; margin: 0; padding: 0; list-style: none; }
-.menu li { display: flex; align-items: baseline; gap: 10px; font-size: 17px; }
-.menu li::after { content: ""; order: 1; flex: 1; border-bottom: 1px dotted color-mix(in srgb, var(--ink) 30%, transparent); }
-.menu-price { order: 2; font-variant-numeric: tabular-nums; font-weight: 650; color: var(--amber-ink); }
 .tip-note { margin-top: 22px; max-width: 30em; font-size: 14px; color: var(--ink-soft); }
 .tip-card { width: 240px; margin: 0; padding: 14px 14px 18px; border-radius: 18px; background: #fff; box-shadow: 0 0 0 1px var(--line), 0 30px 60px -30px rgba(8, 40, 58, 0.45); text-align: center; }
 .tip-card img { width: 100%; height: auto; }
@@ -245,4 +241,25 @@ h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .bar-smooth .bar-played { width: 52%; }
   .bar-smooth .bar-buffer { width: 58%; }
+}
+
+/* 投喂菜单：四张小卡片，图标是自绘的通用食物插画（不使用任何品牌标识）。 */
+.food { display: block; width: 44px; height: 44px; flex: none; }
+.food-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; max-width: 460px; margin: 0; padding: 0; list-style: none; }
+.food-card { position: relative; display: grid; justify-items: center; gap: 2px; padding: 16px 6px 12px; border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 10px 24px -18px rgba(8, 40, 58, 0.5); text-align: center; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.food-card .food { width: 48px; height: 48px; margin-bottom: 6px; transition: transform 0.25s cubic-bezier(0.3, 1.6, 0.5, 1); }
+.food-card:hover { transform: translateY(-2px); box-shadow: 0 0 0 1px var(--line), 0 16px 30px -18px rgba(8, 40, 58, 0.55); }
+.food-card:hover .food { transform: translateY(-3px) rotate(-6deg); }
+.food-card.is-popular { box-shadow: 0 0 0 2px var(--amber), 0 10px 24px -18px rgba(8, 40, 58, 0.5); }
+.food-card.is-free { background: transparent; box-shadow: none; outline: 1px dashed color-mix(in srgb, var(--ink) 28%, transparent); outline-offset: -1px; }
+.food-badge { position: absolute; top: -10px; left: 50%; transform: translateX(-50%); padding: 1px 8px; border-radius: 999px; background: var(--amber); color: #3b2108; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.food-name { font-size: 14px; white-space: nowrap; }
+.food-price { font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--amber-ink); }
+.food-card.is-free .food-price { color: var(--ink-soft); }
+@media (max-width: 560px) {
+  .food-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .food-card, .food-card .food { transition: none; }
+  .food-card:hover, .food-card:hover .food { transform: none; }
 }

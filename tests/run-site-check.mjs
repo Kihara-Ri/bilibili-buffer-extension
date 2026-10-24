@@ -37,6 +37,7 @@ try {
       const shell = frame.contentDocument.querySelector(".app-shell");
       const meta = [...document.querySelectorAll(".hero-meta span")].map((span) => span.getClientRects().length);
       const verse = [...document.querySelectorAll(".verse-line")].map((line) => line.getClientRects().length);
+      const cards = [...document.querySelectorAll(".food-card")];
       return {
         scrollWidth: document.documentElement.scrollWidth,
         innerWidth,
@@ -46,7 +47,11 @@ try {
         demoFits: Math.abs(frame.clientHeight - Math.min(600, Math.ceil(shell.getBoundingClientRect().height))) <= 2,
         brand: frame.contentDocument.querySelector(".brand-name")?.textContent,
         meta,
-        verse
+        verse,
+        // 投喂卡片：电脑上一行四张、手机上两两一排；菜名不折行，卡片不超出视口。
+        cardRows: new Set(cards.map((card) => Math.round(card.getBoundingClientRect().top))).size,
+        cardNames: cards.map((card) => card.querySelector(".food-name").getClientRects().length),
+        cardsInside: cards.every((card) => card.getBoundingClientRect().right <= innerWidth)
       };
     });
     assert.equal(layout.scrollWidth, layout.innerWidth, `${name}：页面出现横向滚动 ${JSON.stringify(layout)}`);
@@ -55,6 +60,8 @@ try {
     // 「打开支付宝投喂」只在触屏手机上出现：电脑上扫码即可，按钮没有意义。
     const alipayShown = await page.evaluate(() => getComputedStyle(document.querySelector(".button-alipay")).display !== "none");
     assert.equal(alipayShown, name === "phone", `${name}：打开支付宝按钮的显示状态不对`);
+    assert.equal(layout.cardRows, name === "phone" ? 2 : 1, `${name}：投喂卡片排布不对 ${JSON.stringify(layout)}`);
+    assert(layout.cardNames.every((lines) => lines === 1) && layout.cardsInside, `${name}：投喂卡片菜名折行或越界 ${JSON.stringify(layout)}`);
     assert(layout.meta.every((lines) => lines === 1) && layout.verse.every((lines) => lines === 1), `${name}：信息行或诗句被拆行 ${JSON.stringify(layout)}`);
     // 演示可交互：切到片库后高度随内容变化。
     const before = await page.evaluate(() => document.querySelector(".demo-frame").clientHeight);
