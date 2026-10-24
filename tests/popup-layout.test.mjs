@@ -9,7 +9,7 @@ const between = (startMarker, endMarker) => {
 };
 
 test("页眉：主名带用途副标题，右侧是设置入口；GitHub 链接在设置的「关于」里", () => {
-  assert.match(html, /<h1>影哨<\/h1>/);
+  assert.match(html, /<h1>海内存知<\/h1>/);
   // 副标题只做指名性用途说明，不进入扩展名称本身。
   assert.match(html, /class="brand-subtitle">bilibili buffer<\/p>/);
   const masthead = between('<header class="masthead">', "</header>");

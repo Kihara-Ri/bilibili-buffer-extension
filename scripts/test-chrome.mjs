@@ -15,7 +15,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Windows 无法从 WSL 的 UNC 路径（\\wsl.localhost\...）启动可执行文件（spawn UNKNOWN），
 // 此时把测试浏览器放到本机磁盘的 %LOCALAPPDATA%；其他情况仍缓存在仓库的 .tmp/ 下。
 const cacheRoot = process.platform === "win32" && root.startsWith("\\\\") && process.env.LOCALAPPDATA
-  ? path.join(process.env.LOCALAPPDATA, "yingsao", "cft-cache")
+  ? path.join(process.env.LOCALAPPDATA, "haineicunzhi", "cft-cache")
   : path.join(root, ".tmp", "cft-cache");
 const indexPath = path.join(cacheRoot, "known-good-versions.json");
 const INDEX_URL = "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json";

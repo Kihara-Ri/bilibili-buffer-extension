@@ -1,4 +1,6 @@
-# 影哨 · bilibili buffer
+# 海内存知 · bilibili buffer
+
+> 海内存知己，天涯若比邻。
 
 面向海外网络环境的 B 站 Chrome 扩展：**播放时提前加载、减少卡顿等待，也能把视频完整缓存到本机离线观看**。沿用 B 站原生播放器，不转码、无服务器、数据全部留在本机。
 
@@ -10,7 +12,7 @@
 2. **画质被莫名压低**。B 站播放器会把每次请求的吞吐写进本地的网络能力估计，一次回源慢样本就可能让之后很长时间的自动画质被压低。
 3. **想保存视频没有好办法**。官方没有桌面端离线下载，第三方工具要自己面对登录态、最高画质、音视频合并等一堆麻烦。
 
-影哨针对这三件事各给一条路径：**提前加载**把接下来要看的内容先取回来，播放器请求直接复用本机数据；**网络估计保护**只在同一节点确实反复出现高延迟时过滤异常样本，不污染长期估计；**完整缓存**把当前账号可用的最高画质原样存进浏览器，随时离线播放或导出文件。
+海内存知针对这三件事各给一条路径：**提前加载**把接下来要看的内容先取回来，播放器请求直接复用本机数据；**网络估计保护**只在同一节点确实反复出现高延迟时过滤异常样本，不污染长期估计；**完整缓存**把当前账号可用的最高画质原样存进浏览器，随时离线播放或导出文件。
 
 ## 功能
 
@@ -35,7 +37,7 @@
 
 ## 安装
 
-1. 下载 [Release](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases) 里的 `yingsao-<version>.zip`，或克隆本仓库。
+1. 下载 [Release](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases) 里的 `haineicunzhi-<version>.zip`，或克隆本仓库。
 2. 打开 `chrome://extensions/`，开启右上角「开发者模式」。
 3. 把 zip 直接拖进页面，或用「加载已解压的扩展程序」选择仓库目录。
 
@@ -53,7 +55,7 @@ npm install        # 首次
 npm run dev        # 热更新：修改代码约 1 秒内自动重载已加载的扩展与 B 站页面
 npm test           # 单元与上架合规测试
 npm run check      # 语法检查 + Chrome 版本兼容门禁
-npm run build      # 生成 dist/unpacked 与 dist/yingsao-<version>.zip（含上架体检）
+npm run build      # 生成 dist/unpacked 与 dist/haineicunzhi-<version>.zip（含上架体检）
 npm run test:chrome  # 下载与本机 Chrome 同版本的 Chrome for Testing，跑全部浏览器套件
 npm run test:live    # 联网：真实 Chromium 加载扩展，对真实 B 站视频跑完整缓存并播放结果
 ```
@@ -67,4 +69,4 @@ npm run test:live    # 联网：真实 Chromium 加载扩展，对真实 B 站�
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — 参考项目与许可声明
 - [store/](store/) — Chrome Web Store 提审资料
 
-当前版本 2.12.1。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。
+当前版本 2.12.2。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。

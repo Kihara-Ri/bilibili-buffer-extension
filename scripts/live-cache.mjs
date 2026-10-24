@@ -15,7 +15,7 @@ import { chromiumLaunchOptions } from "./lib/browser-launch.mjs";
 const extension = fileURLToPath(new URL("../", import.meta.url));
 const url = process.argv[2] || "https://www.bilibili.com/video/BV11En46qETe/";
 const TIMEOUT_MS = 10 * 60 * 1000;
-const profile = await mkdtemp(`${tmpdir()}/yingsao-live-`);
+const profile = await mkdtemp(`${tmpdir()}/haineicunzhi-live-`);
 const context = await chromium.launchPersistentContext(profile, {
   ...chromiumLaunchOptions({ headless: false }),
   // B 站会对 navigator.webdriver / --enable-automation 的浏览器返回 412 风控页，

@@ -134,7 +134,7 @@ async function createPlaybackUrl(videoId) {
       try {
         video = await ensureMergedTracks(video);
       } catch (error) {
-        console.warn("[影哨] 合并本地双轨失败，回退到双轨播放：", error);
+        console.warn("[海内存知] 合并本地双轨失败，回退到双轨播放：", error);
         // 记下失败原因，避免每次播放都重复尝试；双轨缓存始终原样保留。
         video = { ...video, mergeStage: "failed", mergeError: toPublicError(error), updatedAt: Date.now() };
         await putVideo(video).catch(() => {});
@@ -1503,7 +1503,7 @@ async function mergeDownloadedTracks(meta, job) {
   } catch (error) {
     if (job?.deleted) return meta;
     const message = toPublicError(error);
-    console.warn("[影哨] 双轨合并失败，保留独立轨道：", error);
+    console.warn("[海内存知] 双轨合并失败，保留独立轨道：", error);
     const failed = {
       ...meta,
       status: "downloading",

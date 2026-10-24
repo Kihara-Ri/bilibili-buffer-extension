@@ -794,10 +794,10 @@ async function restoreActiveDownloadsNow() {
     for (const video of interrupted) {
       if (activeIds.has(video.id) || !isDownloadRetryDue(video)) continue;
       const result = await restartDownload(video, auth);
-      if (!result?.ok) console.warn("[影哨] 无法恢复上次的缓存任务：", result?.error);
+      if (!result?.ok) console.warn("[海内存知] 无法恢复上次的缓存任务：", result?.error);
     }
     await syncDownloadWatchdog();
   } catch (error) {
-    console.warn("[影哨] 无法恢复上次的缓存任务：", error);
+    console.warn("[海内存知] 无法恢复上次的缓存任务：", error);
   }
 }

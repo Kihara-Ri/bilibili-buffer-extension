@@ -60,7 +60,7 @@ for (const entry of new Set(referenced)) {
 
 // 用 Node 内置 zlib 打包（Windows 没有 zip 命令）。条目按路径排序、时间戳固定，
 // 同一份源码重复构建得到完全相同的 zip，商店包的 SHA-256 可复核（SOURCE_DATE_EPOCH 可覆盖时间戳）。
-const archive = path.join(dist, `yingsao-${manifest.version}.zip`);
+const archive = path.join(dist, `haineicunzhi-${manifest.version}.zip`);
 const files = (await listFiles(unpacked)).sort();
 const date = new Date((Number(process.env.SOURCE_DATE_EPOCH) || 1767225600) * 1000); // 2026-01-01T00:00:00Z
 const entries = await Promise.all(files.map(async (name) => ({ name, data: await readFile(path.join(unpacked, ...name.split("/"))) })));
