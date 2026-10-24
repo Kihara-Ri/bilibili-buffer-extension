@@ -54,7 +54,7 @@ npm run store:assets
    最后一步会打印 `发布包检查通过` 与该包的 SHA-256，把 SHA-256 记进本次版本说明。
 3. **上传**
    - 打开 [开发者仪表盘](https://chrome.google.com/webstore/devconsole) → `Add new item`，
-     上传 `dist/bili-buffer-extension-<version>.zip`。
+     上传 `dist/haineicunzhi-<version>.zip`。
    - 上传后 `Package` 页点 `View public key`，确认它的 ID 与
      `rules/cdn-headers.json` 里的 `initiatorDomains` 一致。**不一致就必须停下**：
      防盗链 `Referer` 规则会失效，缓存会开始大面积 403。
