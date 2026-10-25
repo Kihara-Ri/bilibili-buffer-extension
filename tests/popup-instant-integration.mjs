@@ -1,5 +1,5 @@
 const openedAt = performance.now();
-window.__popupTest = { emit(message) { listener({ target: "popup", ...structuredClone(message) }); }, get videos() { return libraryVideos; }, get config() { return assistConfig; } };
+window.__popupTest = { emit(message) { listener({ target: "popup", ...structuredClone(message) }); }, get videos() { return libraryVideos; }, get config() { return assistConfig; }, get calls() { return calls; }, deletedIds: [] };
 const calls = [];
 let readyAt = 0;
 let listener;
@@ -180,7 +180,7 @@ globalThis.chrome = {
         return { ok: true, videos: snapshot };
       }
       if (message.type === "SAVE_VIDEO") { await delay(350); return window.__popupTest.failSave ? { ok: false, error: "模拟保存失败" } : { ok: true }; }
-      if (message.type === "DELETE_VIDEO") { await delay(120); const index = libraryVideos.findIndex(video => video.id === message.videoId); if (index >= 0) libraryVideos.splice(index, 1); return { ok: true }; }
+      if (message.type === "DELETE_VIDEO") { window.__popupTest.deletedIds.push(message.videoId); await delay(120); const index = libraryVideos.findIndex(video => video.id === message.videoId); if (index >= 0) libraryVideos.splice(index, 1); return { ok: true }; }
       if (message.type === "GET_ASSIST_STATE") {
         const scripted = window.__popupTest.assistReadQueue?.shift();
         if (scripted) {
@@ -216,6 +216,17 @@ globalThis.chrome = {
         return { ok: true, config: assistConfig };
       }
       if (message.type === "SET_POPUP_SELECTION") return { ok: true, saved: true };
+      // 与后台一致：同一画质、同一编码的记录已存在且未完成时，START_CACHE 从它续传。
+      if (message.type === "START_CACHE") {
+        window.__popupTest.lastStart = { quality: message.quality, codec: message.codec, mode: message.mode };
+        const video = libraryVideos.find((item) => item.pageId === "BV1Kg8t6NEmN:456" && Number(item.requestedQuality || item.quality) === message.quality && (message.codec === "auto" || item.codec === message.codec));
+        if (video && video.status !== "complete") {
+          // 后台每次（重新）启动都开新一代 runStartedAt，弹窗据此认出这是更新的快照。
+          const run = Math.max(Date.now(), (Number(video.runStartedAt) || 0) + 1);
+          Object.assign(video, { status: "downloading", runStartedAt: run, updatedAt: run });
+        }
+        return { ok: true, started: Boolean(video), video: structuredClone(video) };
+      }
       if (message.type === "PAUSE_CACHE" || message.type === "RESUME_CACHE") {
         const video = libraryVideos.find((item) => item.id === message.videoId);
         if (video) Object.assign(video, { status: message.type === "PAUSE_CACHE" ? "paused" : "downloading", updatedAt: Date.now() });

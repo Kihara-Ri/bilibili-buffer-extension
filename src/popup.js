@@ -719,6 +719,7 @@ function setHint(message, isError) {
 async function startCache() {
   if (!state.pageInfo?.supported || !state.tab) return;
   if (!isAudioMode() && !state.selectedQuality) return;
+  cancelPendingDeleteForSelection();
   setButtonState("downloading", t("button.connecting"), "", 0, true);
   setHint(t("hint.starting"), false);
   try {
@@ -1166,6 +1167,24 @@ function deleteWithUndo(video) {
       if (pending.resume) void resumeTask(video.id);
     }
   });
+}
+
+/**
+ * 撤销期内对同一缓存内容（同画质、同编码，或仅音频）点「缓存」，等同于点「撤销」。
+ * 否则 START_CACHE 会续传那条被暂停的记录，界面却仍把它当待删除隐藏（按钮转一圈又变回「缓存」），
+ * 到点后删除照常提交，把刚恢复的任务删掉。选了别的画质时是另一个任务，删除照常进行。
+ */
+function cancelPendingDeleteForSelection() {
+  const audioMode = isAudioMode();
+  for (const [videoId, pending] of state.pendingDeletes) {
+    const video = state.videos.find((item) => item.id === videoId);
+    if (!video || getVideoPageId(video) !== state.pageInfo?.id || isAudioOnlyCache(video) !== audioMode) continue;
+    if (!audioMode && (Number(video.requestedQuality || video.quality) !== state.selectedQuality || !isVideoCodecSelectionMatch(video, state.selectedCodec))) continue;
+    clearTimeout(pending.timer);
+    state.pendingDeletes.delete(videoId);
+    hideToast();
+  }
+  renderLibrary();
 }
 
 async function commitDelete(videoId) {

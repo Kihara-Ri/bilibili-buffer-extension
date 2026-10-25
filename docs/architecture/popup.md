@@ -1,6 +1,6 @@
 # 弹窗
 
-> 适用版本：v2.14.0 · 最后核对：2026-10-24
+> 适用版本：v2.14.2 · 最后核对：2026-10-25
 > 对应实现：`popup.html`、`popup.css`、`src/popup.js`、`src/task-presentation.js`、`src/popup-snapshot.js`、`src/cache-size.js`。
 > 实时刷新规则的来历见 [2.6.2 弹窗稳定性设计记录](../history/2.6.2-popup-stability.md)。
 
@@ -35,7 +35,7 @@
 - 每行：封面（`http` 地址换成 `https`）、标题（点开原视频，已缓存时自动本地播放）、「状态 · 体积 · UP 主」（截断时只截掉最次要的 UP 主）、未完成时一条细进度条。
 - 右侧固定两个 32×32 动作：下载中「暂停」/ 暂停或出错时「继续」/ 完成时「保存」，以及「删除」。
 - **继续**走 `RESUME_CACHE`，不需要打开原视频。
-- **删除**不弹确认框：行立即隐藏，提示条给出 6 秒「撤销」；超时或弹窗关闭（`pagehide`）才真正发出 `DELETE_VIDEO`。下载中的任务先暂停，撤销时再继续。
+- **删除**不弹确认框：行立即隐藏，提示条给出 6 秒「撤销」；超时或弹窗关闭（`pagehide`）才真正发出 `DELETE_VIDEO`。下载中的任务先暂停，撤销时再继续。撤销期内在「当前视频」对同一缓存内容（同画质、同编码，或仅音频）点「缓存」等同于撤销：取消待删除并从原进度续传。否则后台会续传那条被暂停的记录，界面仍把它当待删除隐藏（按钮转一圈又变回「缓存」），到点后删除还会把刚恢复的任务删掉。
 
 - **评价邀请卡片**（片库顶部，`#review-card`）：只在用户用出价值后出现——片库里已完成 ≥ 2 个、首次打开弹窗已满 24 小时、此刻没有任务在下载、不在推迟期。三个动作：「去评价」（新标签打开商店评价页并记为已评价）、「以后再说」（14 天后再出现，推迟 2 次后等同不再提示）、「不再提示」。状态存 `chrome.storage.local["reviewPromptV1"]`，逻辑在 `src/review-prompt.js`（纯函数，有单测）。合规边界：不奖励、不按情绪筛选、可永久关闭；改文案或条件前先对照 Chrome 网上应用店的用户评价政策。卡片是固定节点，只切换 `data-open` 与 `inert`（grid 行高 0fr→1fr 展开收起，减少动态偏好下无过渡），轮询刷新零 DOM 变更。
 
@@ -87,5 +87,5 @@
 | 确认字节、旧快照、新世代、处理阶段、速度、多任务 | `tests/task-presentation.test.mjs` |
 | 快照恢复 | `tests/popup-snapshot.test.mjs` |
 | 页签与视图结构、画质卡片、提前加载概览、设置分组、常驻隐私页脚 | `tests/popup-layout.test.mjs` |
-| 真实弹窗：持续刷新时节点身份、hover 动画次数、焦点与 pending 保留、四种速度单位不换行、进度不倒退、配置失败回退、删除后不复活、自检区块、页眉连读 | `npm run test:popup`（`tests/run-popup-stability.mjs`） |
+| 真实弹窗：持续刷新时节点身份、hover 动画次数、焦点与 pending 保留、四种速度单位不换行、进度不倒退、配置失败回退、删除后不复活、撤销期内重新缓存、自检区块、页眉连读 | `npm run test:popup`（`tests/run-popup-stability.mjs`） |
 | 后台与 Offscreen 消息链路、双任务徽标 | 同一运行器执行的 `background-popup-integration` / `offscreen-integration` / `offscreen-merge-integration` |

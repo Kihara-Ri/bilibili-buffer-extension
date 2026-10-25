@@ -187,6 +187,18 @@ try {
   assert(health.sameNode,'自检结论未变化时不能重建列表节点');
   assert(health.alertShown,'能力缺失时主视图必须出现提示条与齿轮红点');
   assert(health.hidden,'能力恢复后自检提示必须收起');
+  // 撤销期内对同一画质点「缓存」等同于撤销删除，不能先续传、再被到点的删除把刚恢复的任务删掉
+  // （按钮表现为转一圈又变回「缓存」）。
+  await page.locator('#current-tab').click();
+  await page.evaluate(async()=>{const video=window.__popupTest.videos.find(item=>item.id===window.taskA.id);const at=Date.now()+600000;Object.assign(video,{status:'paused',runStartedAt:at,updatedAt:at});window.__popupTest.emit({type:'CACHE_PAUSED',video:{...video}});await new Promise(resolve=>setTimeout(resolve,60));});
+  await page.locator('#library-tab').click();
+  await page.locator(`.video-item[data-video-id="${'popup-live-a'}"] .delete-button`).click();
+  await page.locator('#current-tab').click();
+  assert.equal(await page.locator('#button-label').textContent(),'缓存','撤销期内任务应从当前视频隐藏');
+  await page.locator('#cache-button').click();
+  await page.waitForTimeout(6600);
+  const afterUndoWindow=await page.evaluate(()=>({deleted:window.__popupTest.deletedIds.includes('popup-live-a'),state:document.querySelector('#cache-button').dataset.state,toast:document.querySelector('#toast').dataset.visible,listed:!!document.querySelector('.video-item[data-video-id="popup-live-a"]')}));
+  assert(!afterUndoWindow.deleted&&afterUndoWindow.state==='downloading'&&afterUndoWindow.toast!=='true'&&afterUndoWindow.listed,'撤销期内点缓存应取消删除并续传：'+JSON.stringify(afterUndoWindow));
   // 画质卡片在四档并排、带 VIP/登录 标记时最挤：商店场景就是这种数据（4K 约 312 MB + VIP）。
   // 标记不能压住体积或档位文字，也不能被卡片或相邻控件遮挡。
   await page.goto(origin + '/store/scene/popup-scene.html');
