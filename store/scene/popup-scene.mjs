@@ -179,11 +179,17 @@ const ASSIST_STATS = {
 let listener = () => {};
 // 「关于」里的版本号读真实 manifest，避免商店截图停在写死的旧版本。
 const MANIFEST = await fetch(new URL("../../manifest.json", import.meta.url)).then((response) => response.json());
-// ?auth=limited 模拟「检测到登录 Cookie 但读不到页面登录态」：账号说明是一整句不含「 · 」的长警告，
+// ?auth=limited 模拟「检测到登录 Cookie 但读不到页面登录态」：账号说明是一整句长警告，
 // 测试用它检查长说明不会把整列撑出右侧边距。默认是商店截图用的大会员状态。
-const SCENE_AUTH = new URLSearchParams(location.search).get("auth") === "limited"
+const SCENE_AUTH_MODE = new URLSearchParams(location.search).get("auth");
+const SCENE_AUTH = SCENE_AUTH_MODE === "limited"
   ? { viaPageSession: false, hasSessionCookie: true }
-  : { viaPageSession: true, vipActive: true };
+  : SCENE_AUTH_MODE === "signedout"
+    ? { viaPageSession: false, hasSessionCookie: false }
+    : { viaPageSession: true, vipActive: true };
+// ?auth=signedout 模拟未登录：B 站只返回公开档位，需要登录 / 大会员的更高档位在滑杆杆尾显示为锁定段。
+const SCENE_QUALITIES = SCENE_AUTH_MODE === "signedout" ? QUALITIES.filter((quality) => !quality.requiresLogin) : QUALITIES;
+const SCENE_DEFAULT_QUALITY = SCENE_QUALITIES[0].quality;
 // ?lang=en 截英文界面；默认与 Chrome 的界面语言无关，固定中文，商店中文截图才稳定。
 const SCENE_LANG = new URLSearchParams(location.search).get("lang") || "zh-CN";
 let library = structuredClone(LIBRARY);
@@ -211,10 +217,10 @@ globalThis.chrome = {
               tabId: 1,
               pageKey: "video:bv:BV1XX411C7MD:p1",
               pageInfo: CURRENT_VIDEO,
-              qualities: QUALITIES,
+              qualities: SCENE_QUALITIES,
               cacheSizeInfo: CACHE_SIZE_INFO,
-              defaultQuality: 120,
-              selectedQuality: 120,
+              defaultQuality: SCENE_DEFAULT_QUALITY,
+              selectedQuality: SCENE_DEFAULT_QUALITY,
               defaultCodec: "auto",
               selectedCodec: "auto",
               auth: SCENE_AUTH,
@@ -236,7 +242,7 @@ globalThis.chrome = {
         case "SET_POPUP_SELECTION":
           return { ok: true, saved: true };
         case "REFRESH_POPUP_DATA":
-          return { ok: true, pageInfo: CURRENT_VIDEO, qualities: QUALITIES, cacheSizeInfo: CACHE_SIZE_INFO, auth: SCENE_AUTH };
+          return { ok: true, pageInfo: CURRENT_VIDEO, qualities: SCENE_QUALITIES, cacheSizeInfo: CACHE_SIZE_INFO, auth: SCENE_AUTH };
         case "START_CACHE":
           return { ok: true, video: { ...library[1], status: "downloading" } };
         case "SAVE_VIDEO":

@@ -46,21 +46,35 @@
             </p>
 
             <div id="format-controls" class="format-controls" hidden>
-              <!-- 内容二选一的分段控件与账号说明同占一行：说明是一句短话，放在控件右侧最省高度。 -->
+              <!-- 内容二选一的分段控件；大会员身份只是一枚小标记，放在同一行右侧。 -->
               <div class="mode-row">
                 <span class="visually-hidden" id="cache-mode-label" data-i18n="mode.label">缓存内容</span>
                 <div id="cache-mode" class="segmented" role="radiogroup" aria-labelledby="cache-mode-label">
                   <button id="mode-video" type="button" role="radio" aria-checked="true" data-cache-mode="video" data-i18n="mode.video">视频</button>
                   <button id="mode-audio" type="button" role="radio" aria-checked="false" tabindex="-1" data-cache-mode="audio" data-i18n="mode.audio">仅音频</button>
                 </div>
-                <p id="auth-note" class="field-note" hidden></p>
+                <span id="account-chip" class="account-chip" hidden data-i18n="auth.vipChip">大会员</span>
               </div>
 
-              <!-- 画质直接铺成一排选项（单选），不再藏进下拉：一眼看到所有档位和体积。 -->
-              <div id="quality-row" class="quality-row">
-                <span class="visually-hidden" id="quality-label" data-i18n="quality.label">画质</span>
-                <div id="quality-options" class="quality-options" role="radiogroup" aria-labelledby="quality-label" aria-describedby="auth-note"></div>
+              <!-- 画质是一根滑杆：左低右高，默认在最右（最高可选）。多数人只要最高画质，
+                   不再给每一档同样大的卡片。当前账号拿不到的更高档位画成杆尾的斜纹段，拖不过去。
+                   原生 range 负责拖动、方向键、Home / End 与读屏；外观由下面几层装饰 span 画出来。 -->
+              <div id="quality-row" class="quality-row" data-top="false" data-empty="true">
+                <div class="quality-head">
+                  <span class="visually-hidden" id="quality-label" data-i18n="quality.label">画质</span>
+                  <span id="quality-name" class="quality-name"></span>
+                  <span id="quality-size" class="quality-size"></span>
+                </div>
+                <div id="quality-track" class="quality-track">
+                  <span class="quality-fill" aria-hidden="true"></span>
+                  <span id="quality-locked" class="quality-locked" aria-hidden="true" hidden></span>
+                  <span id="quality-stops" class="quality-stops" aria-hidden="true"></span>
+                  <input id="quality-slider" class="quality-slider" type="range" min="0" max="0" step="1" value="0" aria-labelledby="quality-label" aria-describedby="auth-note">
+                </div>
+                <div class="quality-ends" aria-hidden="true"><span id="quality-low"></span><span id="quality-high"></span></div>
               </div>
+              <!-- 账号说明放在画质下方：在做选择的位置说清「为什么最高只到这里」，未登录时直接给出登录入口。 -->
+              <p id="auth-note" class="auth-note" hidden><span id="auth-note-text" class="auth-note-text"></span><button id="auth-action" class="auth-action" type="button" hidden data-i18n="auth.loginAction">去登录 ›</button></p>
 
               <div id="audio-row" class="audio-row" hidden>
                 <span class="audio-row-label" data-i18n="audio.label">音质</span>

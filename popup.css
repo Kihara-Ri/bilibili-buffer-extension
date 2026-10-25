@@ -39,6 +39,11 @@
   --progress-solid: rgb(0, 174, 236);
   --progress-alpha: 0.5;
   --progress-alpha-start: 0.56;
+  /* 画质滑杆：普通档是 B 站蓝的渐变；顶档是一片由浅到深的海（见 .quality-row[data-top]）。 */
+  --quality-fill: linear-gradient(90deg, rgba(0, 174, 236, 0.35), #00aeec);
+  --sea: linear-gradient(90deg, #8fe3ff, #2bb3e6 45%, #1587c6);
+  --sea-foam: rgba(255, 255, 255, 0.42);
+  --sea-bubble: rgba(255, 255, 255, 0.8);
   --toast-bg: #1f2530;
   --toast-ink: #eef1f5;
   --toast-action: #6fd3f7;
@@ -94,6 +99,10 @@
     --progress-solid: rgb(58, 210, 255);
     --progress-alpha: 0.5;
     --progress-alpha-start: 0.44;
+    --quality-fill: linear-gradient(90deg, rgba(58, 210, 255, 0.3), #3ad2ff);
+    --sea: linear-gradient(90deg, #5fd9ff, #1f9fd6 45%, #0f5f9c);
+    --sea-foam: rgba(255, 255, 255, 0.3);
+    --sea-bubble: rgba(255, 255, 255, 0.65);
     --toast-bg: #222a38;
     --toast-ink: #eef1f5;
     --toast-action: #6fdcff;
@@ -128,7 +137,7 @@ a:hover { text-decoration: underline; }
 h1, h2, h3, p, dl, dd { margin: 0; }
 
 /* 数字用正文字体的等宽数位：与中文混排时字距自然，心跳刷新时宽度也不跳。 */
-.button-speed, .button-label, dd, .tab-count, .cover-status, .library-summary, .quality-option-size, .video-meta {
+.button-speed, .button-label, dd, .tab-count, .cover-status, .library-summary, .quality-size, .video-meta {
   font-variant-numeric: tabular-nums;
 }
 
@@ -291,8 +300,6 @@ svg { flex: none; }
 .current-owner { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .format-controls { display: grid; gap: 8px; }
-/* 给骑边的 VIP/登录 标记留出空间，避免贴住上方的分段控件。 */
-.quality-row { padding-top: 3px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* 内容二选一：等分的分段控件，选中项是一块抬起的浅色滑块。 */
@@ -323,72 +330,153 @@ svg { flex: none; }
   box-shadow: 0 1px 2px rgba(20, 26, 36, 0.14), inset 0 0 0 1px var(--line);
 }
 
-/* 画质：一排单选卡片，每张「短名 + 体积」；需要 VIP / 登录的档位在右上角骑边挂一个小标记。
-   标记脱离文档流：四档并排时卡片内容区只有约 60px，「约 312 MB」已占满，再和标记同行必然互相压住。 */
-.quality-options { display: flex; flex-wrap: wrap; gap: 6px; }
-.quality-option {
-  position: relative;
+/* 画质滑杆（像 ChatGPT 的推理强度控件）：上方居中是档位名与体积，下方一根粗杆，左低右高。
+   几何与 src/popup.js 的 renderQualitySlider 一致：N 个档位等距排在 [拇指半径, 宽 - 拇指半径]，
+   第 i 档在 --at = i / (N - 1)。原生 range 只铺在可选段（宽 = 拇指 + (总宽 - 拇指) × --q-reach），
+   所以它的拇指与装饰档位点严格重合；锁定段画成斜纹、在 range 之外，拖不进去。
+   填充用 clip-path 裁出长度：不改布局，渐变也不会随长度被拉伸。 */
+.quality-row {
   display: grid;
-  flex: 1 1 68px;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 1px;
-  min-width: 0;
-  /* 上内边距多 2px：文字盒顶端要低于骑边标记的下沿（卡片顶 + 6px）。 */
-  padding: 7px 8px 6px;
+  gap: 5px;
+  padding: 7px 14px 5px;
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--surface-raised);
-  text-align: left;
-  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
 }
-.quality-option:hover:not(:disabled):not([aria-checked="true"]) { border-color: var(--blue); }
-.quality-option[aria-checked="true"] { border-color: var(--blue); background: var(--blue-wash); box-shadow: inset 0 0 0 1px var(--blue); }
-.quality-option:disabled { cursor: default; opacity: 0.55; }
-.quality-option:disabled[aria-checked="true"] { opacity: 1; }
-.quality-option-label { grid-column: 1 / -1; overflow: hidden; font-size: 13px; font-weight: 650; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
-.quality-option[aria-checked="true"] .quality-option-label { color: var(--blue-deep); }
-/* 字体更宽的平台（如 Windows 的雅黑）仍可能放不下，截断兜底；完整体积在卡片 title 里。 */
-.quality-option-size { overflow: hidden; color: var(--ink-soft); font-size: 11px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
-.quality-option-tag {
-  position: absolute;
-  /* 高 13px、上移 7px：下沿正好落在卡片内边距上缘，不碰档位文字。 */
-  top: -7px;
-  right: 6px;
-  padding: 0 4px;
-  border: 1px solid currentColor;
+.quality-head { display: grid; justify-items: center; gap: 1px; min-width: 0; }
+.quality-name { max-width: 100%; overflow: hidden; color: var(--blue-deep); font-size: 16px; font-weight: 750; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.quality-size { min-height: 15px; color: var(--ink-soft); font-size: 11.5px; line-height: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.quality-row[data-empty="true"] .quality-name { color: var(--ink-soft); font-size: 13px; font-weight: 600; }
+.quality-row[data-empty="true"] :is(.quality-track, .quality-ends) { display: none; }
+.quality-track {
+  --thumb: 22px;
+  --span: calc(100% - var(--thumb));
+  position: relative;
+  height: 26px;
   border-radius: 999px;
-  background: var(--surface-raised);
-  color: var(--pink-ink);
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 11px;
-  letter-spacing: 0.04em;
+  background: var(--surface-soft);
 }
-.quality-empty { grid-column: 1 / -1; padding: 9px 0; color: var(--ink-soft); font-size: 12.5px; }
+/* 叠放：轨道上的档位点与锁定斜纹在最下，填充盖住已走过的档位点，range 在最上接收拖动。 */
+.quality-fill {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  background: var(--quality-fill);
+  clip-path: inset(0 calc(var(--span) * (1 - var(--q-ratio, 1))) 0 0 round 999px);
+  transition: clip-path 220ms var(--ease-out);
+}
+.quality-locked {
+  position: absolute;
+  inset: 0 0 0 calc(var(--thumb) / 2 + var(--span) * var(--q-lock, 1));
+  border-radius: 0 999px 999px 0;
+  background: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--ink-soft) 24%, transparent) 5px 7px);
+}
+.quality-stop {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--thumb) / 2 + var(--span) * var(--at));
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ink-soft) 55%, transparent);
+  pointer-events: none;
+}
+.quality-slider {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  left: calc(var(--span) * var(--q-offset, 0));
+  width: calc(var(--thumb) + var(--span) * var(--q-reach, 1));
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.quality-slider::-webkit-slider-runnable-track { height: 100%; background: transparent; }
+.quality-slider::-webkit-slider-thumb {
+  width: var(--thumb);
+  height: var(--thumb);
+  margin-top: 2px;
+  border: 0;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(10, 16, 28, 0.28), 0 0 0 1px rgba(10, 16, 28, 0.06);
+  transition: transform 140ms var(--ease-out);
+  -webkit-appearance: none;
+  appearance: none;
+}
+.quality-slider:not(:disabled):hover::-webkit-slider-thumb { transform: scale(1.06); }
+.quality-slider:not(:disabled):active::-webkit-slider-thumb { transform: scale(0.96); }
+.quality-slider:focus-visible { outline: none; }
+.quality-slider:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--blue); }
+/* 下载中不能换档：整根杆变淡，浪与气泡也停下。 */
+.quality-slider:disabled { cursor: default; }
+.quality-track:has(.quality-slider:disabled) { opacity: 0.6; }
+.quality-ends { display: flex; justify-content: space-between; padding: 0 2px; color: var(--ink-soft); font-size: 10.5px; line-height: 13px; }
+.quality-ends span:only-child, .quality-ends span:empty + span { margin-left: auto; }
+.quality-ends [data-locked="true"] { color: var(--pink-ink); }
+
+/* 顶档 = 漂流瓶漂到了最远处：杆身是一片由浅到深的海，
+   ::before 是水面的浪（两层错位的波纹缓缓向右推），::after 是水里往上冒的气泡，拇指里是一只漂流瓶。
+   只切 data-top，节点常驻：轮询刷新不会让动画从头开始（AGENTS 8.1）。两种动画都只动 transform。 */
+.quality-row[data-top="true"] .quality-fill { background: var(--sea); }
+.quality-row[data-top="true"] .quality-fill::before {
+  --swell: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 26'%3E%3Cpath fill='%23fff' d='M0 9Q10 4 20 9T40 9V0H0Z'/%3E%3C/svg%3E");
+  --ripple: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 26'%3E%3Cpath fill='%23fff' d='M0 6Q7 9 14 6T28 6V0H0Z'/%3E%3C/svg%3E");
+  content: "";
+  position: absolute;
+  inset: 0 0 0 -40px;
+  background: var(--sea-foam);
+  -webkit-mask: var(--swell) 0 0 / 40px 26px repeat-x, var(--ripple) 0 4px / 28px 26px repeat-x;
+  mask: var(--swell) 0 0 / 40px 26px repeat-x, var(--ripple) 0 4px / 28px 26px repeat-x;
+  animation: quality-tide 3.2s linear infinite;
+}
+.quality-row[data-top="true"] .quality-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 -26px;
+  background:
+    radial-gradient(circle at 14px 20px, transparent 0 1.6px, var(--sea-bubble) 1.7px 2.3px, transparent 2.5px),
+    radial-gradient(circle at 41px 30px, var(--sea-bubble) 0 1.1px, transparent 1.5px),
+    radial-gradient(circle at 63px 14px, transparent 0 1.2px, var(--sea-bubble) 1.3px 1.8px, transparent 2px),
+    radial-gradient(circle at 88px 38px, var(--sea-bubble) 0 0.9px, transparent 1.3px);
+  background-size: 104px 26px;
+  opacity: 0.85;
+  animation: quality-bubbles 4.8s linear infinite;
+}
+.quality-row[data-top="true"] .quality-name {
+  background: linear-gradient(90deg, #2bb3e6, #1587c6);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* 拇指里的漂流瓶：与工具栏图标同一个倾斜瓶身（线稿版），白色圆钮不变，深浅色下都清晰。 */
+.quality-row[data-top="true"] .quality-slider::-webkit-slider-thumb {
+  background: #ffffff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg transform='translate(16 16.5) rotate(38) scale(0.9) translate(-16 -16)' fill='none' stroke='%231587c6' stroke-width='2.2' stroke-linejoin='round'%3E%3Cpath d='M13 6.5V8.5Q13 10 11.5 11Q7.5 13 7.5 17.5V26Q7.5 30 11.5 30H20.5Q24.5 30 24.5 26V17.5Q24.5 13 20.5 11Q19 10 19 8.5V6.5'/%3E%3Crect x='11.5' y='2' width='9' height='4.5' rx='1.5' fill='%23E9A15B' stroke='none'/%3E%3Cpath d='M8 21Q12 19 16 21T24 21'/%3E%3C/g%3E%3C/svg%3E") center / 14px no-repeat;
+}
+.quality-track:has(.quality-slider:disabled) .quality-fill::before,
+.quality-track:has(.quality-slider:disabled) .quality-fill::after { animation-play-state: paused; }
+@keyframes quality-tide { to { transform: translateX(40px); } }
+@keyframes quality-bubbles { to { transform: translateY(-26px); } }
+
+/* 账号说明：画质下方一行小字，未登录时右侧是「去登录」。 */
+.auth-note { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; margin-top: -2px; padding: 0 2px; color: var(--ink-soft); font-size: 12px; line-height: 1.4; }
+.auth-note[hidden] { display: none; }
+.auth-note-text { min-width: 0; }
+.auth-note[data-tone="warning"] { color: var(--warning); }
+.auth-action { flex: none; padding: 0; border: 0; background: transparent; color: var(--blue-deep); font-size: 12px; font-weight: 650; white-space: nowrap; }
+.auth-action:hover { text-decoration: underline; }
+.account-chip { margin-left: auto; padding: 0 7px; border-radius: 999px; background: color-mix(in srgb, var(--pink) 14%, transparent); color: var(--pink-ink); font-size: 11px; font-weight: 700; line-height: 19px; cursor: default; }
 
 .audio-row { display: flex; align-items: baseline; gap: 10px; padding: 8px 12px; border-radius: 10px; background: var(--surface-soft); }
 .audio-row-label { color: var(--ink-soft); font-size: 12px; }
 .audio-summary { color: var(--ink-strong); font-size: 13px; font-weight: 600; white-space: nowrap; }
 
-.field-note {
-  display: -webkit-box;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  color: var(--ink-soft);
-  font-size: 11.5px;
-  line-height: 1.35;
-  text-align: right;
-  /* 两行时尽量等长，避免「不全」这类两三个字被单独甩到第二行。 */
-  text-wrap: balance;
-}
-/* 分段整体折行而不是 nowrap：nowrap 会让一整句不含「 · 」的长警告变成一条不可断的长串，
-   把整列撑出右侧边距；inline-block + max-width 让短段整体换行，超长段仍可在段内折行。 */
-.field-note .text-segment { display: inline-block; max-width: 100%; }
-.field-note[data-tone="member"] { color: var(--blue-deep); }
-.field-note[data-tone="warning"] { color: var(--warning); }
 
 /* 主按钮：空闲时粉色动作，下载时蓝色进度从左向右填充（只动 transform，不引起布局抖动）。
    暂停按钮叠在它右侧；下载中给主按钮右侧让出位置，文字不会被盖住。 */
@@ -841,6 +929,6 @@ svg { flex: none; }
     transition-duration: 0.01ms !important;
   }
   .download-arrow { animation: none !important; }
-  /* 无限循环的水波在全局 0.01ms 时长下会变成高频闪烁，必须直接停掉。 */
-  .button-progress::after { animation: none !important; }
+  /* 无限循环的水波、画质顶档的浪与气泡在全局 0.01ms 时长下会变成高频闪烁，必须直接停掉（渐变保留，只是不动）。 */
+  .button-progress::after, .quality-fill::before, .quality-fill::after { animation: none !important; }
 }

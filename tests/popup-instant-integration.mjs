@@ -266,9 +266,12 @@ const visible = (selector) => !document.querySelector(selector).hidden;
 
 // 一级结构：「当前视频」「片库」两个页签，设置是齿轮打开的二级视图。
 const defaultCurrentVisible = visible("#current-view") && !visible("#library-view") && !visible("#settings-view");
-// 画质是平铺的单选卡片：始终恰有一项选中，且整页没有 popover / 下拉。
-const qualityRadios = [...document.querySelectorAll("#quality-options [role='radio']")];
-const qualityOpened = qualityRadios.length >= 1 && qualityRadios.filter((option) => option.getAttribute("aria-checked") === "true").length === 1
+// 画质是一根滑杆：选中档位写在杆上方，读屏文字带体积；整页没有 popover / 下拉。
+// 夹具账号不是大会员，B 站声明的 1080P+ 需要大会员：杆尾多一个锁定档，range 只覆盖可选的 1080P。
+const qualitySlider = document.querySelector("#quality-slider");
+const qualityOpened = qualitySlider.value === "0" && qualitySlider.max === "0" && document.querySelector("#quality-name").textContent === "1080P"
+  && qualitySlider.getAttribute("aria-valuetext").startsWith("1080P") && document.querySelectorAll("#quality-stops .quality-stop").length === 2
+  && !document.querySelector("#quality-locked").hidden && document.querySelector("#quality-row").dataset.top === "false"
   && !document.querySelector("[popover]");
 document.querySelector("#library-tab").click();
 const qualityClosedOnViewChange = true;
@@ -305,7 +308,7 @@ const audioSizeText = document.querySelector("#audio-summary").textContent;
 const qualityHiddenInAudioMode = document.querySelector("#quality-row").hidden === true;
 document.querySelector("[data-cache-mode='video']").click();
 await delay(40);
-const videoSizeText = document.querySelector("#quality-options [aria-checked='true'] .quality-option-size")?.textContent;
+const videoSizeText = document.querySelector("#quality-size")?.textContent;
 const videoModeRestored = cacheMode === "video" && document.querySelector("[data-cache-mode='video']").getAttribute("aria-checked") === "true";
 
 document.querySelector("#settings-button").click();
@@ -321,13 +324,14 @@ const assistEnabled = document.querySelector("#assist-toggle").getAttribute("ari
 const selectedAssistColor = document.querySelector("[data-assist-color][aria-checked='true']")?.dataset.assistColor;
 document.querySelector("#settings-back").click();
 
-// 画质阶梯：普通账号拿不到大会员档时，用一句话说清差在哪一档。
-const ladderNote = document.querySelector("#auth-note").textContent;
+// 画质阶梯：普通账号拿不到大会员档时，在滑杆下方用一句话说清差在哪一档；不再写「已登录」，也没有大会员标记。
+const ladderNote = document.querySelector("#auth-note-text").textContent;
 const ladderTitle = document.querySelector("#auth-note").title;
 const ladder = {
   note: ladderNote,
   title: ladderTitle,
-  shown: ladderNote === "已登录 · 1080P+ 需要大会员" && ladderTitle.includes("B 站声明可用：1080P+（大会员） / 1080P")
+  shown: ladderNote === "1080P+ 需要大会员" && ladderTitle.includes("B 站声明可用：1080P+（大会员） / 1080P")
+    && document.querySelector("#auth-action").hidden && document.querySelector("#account-chip").hidden
 };
 
 // 片库标签：仅音频缓存显示音轨说明，合并缓存保存按钮指向单个 MP4。

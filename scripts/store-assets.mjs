@@ -61,8 +61,8 @@ const COPY = {
       {
         kicker: "完整缓存 · 播放提前加载",
         headline: "一键缓存，播放更跟手",
-        bullets: ["按账号实际返回的最高画质下载，体积一目了然", "开始后可关闭页面，后台独立完成、断点续传", "播放时提前加载前方内容，实时看到效果"],
-        caption: "当前视频：画质与体积、缓存按钮、提前加载状态"
+        bullets: ["默认最高画质，拖动滑杆换档，体积一目了然", "开始后可关闭页面，后台独立完成、断点续传", "播放时提前加载前方内容，实时看到效果"],
+        caption: "当前视频：画质滑杆与体积、缓存按钮、提前加载状态"
       },
       {
         kicker: "进度条配色",
@@ -91,8 +91,8 @@ const COPY = {
       {
         kicker: "Full cache · Prefetch",
         headline: "One click to cache, smoother playback",
-        bullets: ["Downloads the best quality your account actually gets, with the size shown up front", "Close the tab once it starts; it finishes in the background and resumes after drops", "Prefetches ahead while you watch, with live stats"],
-        caption: "This video: quality and size, Cache button, prefetch status"
+        bullets: ["Starts at the best quality your account gets; drag to change, with the size shown up front", "Close the tab once it starts; it finishes in the background and resumes after drops", "Prefetches ahead while you watch, with live stats"],
+        caption: "This video: quality slider and size, Cache button, prefetch status"
       },
       {
         kicker: "Progress bar colors",

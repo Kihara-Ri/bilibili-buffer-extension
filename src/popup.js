@@ -37,6 +37,8 @@ import {
 const DEFAULT_PROGRESS_COLOR = "#00a1d6";
 // 删除先从列表隐藏，提示里可撤销；超时（或弹窗关闭）才真正删除数据。
 const DELETE_UNDO_MS = 6000;
+// 未登录时「去登录」打开的 B 站登录页；只是新开一个标签，不需要额外权限，也不读取任何账号数据。
+const BILIBILI_LOGIN_URL = "https://passport.bilibili.com/login";
 const TASK_EVENTS = ["CACHE_PROGRESS", "CACHE_RETRY", "CACHE_COMPLETE", "CACHE_ERROR", "CACHE_PAUSED", "CACHE_DELETED"];
 
 const $ = (selector) => document.querySelector(selector);
@@ -57,10 +59,20 @@ const elements = {
   formatControls: $("#format-controls"),
   cacheMode: $("#cache-mode"),
   qualityRow: $("#quality-row"),
-  qualityOptions: $("#quality-options"),
+  qualityName: $("#quality-name"),
+  qualitySize: $("#quality-size"),
+  qualityTrack: $("#quality-track"),
+  qualityLocked: $("#quality-locked"),
+  qualityStops: $("#quality-stops"),
+  qualitySlider: $("#quality-slider"),
+  qualityLow: $("#quality-low"),
+  qualityHigh: $("#quality-high"),
   audioRow: $("#audio-row"),
   audioSummary: $("#audio-summary"),
   authNote: $("#auth-note"),
+  authNoteText: $("#auth-note-text"),
+  authAction: $("#auth-action"),
+  accountChip: $("#account-chip"),
   cacheButton: $("#cache-button"),
   buttonLabel: $("#button-label"),
   buttonSpeed: $("#button-speed"),
@@ -122,7 +134,9 @@ const state = {
   qualityError: "",
   auth: null,
   videos: [],
-  qualityOptionsSignature: "",
+  qualityStopsSignature: "",
+  // 滑杆的档位（从低到高）：open 可选，locked 是当前账号拿不到、画成杆尾斜纹的更高档位。
+  qualityStops: { open: [], locked: [] },
   assistConfig: null,
   assistStats: null,
   assistReadSequence: 0,
@@ -164,8 +178,10 @@ elements.cacheMode.addEventListener("click", (event) => {
   if (button && button.getAttribute("aria-checked") !== "true") void persistCacheMode(button.dataset.cacheMode);
 });
 elements.cacheMode.addEventListener("keydown", navigateCacheModes);
-elements.qualityOptions.addEventListener("click", selectQuality);
-elements.qualityOptions.addEventListener("keydown", navigateQualityOptions);
+// 拖动 / 方向键时 input 连续触发，只更新界面；松手或按键结束（change）才把选择存回后台。
+elements.qualitySlider.addEventListener("input", selectQualityFromSlider);
+elements.qualitySlider.addEventListener("change", persistQualitySelection);
+elements.authAction.addEventListener("click", () => chrome.tabs.create({ url: BILIBILI_LOGIN_URL }));
 elements.assistDetailsToggle.addEventListener("click", () => {
   const open = elements.assistDetailsToggle.getAttribute("aria-expanded") !== "true";
   elements.assistDetailsToggle.setAttribute("aria-expanded", String(open));
@@ -567,14 +583,13 @@ function renderFormatControls(cached) {
       ? t("audio.extractTip")
       : t("audio.tip");
   } else if (state.qualitiesLoading) {
-    renderQualityOptions([], cached, t("quality.loading"));
+    renderQualitySlider([], cached, t("quality.loading"));
   } else {
     const options = getQualityDisplayOptions(cached);
     if (!options.some((option) => option.quality === state.selectedQuality)) state.selectedQuality = options[0]?.quality || 0;
-    renderQualityOptions(options, cached, t("quality.none"));
     ladder = describeQualityLadder(options);
-    elements.qualityOptions.title = ladder.title;
-    updateQualitySelection(cached?.status === "downloading");
+    renderQualitySlider(options, cached, t("quality.none"));
+    elements.qualityTrack.title = ladder.title;
   }
   renderAuthNote(ladder);
 }
@@ -590,33 +605,38 @@ function approxBytes(size) {
 }
 
 /**
- * 用一句人话说明账号权限。B 站声明了、但这次没返回的档位要分两种说：
- * 大会员账号拿不到，说明是这个视频本身没有；普通账号拿不到大会员档，才是权限问题。
+ * 账号说明只在「影响这次能选什么」时出现，并且放在画质滑杆下面：
+ * - 大会员：不再写一句「已登录大会员」，只在分段控件右侧挂一枚「大会员」小标记；
+ * - 未登录：说明登录后能多选哪些档，并给出「去登录」入口（在新标签打开 B 站登录页，不需要新权限）；
+ * - 已登录但不是大会员：只在杆尾有大会员档被锁时说一句「4K 需要大会员」；
+ * - 读取出错 / 登录态受限：警示色说明，仅音频模式下也保留。
+ * B 站声明了、但大会员账号也没拿到的档位，是这个视频本身没有，杆上不画、这里也不提，完整对照在悬停提示里。
  */
 function renderAuthNote(ladder) {
-  const note = elements.authNote;
-  const missing = ladder?.missing || [];
+  const locked = isAudioMode() ? [] : state.qualityStops.locked;
   const list = (items) => items.slice(0, 2).map((item) => item.label).join(t("sep.list")) + (items.length > 2 ? t("list.more") : "");
-  const vipOnly = missing.filter((item) => item.requiresVip);
-  const others = missing.filter((item) => !item.requiresVip);
-  let text = "", tone = "normal", title = "";
+  const signedIn = Boolean(state.auth?.viaPageSession);
+  const vip = signedIn && Boolean(state.auth?.vipActive);
+  let text = "", tone = "normal", title = "", action = false;
   if (state.qualityError) {
     text = state.qualityError; tone = "warning"; title = state.qualityError;
-  } else if (state.auth?.viaPageSession && state.auth?.vipActive) {
-    text = missing.length ? t("auth.vipMissing", { list: list(missing) }) : t("auth.vip");
-    tone = "member"; title = t("auth.vipTip");
-  } else if (state.auth?.viaPageSession) {
-    text = vipOnly.length ? t("auth.needsVip", { list: list(vipOnly) }) : others.length ? t("auth.missing", { list: list(others) }) : t("auth.signedIn");
-    title = t("auth.signedInTip");
-  } else if (state.auth?.hasSessionCookie) {
+  } else if (!signedIn && state.auth?.hasSessionCookie) {
     text = t("auth.limited"); tone = "warning"; title = t("auth.limitedTip");
-  } else if (state.auth) {
-    text = t("auth.signedOut"); tone = "warning"; title = t("auth.signedOutTip");
+  } else if (!signedIn && state.auth) {
+    const loginOnly = locked.filter((item) => !item.requiresVip);
+    text = loginOnly.length ? t("auth.unlockLogin", { list: list(loginOnly) }) : t("auth.signedOut");
+    title = t("auth.signedOutTip"); action = true;
+  } else if (signedIn && !vip && locked.length) {
+    text = t("auth.unlockVip", { list: list(locked) }); title = t("auth.signedInTip");
   }
+  const note = elements.authNote;
   note.hidden = !text || isAudioMode() && tone !== "warning";
-  setSegmentedText(note, text);
+  setText(elements.authNoteText, text);
   note.dataset.tone = tone;
   note.title = [title, ladder?.title].filter(Boolean).join("\n");
+  elements.authAction.hidden = !action;
+  elements.accountChip.hidden = !vip;
+  elements.accountChip.title = [t("auth.vipTip"), ladder?.title].filter(Boolean).join("\n");
 }
 
 function getQualityDisplayOptions(cached) {
@@ -628,99 +648,110 @@ function getQualityDisplayOptions(cached) {
   return options;
 }
 
-/** 选项上的短名：「4K 超高清」→「4K」。短名在同一排里重名时（如两个 1080P 档）才退回完整名，保证选项互相可区分。 */
+/** 杆两端的短名：「4K 超高清」→「4K」。短名重名时（如两个 1080P 档）才退回完整名。 */
 function qualityShortLabels(options) {
   const short = options.map((quality) => String(quality.label || "").trim().split(/\s+/)[0] || String(quality.quality));
   return options.map((quality, index) => short.indexOf(short[index]) === short.lastIndexOf(short[index]) ? short[index] : quality.label);
 }
 
-function qualityAccess(quality) {
-  return quality.requiresVip ? "vip" : quality.requiresLogin ? "login" : "";
+/**
+ * 滑杆的档位，从低到高（B 站画质编号越大越高）。
+ * 锁定段只收「比当前可选最高档还高、且需要登录或大会员」的声明档位：
+ * 它们一定排在杆尾，原生 range 只覆盖可选段，拖不进锁定段。大会员账号缺的档位是视频本身没有，不画。
+ */
+function buildQualityStops(options) {
+  const open = [...options].sort((left, right) => left.quality - right.quality);
+  const top = open.length ? open[open.length - 1].quality : 0;
+  const declared = Array.isArray(state.cacheSizeInfo?.declared) ? state.cacheSizeInfo.declared : [];
+  const locked = !open.length || state.auth?.viaPageSession && state.auth?.vipActive ? [] : declared
+    .filter((item) => item.quality > top && (item.requiresVip || item.requiresLogin))
+    .sort((left, right) => left.quality - right.quality);
+  return { open, locked };
 }
 
 /**
- * 画质选项：一组单选按钮，每项「短名 + 体积」。只在内容签名变化时重建（选中态与禁用态单独更新），
- * 这样心跳刷新不会打断悬停与键盘焦点。
+ * 画质滑杆。几何约定（与 popup.css 的 .quality-track 一致）：N 个档位等距排在
+ * [拇指半径, 宽度 - 拇指半径] 之间，第 i 档在 i / (N - 1)。原生 range 只铺在可选段上，
+ * 宽度 = 拇指 + (总宽 - 拇指) × reach，于是它的拇指位置与装饰档位点严格重合。
+ * 档位点与两端名称只在档位集合变化时重建；选中态、体积、是否顶档每次刷新只改属性与文字，
+ * 进度心跳不会重建节点，也不会让顶档的浪与气泡动画重启（AGENTS 8.1）。
  */
-function renderQualityOptions(options, cached, placeholder) {
-  const short = qualityShortLabels(options);
-  const rows = options.map((quality, index) => [quality.quality, short[index], quality.label, sizeText(quality.quality, cached), qualityAccess(quality), index === 0 && options.length > 1]);
-  const signature = JSON.stringify([rows, rows.length ? "" : placeholder]);
-  if (signature === state.qualityOptionsSignature) return;
-  state.qualityOptionsSignature = signature;
-  const fragment = document.createDocumentFragment();
-  if (!rows.length) {
-    const empty = document.createElement("span");
-    empty.className = "quality-empty";
-    empty.textContent = placeholder;
-    fragment.append(empty);
+function renderQualitySlider(options, cached, placeholder) {
+  const stops = buildQualityStops(options);
+  state.qualityStops = stops;
+  const all = [...stops.open, ...stops.locked];
+  const count = all.length;
+  const at = (index) => count > 1 ? index / (count - 1) : 1;
+  const row = elements.qualityRow;
+  row.dataset.empty = String(!stops.open.length);
+  const signature = JSON.stringify([all.map((item) => [item.quality, item.label]), stops.open.length, placeholder]);
+  if (signature !== state.qualityStopsSignature) {
+    state.qualityStopsSignature = signature;
+    elements.qualityStops.replaceChildren(...all.map((item, index) => {
+      const dot = document.createElement("span");
+      dot.className = "quality-stop";
+      dot.style.setProperty("--at", String(at(index)));
+      return dot;
+    }));
+    const short = qualityShortLabels(all);
+    setText(elements.qualityLow, count > 1 ? short[0] : "");
+    setText(elements.qualityHigh, count ? short[count - 1] : "");
+    elements.qualityHigh.dataset.locked = String(stops.locked.length > 0);
+    const reach = stops.open.length > 1 ? at(stops.open.length - 1) : 0;
+    const track = elements.qualityTrack.style;
+    track.setProperty("--q-reach", String(reach));
+    // 只有一个档位时拇指停在最右（它就是最高），range 本身只有拇指宽。
+    track.setProperty("--q-offset", stops.open.length === 1 ? String(at(count - 1)) : "0");
+    // 锁定段从「最后一个可选档与第一个锁定档的中点」开始，斜纹不会压住可选档的点。
+    elements.qualityLocked.hidden = !stops.locked.length;
+    track.setProperty("--q-lock", String(stops.locked.length ? (at(stops.open.length - 1) + at(stops.open.length)) / 2 : 1));
+    const slider = elements.qualitySlider;
+    slider.max = String(Math.max(0, stops.open.length - 1));
   }
-  for (const [value, name, fullName, size, access, best] of rows) {
-    const option = document.createElement("button");
-    option.className = "quality-option";
-    option.type = "button";
-    option.setAttribute("role", "radio");
-    option.dataset.quality = String(value);
-    option.title = [fullName + (best ? t("quality.best") : ""), size, access && t(`access.${access}`)].filter(Boolean).join(" · ");
-    const label = document.createElement("span"); label.className = "quality-option-label"; label.textContent = name;
-    const bytes = document.createElement("span"); bytes.className = "quality-option-size"; bytes.textContent = size || "—";
-    option.append(label, bytes);
-    if (access) { const tag = document.createElement("span"); tag.className = "quality-option-tag"; tag.textContent = t(`tag.${access}`); option.append(tag); }
-    fragment.append(option);
+  if (!stops.open.length) {
+    setText(elements.qualityName, placeholder);
+    setText(elements.qualitySize, "");
+    row.dataset.top = "false";
+    elements.qualitySlider.disabled = true;
+    return;
   }
-  elements.qualityOptions.replaceChildren(fragment);
+  const index = Math.max(0, stops.open.findIndex((item) => item.quality === state.selectedQuality));
+  const selected = stops.open[index];
+  const size = sizeText(selected.quality, cached);
+  setText(elements.qualityName, selected.label);
+  setText(elements.qualitySize, size);
+  const slider = elements.qualitySlider;
+  if (slider.value !== String(index)) slider.value = String(index);
+  slider.disabled = cached?.status === "downloading";
+  setAttr(slider, "aria-valuetext", [selected.label, size].filter(Boolean).join(t("sep.comma")));
+  elements.qualityTrack.style.setProperty("--q-ratio", String(stops.open.length === 1 ? at(count - 1) : at(index)));
+  // 顶档：选中的是整根杆的最右一档（上面没有被锁的档位）时，杆身变成有浪和气泡的海、拇指里是漂流瓶。
+  // 未登录或非大会员时可选最高档上面还有锁定段，不算顶档：这层效果留给真正的最高画质。
+  const top = String(index === stops.open.length - 1 && !stops.locked.length);
+  if (row.dataset.top !== top) row.dataset.top = top;
 }
 
-/** 对比 B 站声明的档位与当前账号实际返回的轨道，让「是不是最高规格」有答案。 */
+/** 对比 B 站声明的档位与当前账号实际返回的轨道，作为滑杆与账号说明的悬停提示，让「是不是最高规格」有答案。 */
 function describeQualityLadder(options) {
   const declared = Array.isArray(state.cacheSizeInfo?.declared) ? state.cacheSizeInfo.declared : [];
   const describe = (quality) => `${quality.label}${quality.requiresVip ? t("ladder.vip") : quality.requiresLogin ? t("ladder.login") : ""}`;
-  const missing = declared.filter((item) => !options.some((option) => option.quality === item.quality));
-  if (!declared.length) return { missing: [], missingText: "", title: "" };
+  if (!declared.length) return { title: "" };
   return {
-    missing,
-    missingText: missing.map(describe).join(t("sep.list")),
     title: [t("ladder.declared", { list: declared.map(describe).join(" / ") }), t("ladder.returned", { list: options.map((option) => option.label).join(" / ") || t("ladder.none") })].join("\n")
   };
 }
 
-/** 选中态走 aria-checked + roving tabindex；下载中不允许换档，整组置灰。 */
-function updateQualitySelection(locked) {
-  const options = [...elements.qualityOptions.querySelectorAll(".quality-option")];
-  const selectedIndex = Math.max(0, options.findIndex((option) => Number(option.dataset.quality) === state.selectedQuality));
-  options.forEach((option, index) => {
-    const selected = index === selectedIndex && Number(option.dataset.quality) === state.selectedQuality;
-    option.setAttribute("aria-checked", String(selected));
-    option.tabIndex = index === selectedIndex ? 0 : -1;
-    option.disabled = Boolean(locked);
-  });
-}
-
-function selectQuality(event) {
-  const option = event.target.closest(".quality-option");
-  if (!option || option.disabled) return;
-  const quality = Number(option.dataset.quality) || 0;
+function selectQualityFromSlider() {
+  const quality = state.qualityStops.open[Number(elements.qualitySlider.value)]?.quality || 0;
   if (!quality || quality === state.selectedQuality) return;
   state.selectedQuality = quality;
   state.selectedCodec = "auto";
-  if (state.tab?.url) {
-    void send("SET_POPUP_SELECTION", { tabId: state.tab.id, url: state.tab.url, quality: state.selectedQuality, codec: state.selectedCodec }).catch(() => {});
-  }
   renderCurrent();
-  elements.qualityOptions.querySelector('[aria-checked="true"]')?.focus();
 }
 
-/** 单选组的键盘约定：方向键移动并选中，Home / End 到两端。 */
-function navigateQualityOptions(event) {
-  const options = [...elements.qualityOptions.querySelectorAll(".quality-option:not(:disabled)")];
-  if (!options.length || !["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"].includes(event.key)) return;
-  event.preventDefault();
-  const current = Math.max(0, options.indexOf(document.activeElement));
-  const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
-  const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1
-    : (current + (forward ? 1 : -1) + options.length) % options.length;
-  options[next].click();
-  elements.qualityOptions.querySelector('[aria-checked="true"]')?.focus();
+function persistQualitySelection() {
+  if (!state.tab?.url || !state.selectedQuality) return;
+  void send("SET_POPUP_SELECTION", { tabId: state.tab.id, url: state.tab.url, quality: state.selectedQuality, codec: state.selectedCodec }).catch(() => {});
 }
 
 function setButtonState(mode, label, speed, progress, disabled, sub = "") {
@@ -1236,24 +1267,6 @@ function setAttr(element, name, value) {
 
 function setText(element, text) {
   if (element.textContent !== text) element.textContent = text;
-}
-
-/**
- * 按「 · 」分段写入，每段作为整体折行：右对齐的短说明优先在分隔点折行，
- * 否则「已登录大会员 · 本视频没有 1080P+」会把「1080P+」单独挤到第二行。
- * 段落不能设成 nowrap：不含分隔点的长警告会变成一条不可断的长串，撑出右侧边距（见 popup.css）。
- * 文本不变时不重建节点（textContent 与原句一致，可直接比较）。
- * @param {HTMLElement} element
- * @param {string} text
- */
-function setSegmentedText(element, text) {
-  if (element.textContent === text) return;
-  element.replaceChildren(...text.split(" · ").flatMap((part, index) => {
-    const segment = document.createElement("span");
-    segment.className = "text-segment";
-    segment.textContent = part;
-    return index ? [" · ", segment] : [segment];
-  }));
 }
 
 function showToast(message, { action = "", onAction = null, duration = 1800 } = {}) {

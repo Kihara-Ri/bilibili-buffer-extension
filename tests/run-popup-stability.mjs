@@ -72,14 +72,14 @@ try {
     const button=document.querySelector('#cache-button').getBoundingClientRect(),label=document.querySelector('#button-label').getBoundingClientRect(),speed=document.querySelector('#button-speed').getBoundingClientRect();
     return {label:document.querySelector('#button-label').textContent,speed:document.querySelector('#button-speed').textContent,hint:document.querySelector('#action-hint').textContent,sub:document.querySelector('#button-sub').textContent,nowrap:getComputedStyle(document.querySelector('#button-speed')).whiteSpace,noOverlap:label.right+4<=speed.left,inside:speed.right<=button.right&&speed.bottom<=button.bottom,progress:document.querySelector('#cache-button').style.getPropertyValue('--progress-ratio')};
   }); assert(layout.noOverlap&&layout.inside,JSON.stringify(layout)); assert.equal(layout.nowrap,'nowrap'); assert.equal(layout.progress,'0.5'); assert(/^8(\.\d+)? MB \/ /.test(layout.sub)&&layout.hint==='',JSON.stringify(layout));
-  // 暂停在主按钮内部右侧：不得盖住速度文字，也不得超出按钮；画质卡片在进度刷新中保持节点身份。
+  // 暂停在主按钮内部右侧：不得盖住速度文字，也不得超出按钮；画质滑杆在进度刷新中保持节点身份，下载中不能换档。
   const inButton=await page.evaluate(async()=>{
     const button=document.querySelector('#cache-button').getBoundingClientRect(),pause=document.querySelector('#pause-button'),pr=pause.getBoundingClientRect(),speed=document.querySelector('#button-speed').getBoundingClientRect();
-    const before=[...document.querySelectorAll('#quality-options .quality-option')];
+    const before=[document.querySelector('#quality-slider'),...document.querySelectorAll('#quality-stops .quality-stop')];
     window.__popupTest.emit({type:'CACHE_PROGRESS',video:{...window.taskA,updatedAt:Date.now()+50000}});
     await new Promise(resolve=>setTimeout(resolve,80));
-    const after=[...document.querySelectorAll('#quality-options .quality-option')];
-    return {visible:!pause.hidden,inside:pr.left>=button.left&&pr.right<=button.right&&pr.top>=button.top&&pr.bottom<=button.bottom,clear:speed.right<=pr.left,locked:before.every(node=>node.disabled),stable:before.length>0&&before.length===after.length&&before.every((node,index)=>node===after[index])};
+    const after=[document.querySelector('#quality-slider'),...document.querySelectorAll('#quality-stops .quality-stop')];
+    return {visible:!pause.hidden,inside:pr.left>=button.left&&pr.right<=button.right&&pr.top>=button.top&&pr.bottom<=button.bottom,clear:speed.right<=pr.left,locked:before[0].disabled,stable:before.length>1&&before.length===after.length&&before.every((node,index)=>node===after[index])};
   }); assert(inButton.visible&&inButton.inside&&inButton.clear&&inButton.locked&&inButton.stable,JSON.stringify(inButton));
   await page.locator('.app-shell').screenshot({path:path.join(shots,'cache.png')});
   const motion=await page.evaluate(async()=>{
@@ -253,34 +253,49 @@ try {
   });
   assert(sealed.state==='complete'&&sealed.sameGlyph&&sealed.display==='block'&&sealed.letter!=='none'&&sealed.sea==='none'&&sealed.cork!=='none','完成态应显示封好的漂流瓶：'+JSON.stringify(sealed));
   await page.locator('.app-shell').screenshot({path:path.join(shots,'complete.png')});
-  // 画质卡片在四档并排、带 VIP/登录 标记时最挤：商店场景就是这种数据（4K 约 312 MB + VIP）。
-  // 标记不能压住体积或档位文字，也不能被卡片或相邻控件遮挡。
+  // 画质滑杆（商店场景：大会员，720P / 1080P / 1080P60 / 4K）。默认在最右的 4K：杆身是有浪和气泡的海，
+  // 弹窗每 700ms 轮询刷新，浪的动画必须是同一个对象且时间持续前进（不能每次刷新从头开始）。
   await page.goto(origin + '/store/scene/popup-scene.html');
-  await page.waitForFunction(()=>globalThis.__storeScene&&document.querySelectorAll('.quality-option-tag').length>0);
-  const chips=await page.evaluate(()=>{
-    const hit=(a,b)=>a.left<b.right-0.5&&b.left<a.right-0.5&&a.top<b.bottom-0.5&&b.top<a.bottom-0.5;
-    const modeRow=document.querySelector('.mode-row').getBoundingClientRect();
-    const all=[...document.querySelectorAll('.quality-option')];
-    return all.map((option,index)=>{
-      const box=option.getBoundingClientRect(),label=option.querySelector('.quality-option-label'),size=option.querySelector('.quality-option-size'),tag=option.querySelector('.quality-option-tag');
-      const ink=(node)=>{const range=document.createRange(); range.selectNodeContents(node); return range.getBoundingClientRect();};
-      // 文字的实际墨迹范围：档位/体积是块级网格项，盒子横跨整张卡片，用盒子判断会把空白处也算成重叠。
-      const lr=ink(label),sr=ink(size),tr=tag?.getBoundingClientRect();
-      const problems=[];
-      if(size.scrollWidth>size.clientWidth||sr.right>box.right-1)problems.push('体积溢出卡片');
-      if(lr.right>box.right-1)problems.push('档位溢出卡片');
-      if(tr){
-        if(hit(tr,sr))problems.push('标记压住体积');
-        if(hit(tr,lr))problems.push('标记压住档位');
-        if(tr.top<modeRow.bottom)problems.push('标记伸进上方控件');
-        if(all.some((other,j)=>j!==index&&hit(tr,other.getBoundingClientRect())))problems.push('标记压住相邻卡片');
-        const at=document.elementFromPoint(tr.left+tr.width/2,tr.top+tr.height/2);
-        if(!tag.contains(at))problems.push('标记被遮挡');
-      }
-      return {text:option.textContent,problems};
-    });
-  });
-  assert(chips.length===4&&chips.every(chip=>!chip.problems.length),JSON.stringify(chips));
+  await page.waitForFunction(()=>globalThis.__storeScene&&document.querySelector('#quality-row').dataset.empty==='false');
+  await page.emulateMedia({reducedMotion:'no-preference'});
+  const flowOf=()=>page.evaluate(()=>{const fill=document.querySelector('.quality-fill');window.flow=fill.getAnimations({subtree:true}).find(item=>item.animationName==='quality-tide');window.flowNodes=[document.querySelector('#quality-slider'),...document.querySelectorAll('.quality-stop')];return {time:window.flow?.currentTime,state:window.flow?.playState};});
+  const flowStart=await flowOf();
+  await page.waitForTimeout(2200);
+  const flowLater=await page.evaluate(()=>{const fill=document.querySelector('.quality-fill');const flow=fill.getAnimations({subtree:true}).find(item=>item.animationName==='quality-tide');const nodes=[document.querySelector('#quality-slider'),...document.querySelectorAll('.quality-stop')];
+    return {same:flow===window.flow,time:flow?.currentTime,nodes:nodes.length===window.flowNodes.length&&nodes.every((node,index)=>node===window.flowNodes[index]),
+      top:document.querySelector('#quality-row').dataset.top,name:document.querySelector('#quality-name').textContent,value:document.querySelector('#quality-slider').value,max:document.querySelector('#quality-slider').max,
+      chip:!document.querySelector('#account-chip').hidden,note:document.querySelector('#auth-note').hidden,ends:[document.querySelector('#quality-low').textContent,document.querySelector('#quality-high').textContent]};});
+  assert(flowStart.state==='running'&&flowLater.same&&flowLater.time>flowStart.time+1500&&flowLater.nodes,'顶档的浪不能被轮询刷新重启：'+JSON.stringify({flowStart,flowLater}));
+  assert(flowLater.top==='true'&&flowLater.name==='4K'&&flowLater.value==='3'&&flowLater.max==='3'&&flowLater.chip&&flowLater.note&&flowLater.ends.join()==='720P,4K',JSON.stringify(flowLater));
+  // 拇指与装饰档位点必须重合：range 的几何（只铺可选段）与 CSS 的档位坐标一致。
+  const thumbAligned=await page.evaluate(()=>{const slider=document.querySelector('#quality-slider'),stops=[...document.querySelectorAll('.quality-stop')],r=slider.getBoundingClientRect(),max=Number(slider.max);
+    return stops.map((stop,index)=>{const s=stop.getBoundingClientRect();const thumb=r.left+11+(r.width-22)*index/max;return Math.abs(s.left+s.width/2-thumb);});});
+  assert(thumbAligned.every(delta=>delta<1),'拇指位置与档位点错位：'+JSON.stringify(thumbAligned));
+  await page.locator('.quality-row').screenshot({path:path.join(shots,'quality-top.png')});
+  // 键盘：方向键逐档移动，离开顶档后海与漂流瓶消失；End 回到最高档，效果恢复。
+  await page.locator('#quality-slider').focus();
+  await page.keyboard.press('ArrowLeft');
+  const stepped=await page.evaluate(()=>({name:document.querySelector('#quality-name').textContent,top:document.querySelector('#quality-row').dataset.top,flow:getComputedStyle(document.querySelector('.quality-fill'),'::before').animationName,text:document.querySelector('#quality-slider').getAttribute('aria-valuetext')}));
+  assert(stepped.name==='1080P60'&&stepped.top==='false'&&stepped.flow==='none'&&stepped.text.startsWith('1080P60'),JSON.stringify(stepped));
+  await page.keyboard.press('End');
+  assert.equal(await page.evaluate(()=>document.querySelector('#quality-row').dataset.top),'true','End 应回到最高档');
+  // 减少动态效果：顶档仍是海的配色，但浪与气泡都静止。
+  await page.emulateMedia({reducedMotion:'reduce'});
+  assert.deepEqual(await page.evaluate(()=>[getComputedStyle(document.querySelector('.quality-fill'),'::before').animationName,getComputedStyle(document.querySelector('.quality-fill'),'::after').animationName]),['none','none'],'减少动态效果时浪与气泡应静止');
+  // 未登录：B 站只返回 720P / 1080P，1080P+ / 1080P60 / 4K 是杆尾的锁定段；拖不进去，也不算顶档。
+  await page.goto(origin + '/store/scene/popup-scene.html?auth=signedout');
+  await page.waitForFunction(()=>globalThis.__storeScene&&document.querySelector('#quality-row').dataset.empty==='false');
+  await page.locator('#quality-slider').focus();
+  await page.keyboard.press('End');
+  const signedOut=await page.evaluate(()=>{const locked=document.querySelector('#quality-locked'),slider=document.querySelector('#quality-slider'),l=locked.getBoundingClientRect(),r=slider.getBoundingClientRect();
+    return {name:document.querySelector('#quality-name').textContent,value:slider.value,max:slider.max,top:document.querySelector('#quality-row').dataset.top,stops:document.querySelectorAll('.quality-stop').length,
+      lockedShown:!locked.hidden,separate:l.left>=r.right-0.5,highLocked:document.querySelector('#quality-high').dataset.locked,
+      note:document.querySelector('#auth-note-text').textContent,action:!document.querySelector('#auth-action').hidden,chip:document.querySelector('#account-chip').hidden};});
+  assert(signedOut.name==='1080P'&&signedOut.value==='1'&&signedOut.max==='1'&&signedOut.top==='false'&&signedOut.stops===5&&signedOut.lockedShown&&signedOut.separate&&signedOut.highLocked==='true',JSON.stringify(signedOut));
+  assert(signedOut.note==='登录后可选 1080P60'&&signedOut.action&&signedOut.chip,JSON.stringify(signedOut));
+  await page.locator('.app-shell').screenshot({path:path.join(shots,'quality-signed-out.png')});
+  await page.goto(origin + '/store/scene/popup-scene.html');
+  await page.waitForFunction(()=>globalThis.__storeScene&&document.querySelector('#quality-row').dataset.empty==='false');
   // 页眉图标引用的是打包内的矢量母版：路径写错或资源缺失时 <img> 只会静默显示破图。
   assert(await page.evaluate(()=>{const icon=document.querySelector('.brand-icon'); return icon.complete&&icon.naturalWidth>0;}),'页眉图标没有加载出来');
   // 页眉诗句：「海内存知」与「己，天涯若比邻」同字号、同一行、紧贴（「知己」不能被拆开），
@@ -293,13 +308,6 @@ try {
       size:[ns.fontSize,rs.fontSize],weight:[+ns.fontWeight,+rs.fontWeight],color:[ns.color,rs.color],clear:r[r.length-1].right<g.left-4};
   });
   assert(verse.lines.join()==='1,1'&&verse.gap>=-0.5&&verse.gap<3&&verse.baseline<1&&verse.size[0]===verse.size[1]&&verse.weight[0]>verse.weight[1]&&verse.color[0]!==verse.color[1]&&verse.clear,JSON.stringify(verse));
-  // 账号说明只能在「 · 」处折行：档位名（如 1080P+）不能被单独挤到下一行。
-  const note=await page.evaluate(()=>{
-    const node=document.querySelector('#auth-note');
-    const line=parseFloat(getComputedStyle(node).lineHeight);
-    return {text:node.textContent,segments:[...node.querySelectorAll('.text-segment')].map(segment=>Math.round(segment.getBoundingClientRect().height/line))};
-  });
-  assert(note.text.includes(' · ')&&note.segments.length>1&&note.segments.every(lines=>lines===1),JSON.stringify(note));
   // 左右边距必须对称：一整句不含「 · 」的长警告曾被当成一个不换行的段，把整列撑出右侧 16px 边距。
   await page.goto(origin + '/store/scene/popup-scene.html?auth=limited');
   await page.waitForFunction(()=>globalThis.__storeScene&&document.querySelector('#auth-note').textContent.includes('登录状态受限'));
