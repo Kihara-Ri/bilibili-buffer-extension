@@ -75,7 +75,19 @@
                 <span id="button-progress" class="button-progress" aria-hidden="true"></span>
                 <span class="button-content">
                   <span class="button-text">
-                    <span id="button-label" class="button-label" data-i18n="button.reading">读取页面</span>
+                    <span class="button-title">
+                      <!-- 漂流瓶字形：与工具栏图标同一个倾斜瓶身；空闲时是空瓶，完成时封好瓶塞、装着信。
+                           文字由 setText 改写 #button-label，字形是它的兄弟节点，不会被刷新抹掉。 -->
+                      <svg class="button-glyph" viewBox="0 0 32 32" aria-hidden="true">
+                        <g transform="translate(16 16.5) rotate(38) scale(0.9) translate(-16 -16)">
+                          <path d="M13 6.5V8.5Q13 10 11.5 11Q7.5 13 7.5 17.5V26Q7.5 30 11.5 30H20.5Q24.5 30 24.5 26V17.5Q24.5 13 20.5 11Q19 10 19 8.5V6.5"/>
+                          <rect class="glyph-cork" x="11.5" y="2" width="9" height="4.5" rx="1.5"/>
+                          <path class="glyph-sea" d="M8 21Q12 19 16 21T24 21"/>
+                          <path class="glyph-letter" d="M12.5 16.5H19.5M12.5 20H19.5M12.5 23.5H17"/>
+                        </g>
+                      </svg>
+                      <span id="button-label" class="button-label" data-i18n="button.reading">读取页面</span>
+                    </span>
                     <span id="button-sub" class="button-sub"></span>
                   </span>
                   <span id="button-speed" class="button-speed"></span>

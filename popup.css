@@ -35,7 +35,10 @@
   --selected-ink: #ffffff;
   --track-off: #d5d9df;
   --progress-wash: #e8f6fc;
-  --progress-fill: linear-gradient(90deg, rgba(0, 174, 236, 0.28), rgba(0, 174, 236, 0.5));
+  /* 进度填充 = 不透明实色 × 父层透明度 × 静态渐变遮罩（左 28% → 右 50% 的蓝），拆开的原因见 .button-progress。 */
+  --progress-solid: rgb(0, 174, 236);
+  --progress-alpha: 0.5;
+  --progress-alpha-start: 0.56;
   --toast-bg: #1f2530;
   --toast-ink: #eef1f5;
   --toast-action: #6fd3f7;
@@ -88,7 +91,9 @@
     --selected-ink: var(--ink-strong);
     --track-off: #2a3242;
     --progress-wash: var(--surface-soft);
-    --progress-fill: linear-gradient(90deg, rgba(58, 210, 255, 0.22), rgba(58, 210, 255, 0.5));
+    --progress-solid: rgb(58, 210, 255);
+    --progress-alpha: 0.5;
+    --progress-alpha-start: 0.44;
     --toast-bg: #222a38;
     --toast-ink: #eef1f5;
     --toast-action: #6fdcff;
@@ -407,15 +412,40 @@ svg { flex: none; }
 .cache-button:is([data-state="downloading"], [data-state="paused"], [data-state="error"]) { background: var(--progress-wash); color: var(--ink-strong); box-shadow: inset 0 0 0 1px var(--line); }
 .cache-button[data-state="downloading"] { cursor: progress; }
 .cache-button[data-state="complete"] { background: var(--surface-soft); color: var(--success); box-shadow: inset 0 0 0 1px var(--line); cursor: default; }
+/* 进度填充的右缘是一道缓慢起伏的水波（漂流瓶意象）。
+   - 用 translateX 平移整块而不是 scaleX：缩放会把右缘波纹压扁；两者都只动 transform，不引起布局抖动。
+   - 实色填充（::before）与波纹（::after）都是不透明子层、交界重叠 1px；半透明由父层 opacity 与静态渐变遮罩
+     统一给出。若两层各自半透明，交界的亚像素会露出一条深色或浅色的缝。
+   - 波纹只对 ::after 做 translateY 循环（合成层动画）。节点常驻，进度每次刷新只改 --progress-ratio，
+     动画不会重启（AGENTS 8.1；npm run test:popup 校验）。暂停 / 出错时水面停住。 */
 .button-progress {
+  --wave: 9px;
   position: absolute;
   z-index: -1;
-  inset: 0;
-  transform: scaleX(var(--progress-ratio, 0));
-  transform-origin: left center;
-  background: var(--progress-fill);
+  inset: 0 auto 0 0;
+  width: calc(100% + var(--wave));
+  opacity: var(--progress-alpha);
+  transform: translateX(calc((var(--progress-ratio, 0) - 1) * (100% - var(--wave))));
+  -webkit-mask: linear-gradient(90deg, rgba(0, 0, 0, var(--progress-alpha-start)), #000);
+  mask: linear-gradient(90deg, rgba(0, 0, 0, var(--progress-alpha-start)), #000);
   transition: transform 420ms var(--ease-out);
 }
+.button-progress::before { content: ""; position: absolute; inset: 0 calc(var(--wave) - 1px) 0 0; background: var(--progress-solid); }
+.button-progress::after {
+  --wave-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 18'%3E%3Cpath d='M0 0H5Q9 4.5 5 9T5 18H0Z'/%3E%3C/svg%3E");
+  content: "";
+  position: absolute;
+  top: -18px;
+  bottom: 0;
+  right: 0;
+  width: var(--wave);
+  background: var(--progress-solid);
+  -webkit-mask: var(--wave-svg) 0 0 / var(--wave) 18px repeat-y;
+  mask: var(--wave-svg) 0 0 / var(--wave) 18px repeat-y;
+  animation: progress-tide 2.4s linear infinite;
+}
+.cache-button:is([data-state="paused"], [data-state="error"]) .button-progress::after { animation-play-state: paused; }
+@keyframes progress-tide { to { transform: translateY(18px); } }
 .cache-button:is([data-state="idle"], [data-state="complete"], [data-state="disabled"]) .button-progress { opacity: 0; }
 .button-content {
   display: grid;
@@ -428,14 +458,25 @@ svg { flex: none; }
 }
 .cache-control:has(.pause-button:not([hidden])) .button-content { padding-right: 54px; }
 .button-text { display: grid; justify-self: start; gap: 1px; min-width: 0; text-align: left; }
+.button-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .button-label { white-space: nowrap; }
+/* 漂流瓶字形只在「开始」（空闲）与「收到」（已缓存）两个时刻出现；下载中不分散对数字的注意。 */
+.button-glyph { display: none; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.cache-button:is([data-state="idle"], [data-state="complete"]) .button-glyph { display: block; }
+.button-glyph .glyph-sea { opacity: 0.7; }
+.button-glyph .glyph-letter { display: none; opacity: 0.8; }
+.cache-button[data-state="complete"] .glyph-sea { display: none; }
+.cache-button[data-state="complete"] .glyph-letter { display: inline; }
+.cache-button[data-state="complete"] .glyph-cork { fill: currentColor; }
 .button-sub { font-size: 11px; font-weight: 500; opacity: 0.7; white-space: nowrap; }
 .button-sub:empty { display: none; }
 .button-content:has(.button-speed:empty) { grid-template-columns: 1fr; }
 .button-content:has(.button-speed:empty) .button-text { justify-self: center; text-align: center; }
+.button-content:has(.button-speed:empty) .button-title { justify-content: center; }
 /* 暂停 / 出错没有速度列，但仍按下载中的版式左对齐，切换状态时文字不跳到中间。 */
 .cache-button:is([data-state="paused"], [data-state="error"]) .button-content .button-text { justify-self: start; text-align: left; }
-.cache-button[data-state="idle"] .button-label { font-size: 15px; letter-spacing: 0.14em; }
+.cache-button:is([data-state="paused"], [data-state="error"]) .button-content .button-title { justify-content: flex-start; }
+.cache-button[data-state="idle"] .button-label { font-size: 15px; letter-spacing: 0.1em; }
 .button-speed { justify-self: end; min-width: 8.5ch; font-size: 12px; font-weight: 600; text-align: right; white-space: nowrap; opacity: 0.86; }
 .button-speed:empty { display: none; }
 
@@ -800,4 +841,6 @@ svg { flex: none; }
     transition-duration: 0.01ms !important;
   }
   .download-arrow { animation: none !important; }
+  /* 无限循环的水波在全局 0.01ms 时长下会变成高频闪烁，必须直接停掉。 */
+  .button-progress::after { animation: none !important; }
 }

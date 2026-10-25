@@ -85,7 +85,9 @@ try {
   const motion=await page.evaluate(async()=>{
     window.__popupTest.emit({type:'CACHE_PROGRESS',video:{...window.taskA,updatedAt:Date.now()+90000,committedBytes:12*1024*1024,downloadedBytes:12*1024*1024,resumeBytes:12*1024*1024,progress:.75}});
     const values=[];
-    for(let i=0;i<10;i++){await new Promise(requestAnimationFrame); values.push(new DOMMatrixReadOnly(getComputedStyle(document.querySelector('.button-progress')).transform).a);}
+    // 填充用 translateX 平移（右缘水波不能被缩放压扁）：可见比例 = 1 + 平移量 / 实色宽度（元素宽度减去水波宽度）。
+    const fill=document.querySelector('.button-progress'), solid=fill.offsetWidth-parseFloat(getComputedStyle(fill).getPropertyValue('--wave'));
+    for(let i=0;i<10;i++){await new Promise(requestAnimationFrame); values.push(1+new DOMMatrixReadOnly(getComputedStyle(fill).transform).e/solid);}
     return values;
   });
   assert(motion.some(value=>value>.501&&value<.749),'进度增长应有真实中间帧而非跳到终点');
@@ -190,6 +192,24 @@ try {
   // 暂停态沿用下载中的进度样式，右侧圆钮改为「继续」；撤销期内对同一画质点「缓存」等同于撤销删除，
   // 不能先续传、再被到点的删除把刚恢复的任务删掉（按钮表现为转一圈又变回「缓存」）。
   await page.locator('#current-tab').click();
+  // 上面已模拟「减少动态效果」：无限循环的水波必须彻底停掉（全局 0.01ms 时长会让它高频闪烁）。
+  assert.equal(await page.evaluate(()=>getComputedStyle(document.querySelector('#button-progress'),'::after').animationName),'none','减少动态效果时水波应静止');
+  await page.emulateMedia({reducedMotion:'no-preference'});
+  // 主按钮右缘的水波是无限循环动画：进度高频刷新时必须是同一个动画对象且时间持续前进（不能每个 tick 重启），
+  // 下载中不显示漂流瓶字形。
+  const tide=await page.evaluate(async()=>{
+    const MiB=1024*1024, tideOf=()=>document.querySelector('#button-progress').getAnimations({subtree:true}).find(item=>item.animationName==='progress-tide');
+    for(let i=0;i<12;i++){
+      const at=Date.now()+400000+i;
+      window.__popupTest.emit({type:'CACHE_PROGRESS',video:{...window.taskA,status:'downloading',runStartedAt:at,updatedAt:at,committedBytes:(4+i/2)*MiB,resumeBytes:(4+i/2)*MiB,downloadedBytes:(4+i/2)*MiB,progress:(4+i/2)/16,speed:2*MiB}});
+      if(i===1) window.tideFirst={animation:tideOf(),time:tideOf()?.currentTime};
+      await new Promise(resolve=>setTimeout(resolve,55));
+    }
+    const last=tideOf(), button=document.querySelector('#cache-button');
+    return {state:button.dataset.state,running:last?.playState,same:!!last&&last===window.tideFirst.animation,advanced:last?.currentTime>window.tideFirst.time,glyph:getComputedStyle(document.querySelector('.button-glyph')).display};
+  });
+  assert(tide.state==='downloading'&&tide.running==='running'&&tide.same&&tide.advanced,'进度刷新不能重启水波动画：'+JSON.stringify(tide));
+  assert.equal(tide.glyph,'none','下载中不显示漂流瓶字形');
   const pausedStyle=await page.evaluate(async()=>{
     const at=Date.now()+500000, MiB=1024*1024;
     const paused={...window.taskA,status:'paused',runStartedAt:at,updatedAt:at,speed:0,committedBytes:8*MiB,resumeBytes:8*MiB,downloadedBytes:8*MiB,progress:.5};
@@ -198,12 +218,14 @@ try {
     await new Promise(resolve=>setTimeout(resolve,60));
     const button=document.querySelector('#cache-button'),toggle=document.querySelector('#pause-button');
     return {state:button.dataset.state,disabled:button.disabled,label:document.querySelector('#button-label').textContent,sub:document.querySelector('#button-sub').textContent,hint:document.querySelector('#action-hint').hidden,
-      progressShown:getComputedStyle(document.querySelector('.button-progress')).opacity==='1',sameWash:getComputedStyle(button).backgroundColor,toggleVisible:!toggle.hidden,toggleMode:toggle.dataset.mode,toggleLabel:toggle.getAttribute('aria-label')};
+      progressShown:parseFloat(getComputedStyle(document.querySelector('.button-progress')).opacity)>0,sameWash:getComputedStyle(button).backgroundColor,toggleVisible:!toggle.hidden,toggleMode:toggle.dataset.mode,toggleLabel:toggle.getAttribute('aria-label')};
   });
   const washDownloading=await page.evaluate(()=>{const probe=document.createElement('button');probe.className='cache-button';probe.dataset.state='downloading';document.body.append(probe);const color=getComputedStyle(probe).backgroundColor;probe.remove();return color;});
   assert(pausedStyle.state==='paused'&&!pausedStyle.disabled&&pausedStyle.label==='已暂停 50%'&&/^8(\.\d+)? MB \/ /.test(pausedStyle.sub)&&pausedStyle.hint,JSON.stringify(pausedStyle));
   assert(pausedStyle.progressShown&&pausedStyle.sameWash===washDownloading,'暂停态应沿用下载中的进度底色：'+JSON.stringify(pausedStyle));
   assert(pausedStyle.toggleVisible&&pausedStyle.toggleMode==='resume'&&pausedStyle.toggleLabel==='继续缓存',JSON.stringify(pausedStyle));
+  assert.equal(await page.evaluate(()=>document.querySelector('#button-progress').getAnimations({subtree:true}).find(item=>item.animationName==='progress-tide')?.playState),'paused','暂停时水面应停住');
+  await page.emulateMedia({reducedMotion:'reduce'});
   await page.locator('.app-shell').screenshot({path:path.join(shots,'paused.png')});
   await page.locator('#pause-button').click();
   await page.waitForFunction(()=>document.querySelector('#cache-button').dataset.state==='downloading');
@@ -213,10 +235,24 @@ try {
   await page.locator(`.video-item[data-video-id="${'popup-live-a'}"] .delete-button`).click();
   await page.locator('#current-tab').click();
   assert.equal(await page.locator('#button-label').textContent(),'缓存','撤销期内任务应从当前视频隐藏');
+  const idleGlyph=await page.evaluate(()=>{const glyph=document.querySelector('.button-glyph'),label=document.querySelector('#button-label');const g=glyph.getBoundingClientRect(),l=label.getBoundingClientRect(),b=document.querySelector('#cache-button').getBoundingClientRect();
+    return {display:getComputedStyle(glyph).display,letter:getComputedStyle(glyph.querySelector('.glyph-letter')).display,before:g.right<=l.left,centered:Math.abs((g.left+l.right)/2-(b.left+b.right)/2)<3};});
+  assert(idleGlyph.display==='block'&&idleGlyph.letter==='none'&&idleGlyph.before&&idleGlyph.centered,'空闲时瓶子在「缓存」左侧且整体居中：'+JSON.stringify(idleGlyph));
   await page.locator('#cache-button').click();
   await page.waitForTimeout(6600);
   const afterUndoWindow=await page.evaluate(()=>({deleted:window.__popupTest.deletedIds.includes('popup-live-a'),state:document.querySelector('#cache-button').dataset.state,toast:document.querySelector('#toast').dataset.visible,listed:!!document.querySelector('.video-item[data-video-id="popup-live-a"]')}));
   assert(!afterUndoWindow.deleted&&afterUndoWindow.state==='downloading'&&afterUndoWindow.toast!=='true'&&afterUndoWindow.listed,'撤销期内点缓存应取消删除并续传：'+JSON.stringify(afterUndoWindow));
+  // 完成态：封好瓶塞、装着信的瓶子，文字刷新（setText）不能抹掉字形节点。
+  const sealed=await page.evaluate(async()=>{
+    const MiB=1024*1024, at=Date.now()+700000, glyph=document.querySelector('.button-glyph');
+    const done={...window.__popupTest.videos.find(item=>item.id===window.taskA.id),status:'complete',runStartedAt:at,updatedAt:at,completedAt:at,committedBytes:16*MiB,resumeBytes:16*MiB,downloadedBytes:16*MiB,progress:1,speed:0};
+    Object.assign(window.__popupTest.videos.find(item=>item.id===done.id),done);
+    window.__popupTest.emit({type:'CACHE_COMPLETE',video:done});
+    await new Promise(resolve=>setTimeout(resolve,80));
+    return {state:document.querySelector('#cache-button').dataset.state,sameGlyph:glyph===document.querySelector('.button-glyph'),display:getComputedStyle(glyph).display,letter:getComputedStyle(glyph.querySelector('.glyph-letter')).display,sea:getComputedStyle(glyph.querySelector('.glyph-sea')).display,cork:getComputedStyle(glyph.querySelector('.glyph-cork')).fill};
+  });
+  assert(sealed.state==='complete'&&sealed.sameGlyph&&sealed.display==='block'&&sealed.letter!=='none'&&sealed.sea==='none'&&sealed.cork!=='none','完成态应显示封好的漂流瓶：'+JSON.stringify(sealed));
+  await page.locator('.app-shell').screenshot({path:path.join(shots,'complete.png')});
   // 画质卡片在四档并排、带 VIP/登录 标记时最挤：商店场景就是这种数据（4K 约 312 MB + VIP）。
   // 标记不能压住体积或档位文字，也不能被卡片或相邻控件遮挡。
   await page.goto(origin + '/store/scene/popup-scene.html');
