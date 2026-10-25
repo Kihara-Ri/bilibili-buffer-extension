@@ -404,9 +404,9 @@ svg { flex: none; }
 .cache-button:not(:disabled):hover { filter: brightness(0.96); transform: translateY(-1px); }
 .cache-button:not(:disabled):active { transform: translateY(1px) scale(0.99); }
 .cache-button:disabled { background: var(--surface-soft); color: var(--ink-soft); box-shadow: none; cursor: not-allowed; }
-.cache-button[data-state="downloading"] { background: var(--progress-wash); color: var(--ink-strong); box-shadow: inset 0 0 0 1px var(--line); cursor: progress; }
+.cache-button:is([data-state="downloading"], [data-state="paused"], [data-state="error"]) { background: var(--progress-wash); color: var(--ink-strong); box-shadow: inset 0 0 0 1px var(--line); }
+.cache-button[data-state="downloading"] { cursor: progress; }
 .cache-button[data-state="complete"] { background: var(--surface-soft); color: var(--success); box-shadow: inset 0 0 0 1px var(--line); cursor: default; }
-.cache-button:is([data-state="paused"], [data-state="error"]) { background: var(--pink-fill); color: #ffffff; }
 .button-progress {
   position: absolute;
   z-index: -1;
@@ -416,7 +416,7 @@ svg { flex: none; }
   background: var(--progress-fill);
   transition: transform 420ms var(--ease-out);
 }
-.cache-button:is([data-state="idle"], [data-state="paused"], [data-state="error"], [data-state="complete"], [data-state="disabled"]) .button-progress { opacity: 0; }
+.cache-button:is([data-state="idle"], [data-state="complete"], [data-state="disabled"]) .button-progress { opacity: 0; }
 .button-content {
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;
@@ -433,6 +433,8 @@ svg { flex: none; }
 .button-sub:empty { display: none; }
 .button-content:has(.button-speed:empty) { grid-template-columns: 1fr; }
 .button-content:has(.button-speed:empty) .button-text { justify-self: center; text-align: center; }
+/* 暂停 / 出错没有速度列，但仍按下载中的版式左对齐，切换状态时文字不跳到中间。 */
+.cache-button:is([data-state="paused"], [data-state="error"]) .button-content .button-text { justify-self: start; text-align: left; }
 .cache-button[data-state="idle"] .button-label { font-size: 15px; letter-spacing: 0.14em; }
 .button-speed { justify-self: end; min-width: 8.5ch; font-size: 12px; font-weight: 600; text-align: right; white-space: nowrap; opacity: 0.86; }
 .button-speed:empty { display: none; }

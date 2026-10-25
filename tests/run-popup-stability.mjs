@@ -187,9 +187,27 @@ try {
   assert(health.sameNode,'自检结论未变化时不能重建列表节点');
   assert(health.alertShown,'能力缺失时主视图必须出现提示条与齿轮红点');
   assert(health.hidden,'能力恢复后自检提示必须收起');
-  // 撤销期内对同一画质点「缓存」等同于撤销删除，不能先续传、再被到点的删除把刚恢复的任务删掉
-  // （按钮表现为转一圈又变回「缓存」）。
+  // 暂停态沿用下载中的进度样式，右侧圆钮改为「继续」；撤销期内对同一画质点「缓存」等同于撤销删除，
+  // 不能先续传、再被到点的删除把刚恢复的任务删掉（按钮表现为转一圈又变回「缓存」）。
   await page.locator('#current-tab').click();
+  const pausedStyle=await page.evaluate(async()=>{
+    const at=Date.now()+500000, MiB=1024*1024;
+    const paused={...window.taskA,status:'paused',runStartedAt:at,updatedAt:at,speed:0,committedBytes:8*MiB,resumeBytes:8*MiB,downloadedBytes:8*MiB,progress:.5};
+    Object.assign(window.__popupTest.videos.find(video=>video.id===paused.id),paused);
+    window.__popupTest.emit({type:'CACHE_PAUSED',video:paused});
+    await new Promise(resolve=>setTimeout(resolve,60));
+    const button=document.querySelector('#cache-button'),toggle=document.querySelector('#pause-button');
+    return {state:button.dataset.state,disabled:button.disabled,label:document.querySelector('#button-label').textContent,sub:document.querySelector('#button-sub').textContent,hint:document.querySelector('#action-hint').hidden,
+      progressShown:getComputedStyle(document.querySelector('.button-progress')).opacity==='1',sameWash:getComputedStyle(button).backgroundColor,toggleVisible:!toggle.hidden,toggleMode:toggle.dataset.mode,toggleLabel:toggle.getAttribute('aria-label')};
+  });
+  const washDownloading=await page.evaluate(()=>{const probe=document.createElement('button');probe.className='cache-button';probe.dataset.state='downloading';document.body.append(probe);const color=getComputedStyle(probe).backgroundColor;probe.remove();return color;});
+  assert(pausedStyle.state==='paused'&&!pausedStyle.disabled&&pausedStyle.label==='已暂停 50%'&&/^8(\.\d+)? MB \/ /.test(pausedStyle.sub)&&pausedStyle.hint,JSON.stringify(pausedStyle));
+  assert(pausedStyle.progressShown&&pausedStyle.sameWash===washDownloading,'暂停态应沿用下载中的进度底色：'+JSON.stringify(pausedStyle));
+  assert(pausedStyle.toggleVisible&&pausedStyle.toggleMode==='resume'&&pausedStyle.toggleLabel==='继续缓存',JSON.stringify(pausedStyle));
+  await page.locator('.app-shell').screenshot({path:path.join(shots,'paused.png')});
+  await page.locator('#pause-button').click();
+  await page.waitForFunction(()=>document.querySelector('#cache-button').dataset.state==='downloading');
+  assert(await page.evaluate(()=>window.__popupTest.calls.includes('START_CACHE')||window.__popupTest.calls.includes('RESUME_CACHE')),'圆钮「继续」必须真正续传');
   await page.evaluate(async()=>{const video=window.__popupTest.videos.find(item=>item.id===window.taskA.id);const at=Date.now()+600000;Object.assign(video,{status:'paused',runStartedAt:at,updatedAt:at});window.__popupTest.emit({type:'CACHE_PAUSED',video:{...video}});await new Promise(resolve=>setTimeout(resolve,60));});
   await page.locator('#library-tab').click();
   await page.locator(`.video-item[data-video-id="${'popup-live-a'}"] .delete-button`).click();

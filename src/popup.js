@@ -454,10 +454,31 @@ function renderCurrent() {
   renderCacheAction(cached);
 }
 
-/** 主按钮与下方状态行：空闲 → 缓存；下载中 → 进度 + 速度 + 「暂停」；暂停 / 出错 → 继续；完成 → 结果。 */
+const TOGGLE_ICONS = {
+  pause: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 5.5v9M12.5 5.5v9"/></svg>',
+  resume: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 5.2v9.6L15 10 7.5 5.2Z"/></svg>'
+};
+
+/**
+ * 主按钮内右侧的圆钮：下载中是「暂停」，暂停 / 出错时是「继续」。
+ * 只在模式变化时换图标，避免进度刷新打断 hover 动效与焦点。
+ */
+function renderTaskToggle(status) {
+  const toggle = elements.pauseButton;
+  const mode = status === "downloading" ? "pause" : status === "paused" || status === "error" ? "resume" : "";
+  toggle.hidden = !mode;
+  toggle.disabled = state.pausePending;
+  if (!mode || toggle.dataset.mode === mode) return;
+  toggle.dataset.mode = mode;
+  toggle.innerHTML = TOGGLE_ICONS[mode];
+  const label = t(mode === "pause" ? "task.pause" : "task.resume");
+  setAttr(toggle, "aria-label", label);
+  setAttr(toggle, "title", label);
+}
+
+/** 主按钮与下方状态行：空闲 → 缓存；下载中 → 进度 + 速度 + 「暂停」；暂停 / 出错 → 同样的进度样式 + 「继续」；完成 → 结果。 */
 function renderCacheAction(cached) {
-  elements.pauseButton.hidden = !(cached?.status === "downloading");
-  elements.pauseButton.disabled = state.pausePending;
+  renderTaskToggle(cached?.status);
   if (!cached) {
     if (state.qualitiesLoading) {
       setButtonState("disabled", t("button.loadingQualities"), "", 0, true);
@@ -504,12 +525,15 @@ function renderCacheAction(cached) {
     setHint(cached.mergeError ? t("hint.mergeFailed", { error: cached.mergeError }) : t("hint.cachedPlayback"), Boolean(cached.mergeError));
     return;
   }
+  // 暂停与出错沿用下载中的进度样式（不再变回粉色的「缓存」主按钮）：已缓存字节写在第二行，点主按钮或圆钮都能继续。
+  const bytes = `${formatBytes(committedBytes(cached))} / ${formatBytes(cached.totalBytes)}`;
   if (cached.status === "paused") {
-    setButtonState("paused", t("button.resume", { percent }), "", progress, false);
-    setHint(t("hint.paused", { bytes: formatBytes(committedBytes(cached)) }), false);
+    setButtonState("paused", t("button.paused", { percent }), "", progress, false, bytes);
+    setHint("", false);
+    elements.cacheButton.title = t("item.resumeTip");
     return;
   }
-  setButtonState("error", t("button.resume", { percent }), "", progress, false);
+  setButtonState("error", t("button.resume", { percent }), "", progress, false, bytes);
   setHint(cached.error || t("hint.incomplete"), true);
 }
 
@@ -732,6 +756,7 @@ async function startCache() {
 }
 
 async function pauseCurrentTask() {
+  if (elements.pauseButton.dataset.mode === "resume") return startCache();
   const cached = findCurrentVideo();
   if (!cached || state.pausePending) return;
   state.pausePending = true;
