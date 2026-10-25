@@ -1,0 +1,29 @@
+# 官网「扔一只漂流瓶」计数服务。部署步骤见同目录 README.md。
+# DynamicUser：每次启动用临时系统用户运行，只能写自己的 StateDirectory（/var/lib/haineicunzhi-bottles）。
+[Unit]
+Description=Haineicunzhi website bottle counter
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/haineicunzhi-bottles/bottles.py
+Environment=BOTTLES_PORT=18710
+Environment=BOTTLES_DB=/var/lib/haineicunzhi-bottles/bottles.sqlite3
+DynamicUser=yes
+StateDirectory=haineicunzhi-bottles
+Restart=on-failure
+RestartSec=5
+MemoryMax=64M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

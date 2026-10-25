@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ALIPAY_URL, buildSite, renderChangelog, REPO_URL, STORE_URL } from "../scripts/build-site.mjs";
+import { ALIPAY_URL, BOTTLES_API, buildSite, renderChangelog, REPO_URL, STORE_URL } from "../scripts/build-site.mjs";
 import { STORE_EXTENSION_ID } from "../scripts/lib/release-checks.mjs";
 
 // 官网构建（scripts/build-site.mjs）：版本、更新记录、隐私页与弹窗演示都来自仓库本身，
@@ -94,6 +94,22 @@ test("页面引用的本地文件都存在，且不加载任何第三方资源",
     const external = [...html.matchAll(/<(script|link|img|iframe)\b[^>]*\s(?:src|href)="(https?:[^"]+)"/g)].filter((match) => !(match[1] === "link" && /rel="(?:canonical|alternate)"/.test(match[0])));
     assert.deepEqual(external.map((match) => match[2]), []);
   }
+});
+
+test("漂流瓶计数：只连作者自己的域名，默认隐藏，隐私说明写明这次联网", async () => {
+  assert.equal(new URL(BOTTLES_API).hostname, "kihara.cn", "计数接口必须是作者自己的服务器");
+  for (const html of [page, enPage]) {
+    assert.match(html, new RegExp(`<section id="bottles" class="section bottles" data-api="${BOTTLES_API}" hidden>`));
+    // 只收预设标签：与服务端 TAGS 一一对应，页面上没有任何文本输入框。
+    const section = html.slice(html.indexOf('<section id="bottles"'), html.indexOf("</section>", html.indexOf('<section id="bottles"')));
+    assert.deepEqual([...section.matchAll(/data-tag="(\w+)"/g)].map((match) => match[1]), ["smooth", "offline", "quality"]);
+    assert.doesNotMatch(section, /<input|<textarea/);
+  }
+  const server = await readFile(new URL("server/bottles/bottles.py", root), "utf8");
+  assert.match(server, /TAGS = \("smooth", "offline", "quality"\)/);
+  const policy = await readFile(new URL("privacy.html", root), "utf8");
+  assert.match(policy, /扔一只漂流瓶/);
+  assert.match(policy, /Throw a bottle/);
 });
 
 test("投喂区：收款码图片与「打开支付宝」链接都在，并写明自愿、不解锁功能", async () => {

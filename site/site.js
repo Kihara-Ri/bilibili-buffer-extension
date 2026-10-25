@@ -127,6 +127,110 @@ if (danmakuForm && danmakuBoard) {
   });
 }
 
+// 「扔一只漂流瓶」：官网唯一会联网的地方，只连 data-api 指向的作者自己的服务器（server/bottles/）。
+// - 滚到「知己」一节附近才去取计数，只看首屏的访客不产生任何请求；取不到就整节保持隐藏；
+// - 请求不带 Cookie（credentials: omit），只发一个可选的预设标签；同 IP 每天一只由服务端判重；
+// - 本机扔过就记在 localStorage（只存日期，读写都包 try/catch，隐私模式下失效也不影响页面），刷新后不再出按钮。
+const bottles = document.querySelector(".bottles");
+if (bottles?.dataset.api) {
+  const english = document.documentElement.lang === "en";
+  const STORAGE_KEY = "haineicunzhi.bottle";
+  const total = bottles.querySelector("[data-bottles-total]");
+  const unit = bottles.querySelector("[data-bottles-unit]");
+  const tags = [...bottles.querySelectorAll(".bottles-tag")];
+  const form = bottles.querySelector(".bottles-form");
+  const throwButton = bottles.querySelector(".bottles-throw");
+  const status = bottles.querySelector("[data-bottles-status]");
+  const review = bottles.querySelector(".bottles-review");
+  const fly = bottles.querySelector(".bottles-fly");
+  const text = english ? {
+    unit: (count) => (count === 1 ? "bottle has washed up here" : "bottles have washed up here"),
+    empty: "No bottles yet. Be the first to throw one.",
+    thrown: "Thrown",
+    thanks: "Your bottle is out at sea. Thank you!",
+    again: "You've already thrown one today. Thank you!",
+    remembered: "You've thrown a bottle from this device. Thank you!",
+    failed: "The bottle didn't make it out. Please try again later."
+  } : {
+    unit: () => "只瓶子已经漂到这里",
+    empty: "还没有人扔过瓶子，做第一个吧。",
+    thrown: "已经扔出去了",
+    thanks: "瓶子已经漂出去了，谢谢你！",
+    again: "今天已经扔过一只了，谢谢你！",
+    remembered: "你在这台设备上扔过一只了，谢谢你！",
+    failed: "瓶子没扔出去，稍后再试试。"
+  };
+  const readThrown = () => { try { return localStorage.getItem(STORAGE_KEY); } catch { return null; } };
+  const saveThrown = () => { try { localStorage.setItem(STORAGE_KEY, new Date().toISOString().slice(0, 10)); } catch { /* 存不下就只在本次页面里生效 */ } };
+  const request = (init = {}) => fetch(bottles.dataset.api, { ...init, credentials: "omit", signal: AbortSignal.timeout(8000) })
+    .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
+    .then((data) => (Number.isInteger(data?.total) && data.tags && typeof data.tags === "object" ? data : Promise.reject(new Error("bad payload"))));
+  const format = (count) => count.toLocaleString(english ? "en-US" : "zh-CN");
+  // 只改文字：按钮节点一直复用，焦点与按下状态不受计数刷新影响。
+  const render = (data) => {
+    total.textContent = format(data.total);
+    unit.textContent = text.unit(data.total);
+    if (data.total === 0 && !status.textContent) status.textContent = text.empty;
+    for (const tag of tags) {
+      const count = Number(data.tags[tag.dataset.tag]) || 0;
+      tag.querySelector("[data-tag-count]").textContent = count ? format(count) : "";
+    }
+  };
+  const finish = (message) => {
+    throwButton.disabled = true;
+    throwButton.textContent = text.thrown;
+    for (const tag of tags) tag.disabled = true;
+    status.textContent = message;
+    review.hidden = false;
+  };
+  for (const tag of tags) {
+    // 单选、可取消：再点一次已选的标签就是不带标签。
+    tag.addEventListener("click", () => {
+      const pressed = tag.getAttribute("aria-pressed") !== "true";
+      for (const other of tags) other.setAttribute("aria-pressed", String(other === tag && pressed));
+    });
+  }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (throwButton.disabled) return;
+    const tag = tags.find((item) => item.getAttribute("aria-pressed") === "true")?.dataset.tag;
+    throwButton.disabled = true;
+    throwButton.classList.add("is-pending");
+    try {
+      const data = await request({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(tag ? { tag } : {}) });
+      saveThrown();
+      render(data);
+      if (data.accepted && !reducedMotion.matches) {
+        fly.classList.remove("is-flying");
+        void fly.offsetWidth; // 重新触发一次性动画
+        fly.classList.add("is-flying");
+      }
+      finish(data.accepted ? text.thanks : text.again);
+    } catch {
+      throwButton.disabled = false;
+      status.textContent = text.failed;
+    } finally {
+      throwButton.classList.remove("is-pending");
+    }
+  });
+  const load = () => request().then((data) => {
+    render(data);
+    bottles.hidden = false;
+    if (readThrown()) finish(text.remembered);
+  }).catch(() => { /* 接口不可用：整节保持隐藏，页面其他部分不受影响 */ });
+  const friend = document.querySelector("#friend");
+  if (friend && "IntersectionObserver" in window) {
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      observer.disconnect();
+      load();
+    }, { rootMargin: "0px 0px 400px 0px" });
+    observer.observe(friend);
+  } else {
+    load();
+  }
+}
+
 // 页尾靠岸：页尾还没进入视口时先把瓶子放回海里（.is-waiting），滚到页尾再推上岸，只播一次。
 // 页尾一开始就在视口里（页面很矮）、不支持 IntersectionObserver 或减少动态时，瓶子直接在岸上。
 const shore = document.querySelector(".shore");

@@ -23,6 +23,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const SITE_URL = "https://haineicunzhi.kihara.cn";
 export const STORE_URL = `https://chromewebstore.google.com/detail/${STORE_EXTENSION_ID}`;
 export const REPO_URL = "https://github.com/Kihara-Ri/bilibili-buffer-extension";
+// 「扔一只漂流瓶」计数接口：作者自己的树莓派，挂在 kihara.cn 的 nginx 下（服务源码与部署见 server/bottles/）。
+export const BOTTLES_API = "https://kihara.cn/haineicunzhi/api/bottles";
 /** 作者的支付宝收款链接，即 site/assets/alipay-qr.png 二维码里的内容（金额由付款人填写）。 */
 export const ALIPAY_URL = "https://qr.alipay.com/tsx10942hu3qzwmpqv8th78";
 
@@ -86,7 +88,7 @@ export async function buildSite(out = path.join(root, "dist", "site")) {
   await rm(out, { recursive: true, force: true });
   await mkdir(path.join(out, "assets"), { recursive: true });
 
-  const values = { SITE_URL, STORE_URL, REPO_URL, ALIPAY_URL, VERSION: manifest.version, CHANGELOG: changelog.html };
+  const values = { SITE_URL, STORE_URL, REPO_URL, BOTTLES_API, ALIPAY_URL, VERSION: manifest.version, CHANGELOG: changelog.html };
   // 更新记录只有中文：英文页同样列出版本与标题，摘要里注明 in Chinese。
   for (const page of ["index.html", "en/index.html", "404.html"]) {
     const template = await readFile(path.join(root, "site", page), "utf8");

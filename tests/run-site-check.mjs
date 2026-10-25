@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { buildSite, serveSite } from "../scripts/build-site.mjs";
+import { BOTTLES_API, buildSite, serveSite } from "../scripts/build-site.mjs";
 import { chromiumLaunchOptions } from "../scripts/lib/browser-launch.mjs";
 
 // 官网浏览器检查（npm run test:site）：真实渲染构建产物，覆盖截图看不出来的问题——
@@ -14,6 +14,30 @@ await buildSite(out);
 const server = await serveSite(out);
 const origin = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch(chromiumLaunchOptions({ headless: true }));
+
+// 「扔一只漂流瓶」的计数接口在作者的服务器上：测试里每个页面都换成本地假接口，绝不碰线上数据。
+// 每个页面一份独立计数；POST 记录收到的请求体，供下面的漂流瓶检查断言。
+const bottleRequests = [];
+const openPage = browser.newPage.bind(browser);
+browser.newPage = async (options) => {
+  const page = await openPage(options);
+  const counts = { total: 41, tags: { smooth: 20, offline: 9, quality: 0 } };
+  let thrown = false;
+  await page.route(BOTTLES_API, async (route) => {
+    const request = route.request();
+    if (page.bottleMode === "down") return route.fulfill({ status: 503, body: "" });
+    if (request.method() === "POST") {
+      const body = request.postDataJSON();
+      bottleRequests.push({ body, headers: await request.allHeaders() });
+      const accepted = !thrown;
+      thrown = true;
+      if (accepted) { counts.total += 1; if (body.tag) counts.tags[body.tag] += 1; }
+      return route.fulfill({ json: { accepted, ...counts }, headers: { "Access-Control-Allow-Origin": "*" } });
+    }
+    return route.fulfill({ json: counts, headers: { "Access-Control-Allow-Origin": "*" } });
+  });
+  return page;
+};
 
 /** 打开首页（中文 / 或英文 /en/）并等演示弹窗就绪、高度自适应完成。 */
 async function open(options, pathname = "/") {
@@ -230,7 +254,9 @@ try {
     assert.equal(sent.input, "");
     assert.match(sent.status, /已发送/);
     assert.equal(page.url(), before, "发弹幕不应改变地址");
-    assert.deepEqual(requests, [], `发弹幕不应发出任何请求：${requests.join(", ")}`);
+    // 漂流瓶计数会在滚到这一带时取一次，与发弹幕无关，不计入。
+    const danmakuRequests = requests.filter((url) => url !== BOTTLES_API);
+    assert.deepEqual(danmakuRequests, [], `发弹幕不应发出任何请求：${danmakuRequests.join(", ")}`);
     await page.evaluate(() => document.querySelector(".danmaku-mine").dispatchEvent(new AnimationEvent("animationend")));
     assert.equal(await page.evaluate(() => document.querySelectorAll(".danmaku-mine").length), 0, "飘完应移除");
     // 空白不发送；连发 8 条最多同时留 6 条
@@ -242,6 +268,80 @@ try {
       await page.press("#danmaku-input", "Enter");
     }
     assert.equal(await page.evaluate(() => document.querySelectorAll(".danmaku-mine").length), 6);
+    await page.close();
+  }
+
+  // 扔一只漂流瓶：首屏不发请求；滚到附近才取计数并显示；选标签扔一只后计数 +1、按钮停用、出现评价入口；
+  // 刷新后记得扔过；接口不可用时整节保持隐藏。
+  const bottles = {};
+  for (const [pathname, unitPattern] of [["/", /只瓶子已经漂到这里/], ["/en/", /bottles have washed up here/]]) {
+    const page = await browser.newPage({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true });
+    const fetched = [];
+    page.on("request", (request) => { if (request.url() === BOTTLES_API) fetched.push(request.method()); });
+    await page.goto(`${origin}${pathname}`);
+    await page.waitForTimeout(300);
+    assert.deepEqual(fetched, [], `${pathname}：只看首屏时不应请求漂流瓶计数`);
+    assert.ok(await page.evaluate(() => document.querySelector(".bottles").hidden), `${pathname}：取到计数前漂流瓶一节应隐藏`);
+    await page.evaluate(() => { document.documentElement.style.scrollBehavior = "auto"; document.querySelector("#friend").scrollIntoView(); });
+    await page.waitForFunction(() => !document.querySelector(".bottles").hidden);
+    const shown = await page.evaluate(() => ({
+      total: document.querySelector("[data-bottles-total]").textContent,
+      unit: document.querySelector("[data-bottles-unit]").textContent,
+      tagCounts: [...document.querySelectorAll("[data-tag-count]")].map((item) => item.textContent),
+      scrollWidth: document.documentElement.scrollWidth,
+      unitLines: document.querySelector("[data-bottles-unit]").getClientRects().length
+    }));
+    assert.equal(shown.total, "41");
+    assert.match(shown.unit, unitPattern);
+    assert.deepEqual(shown.tagCounts, ["20", "9", ""], `${pathname}：标签计数不对`);
+    assert.equal(shown.scrollWidth, 375, `${pathname}：漂流瓶一节导致横向滚动`);
+    assert.equal(shown.unitLines, 1, `${pathname}：计数单位不应折行`);
+    // 标签单选、可取消：先点「离线缓存」再点「画质」，最后只剩「画质」。
+    await page.locator('.bottles-tag[data-tag="offline"]').click();
+    await page.locator('.bottles-tag[data-tag="quality"]').click();
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll(".bottles-tag")].map((tag) => tag.getAttribute("aria-pressed"))), ["false", "false", "true"]);
+    const throwButton = page.locator(".bottles-throw");
+    const identity = await throwButton.evaluate((button) => { window.__throwButton = button; return true; });
+    assert.ok(identity);
+    const before = bottleRequests.length;
+    await throwButton.click();
+    await page.waitForFunction(() => document.querySelector(".bottles-throw").disabled && !document.querySelector(".bottles-throw").classList.contains("is-pending"));
+    const after = await page.evaluate(() => ({
+      total: document.querySelector("[data-bottles-total]").textContent,
+      quality: document.querySelector('.bottles-tag[data-tag="quality"] [data-tag-count]').textContent,
+      status: document.querySelector("[data-bottles-status]").textContent,
+      review: !document.querySelector(".bottles-review").hidden,
+      sameButton: window.__throwButton === document.querySelector(".bottles-throw"),
+      flying: document.querySelector(".bottles-fly").classList.contains("is-flying"),
+      stored: localStorage.getItem("haineicunzhi.bottle")
+    }));
+    assert.equal(after.total, "42");
+    assert.equal(after.quality, "1");
+    assert.ok(after.review && after.sameButton && after.flying, `${pathname}：扔出后的状态不对 ${JSON.stringify(after)}`);
+    assert.match(after.stored, /^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(bottleRequests.length, before + 1);
+    const sent = bottleRequests.at(-1);
+    assert.deepEqual(sent.body, { tag: "quality" }, "只应发送预设标签");
+    assert.equal(sent.headers.cookie, undefined, "扔瓶子不应带 Cookie");
+    // 刷新：本机记得扔过，按钮直接停用。
+    await page.reload();
+    await page.evaluate(() => { document.documentElement.style.scrollBehavior = "auto"; document.querySelector("#friend").scrollIntoView(); });
+    await page.waitForFunction(() => !document.querySelector(".bottles").hidden);
+    assert.ok(await page.evaluate(() => document.querySelector(".bottles-throw").disabled), `${pathname}：刷新后应记得已经扔过`);
+    bottles[pathname] = after.status;
+    await page.close();
+  }
+  {
+    // 接口挂了（503）时一节保持隐藏，页面不报错。
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    page.bottleMode = "down";
+    await page.goto(`${origin}/`);
+    await page.evaluate(() => { document.documentElement.style.scrollBehavior = "auto"; document.querySelector("#friend").scrollIntoView(); });
+    await page.waitForTimeout(500);
+    assert.ok(await page.evaluate(() => document.querySelector(".bottles").hidden), "接口不可用时漂流瓶一节应保持隐藏");
+    assert.deepEqual(errors, []);
     await page.close();
   }
 
@@ -299,7 +399,7 @@ try {
   }
   assert.notEqual(backgrounds.light, backgrounds.dark, "深色模式没有生效");
 
-  console.log(JSON.stringify({ ok: true, ...results, reducedMotion: true, backgrounds, barColors, clocks }, null, 2));
+  console.log(JSON.stringify({ ok: true, ...results, reducedMotion: true, backgrounds, barColors, clocks, bottles }, null, 2));
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

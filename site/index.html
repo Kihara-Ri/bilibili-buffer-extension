@@ -18,7 +18,7 @@
     <link rel="icon" href="assets/icon-small.svg" type="image/svg+xml">
     <link rel="icon" href="assets/icon-32.png" sizes="32x32" type="image/png">
     <link rel="stylesheet" href="site.css">
-    <!-- 本站不加载任何第三方资源（字体、统计、CDN 脚本）：和扩展一样，不让访问者的请求离开这一个域名。 -->
+    <!-- 本站不加载任何第三方资源（字体、统计、CDN 脚本）。唯一的例外是「扔一只漂流瓶」的匿名计数，只连作者自己的服务器（kihara.cn）。 -->
   </head>
   <body>
     <!-- GitHub 标志只定义一次，顶栏、首屏与页脚用 <use> 引用；颜色跟随所在文字（currentColor）。 -->
@@ -206,6 +206,27 @@
         </form>
       </section>
 
+      <!-- 扔一只漂流瓶：官网唯一会联网的地方，只连作者自己的服务器（{{BOTTLES_API}}）。
+           只计数、可选一个预设标签，不收文字、不用 Cookie；没有脚本或接口不可用时整节保持隐藏。 -->
+      <section id="bottles" class="section bottles" data-api="{{BOTTLES_API}}" hidden>
+        <div class="bottles-sea">
+          <svg class="bottles-fly" viewBox="0 0 48 48" aria-hidden="true"><use href="#food-bottle"/></svg>
+          <h2>扔一只<em class="key">漂流瓶</em></h2>
+          <p class="bottles-count"><strong data-bottles-total>0</strong><span data-bottles-unit>只瓶子已经漂到这里</span></p>
+          <p class="bottles-lead">觉得海内存知好用，就往海里扔一只。不用登录，不写名字，只让后来的人知道：这片海里不只你一个。</p>
+          <form class="bottles-form">
+            <div class="bottles-tags" role="group" aria-label="瓶子里装什么（可不选）">
+              <button type="button" class="bottles-tag" data-tag="smooth" aria-pressed="false">海外看 B 站更顺<span data-tag-count></span></button>
+              <button type="button" class="bottles-tag" data-tag="offline" aria-pressed="false">离线缓存好用<span data-tag-count></span></button>
+              <button type="button" class="bottles-tag" data-tag="quality" aria-pressed="false">画质够高<span data-tag-count></span></button>
+            </div>
+            <button class="button button-send bottles-throw" type="submit">扔一只瓶子</button>
+            <p class="bottles-status" role="status" aria-live="polite" data-bottles-status></p>
+            <p class="bottles-review" hidden>也可以去 <a href="{{STORE_URL}}/reviews" rel="noopener">Chrome 应用商店</a> 留一句评价，让更多人找到它。</p>
+          </form>
+        </div>
+      </section>
+
       <section id="privacy" class="section section-tint">
         <div class="section-head">
           <h2>只有你知道</h2>
@@ -217,7 +238,7 @@
           <article class="promise"><h3><svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#card-local"/></svg>数据留在本机</h3><p>缓存与设置都在你的 Chrome 配置里；删除缓存或卸载扩展即可清除。</p></article>
           <article class="promise"><h3><svg class="card-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#card-code"/></svg>开源可查</h3><p>每一行代码都在 GitHub 上，发布包可以按源码复现校验。</p></article>
         </div>
-        <p class="section-foot"><a href="privacy.html">阅读完整的隐私说明</a>。这个网站同样不使用 Cookie、统计或任何第三方资源。</p>
+        <p class="section-foot"><a href="privacy.html">阅读完整的隐私说明</a>。这个网站同样不使用 Cookie、统计或任何第三方资源；唯一会联网的是「扔一只漂流瓶」的匿名计数，只连作者自己的服务器，不记录 IP。</p>
       </section>
 
       <section class="section section-tint">

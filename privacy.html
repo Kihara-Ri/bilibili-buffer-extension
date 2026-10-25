@@ -62,7 +62,7 @@
         <img src="assets/icon-master.svg" alt="" width="44" height="44">
         <h1>海内存知 · 隐私说明</h1>
       </header>
-      <p class="updated">最后更新：2026-09-16 · 适用于扩展版本 2.6.3 及以后</p>
+      <p class="updated">最后更新：2026-10-25 · 适用于扩展版本 2.6.3 及以后</p>
 
       <p class="lead">
         本扩展没有服务器。它不会把任何数据发送给开发者或第三方，所有缓存、偏好与任务状态都只保存在你自己的 Chrome 配置里。
@@ -160,7 +160,18 @@
         提出。
       </p>
 
-      <h2>9. Chrome Web Store 有限使用声明 / Limited Use</h2>
+      <h2>9. 官网的「扔一只漂流瓶」计数</h2>
+      <p>
+        这一节只涉及官网 <code>haineicunzhi.kihara.cn</code>，与扩展无关：扩展本身仍然不连接任何开发者服务器。
+      </p>
+      <ul>
+        <li>官网首页有一个匿名点赞计数。滚动到这一节附近时，页面会向开发者自己的服务器 <code>kihara.cn</code> 请求当前计数；点击「扔一只瓶子」时再发送一次，内容只有一个可选的预设标签（如「离线缓存好用」），没有自由文字。</li>
+        <li>请求不携带 Cookie，服务器不记录访问日志。为防止刷票，同一 IP 每天只计一次：服务器只保存「IP + 当天日期」经带密钥哈希后的摘要，两天后连摘要一起删除，不保存原始 IP。</li>
+        <li>你的浏览器会在本机 <code>localStorage</code> 里记下扔瓶子的日期，只用于刷新后不再显示按钮；清除网站数据即可删除。</li>
+        <li>计数服务的源码在仓库的 <code>server/bottles/</code> 目录，可以自行核对。</li>
+      </ul>
+
+      <h2>10. Chrome Web Store 有限使用声明 / Limited Use</h2>
       <!-- 这句必须保持连续原文：商店要求扩展在自有网站上给出该肯定性声明，抓取时不能被标签切断。 -->
       <p>The use of information received from Google APIs will adhere to the Chrome Web Store User Data Policy, including the Limited Use requirements.</p>
       <p>
@@ -186,6 +197,7 @@
         <li>No analytics, telemetry, ads, or third-party SDKs. No selling or transferring of data. No browsing-history collection.</li>
         <li>Network access is limited to <code>*.bilibili.com</code>, <code>*.bilivideo.com</code>, <code>*.bilivideo.cn</code>, <code>*.hdslb.com</code> and <code>*.akamaized.net</code>.</li>
         <li>Deleting a video from the library, clearing the extension's data, or uninstalling the extension removes all local data.</li>
+        <li><strong>Website only:</strong> the "Throw a bottle" counter on <code>haineicunzhi.kihara.cn</code> fetches an anonymous count from the developer's own server (<code>kihara.cn</code>) and, when you click the button, sends one optional preset tag and no free text. No cookies are sent and no access logs are kept. To limit repeat votes, the server stores only a keyed hash of "IP + date", deleted after two days; raw IPs are never stored. The page remembers the date you threw a bottle in <code>localStorage</code>. The extension itself never contacts this server.</li>
       </ul>
       <p lang="en">
         The use of information received from Google APIs will adhere to the Chrome Web Store User Data Policy,
