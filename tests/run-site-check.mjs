@@ -191,6 +191,10 @@ try {
     const read = () => page.evaluate(() => document.querySelector(".bar-bottle").style.getPropertyValue("--read"));
     assert.equal(await read(), "0.00", "页首时顶栏小瓶应几乎是空的");
     await page.evaluate(() => { document.documentElement.style.scrollBehavior = "auto"; scrollTo(0, document.documentElement.scrollHeight); });
+    // 滚到页尾会取漂流瓶计数，页面随之变高：水位应跟着回落，再滚到底才装满。
+    await page.waitForFunction(() => !document.querySelector(".bottles").hidden);
+    await page.waitForFunction(() => document.querySelector(".bar-bottle").style.getPropertyValue("--read") !== "1.00");
+    await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
     await page.waitForTimeout(150);
     assert.equal(await read(), "1.00", "读到页尾时顶栏小瓶应装满");
     assert.ok(await page.evaluate(() => document.querySelector(".bar-bottle").classList.contains("is-rocking")), "滚动时小瓶应摇一下");
@@ -254,7 +258,7 @@ try {
     assert.equal(sent.input, "");
     assert.match(sent.status, /已发送/);
     assert.equal(page.url(), before, "发弹幕不应改变地址");
-    // 漂流瓶计数会在滚到这一带时取一次，与发弹幕无关，不计入。
+    // 漂流瓶计数在页尾附近才取，与发弹幕无关；万一视口够高提前取到也不计入。
     const danmakuRequests = requests.filter((url) => url !== BOTTLES_API);
     assert.deepEqual(danmakuRequests, [], `发弹幕不应发出任何请求：${danmakuRequests.join(", ")}`);
     await page.evaluate(() => document.querySelector(".danmaku-mine").dispatchEvent(new AnimationEvent("animationend")));
@@ -271,76 +275,107 @@ try {
     await page.close();
   }
 
-  // 扔一只漂流瓶：首屏不发请求；滚到附近才取计数并显示；选标签扔一只后计数 +1、按钮停用、出现评价入口；
-  // 刷新后记得扔过；接口不可用时整节保持隐藏。
+  // 扔一只漂流瓶（页尾沙滩）：首屏不发请求；滚到页尾才取计数并显示；沙滩上的瓶子数等于计数（不超过上限），
+  // 位置刷新后不变；选标签扔一只后计数 +1、多出一只正在落下的瓶子、已有瓶子节点不重建；按钮停用、出现评价入口；
+  // 不带 Cookie；刷新后记得扔过；接口不可用时只剩「到岸了」那句话。
   const bottles = {};
-  for (const [pathname, unitPattern] of [["/", /只瓶子已经漂到这里/], ["/en/", /bottles have washed up here/]]) {
+  const toFooter = (page) => page.evaluate(() => { document.documentElement.style.scrollBehavior = "auto"; scrollTo(0, document.documentElement.scrollHeight); });
+  const pileSpots = (page) => page.evaluate(() => [...document.querySelectorAll(".beach-pile .pile-bottle")].map((bottle) => `${bottle.style.left}/${bottle.style.bottom}/${bottle.style.width}`));
+  for (const [pathname, unitPattern] of [["/", /只漂流瓶已经靠岸/], ["/en/", /bottles have washed ashore/]]) {
     const page = await browser.newPage({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true });
     const fetched = [];
     page.on("request", (request) => { if (request.url() === BOTTLES_API) fetched.push(request.method()); });
     await page.goto(`${origin}${pathname}`);
     await page.waitForTimeout(300);
     assert.deepEqual(fetched, [], `${pathname}：只看首屏时不应请求漂流瓶计数`);
-    assert.ok(await page.evaluate(() => document.querySelector(".bottles").hidden), `${pathname}：取到计数前漂流瓶一节应隐藏`);
-    await page.evaluate(() => { document.documentElement.style.scrollBehavior = "auto"; document.querySelector("#friend").scrollIntoView(); });
+    assert.ok(await page.evaluate(() => document.querySelector(".bottles").hidden), `${pathname}：取到计数前漂流瓶控件应隐藏`);
+    await toFooter(page);
     await page.waitForFunction(() => !document.querySelector(".bottles").hidden);
     const shown = await page.evaluate(() => ({
       total: document.querySelector("[data-bottles-total]").textContent,
       unit: document.querySelector("[data-bottles-unit]").textContent,
       tagCounts: [...document.querySelectorAll("[data-tag-count]")].map((item) => item.textContent),
+      caption: document.querySelector(".shore-caption").hidden,
+      pile: document.querySelectorAll(".beach-pile .pile-bottle").length,
+      // 瓶子都落在沙滩范围内（左右不出界，底部在沙里）
+      inside: [...document.querySelectorAll(".pile-bottle")].every((bottle) => { const box = bottle.getBoundingClientRect(); const beach = document.querySelector(".beach").getBoundingClientRect(); return box.left >= beach.left && box.right <= beach.right && box.bottom <= beach.bottom; }),
       scrollWidth: document.documentElement.scrollWidth,
       unitLines: document.querySelector("[data-bottles-unit]").getClientRects().length
     }));
     assert.equal(shown.total, "41");
     assert.match(shown.unit, unitPattern);
     assert.deepEqual(shown.tagCounts, ["20", "9", ""], `${pathname}：标签计数不对`);
-    assert.equal(shown.scrollWidth, 375, `${pathname}：漂流瓶一节导致横向滚动`);
+    assert.equal(shown.caption, true, `${pathname}：显示计数后「到岸了」那句话应让位`);
+    assert.equal(shown.pile, 41, `${pathname}：沙滩上的瓶子数应等于计数`);
+    assert.ok(shown.inside, `${pathname}：有瓶子落在沙滩外`);
+    assert.equal(shown.scrollWidth, 375, `${pathname}：沙滩导致横向滚动`);
     assert.equal(shown.unitLines, 1, `${pathname}：计数单位不应折行`);
+    const spotsBefore = await pileSpots(page);
     // 标签单选、可取消：先点「离线缓存」再点「画质」，最后只剩「画质」。
     await page.locator('.bottles-tag[data-tag="offline"]').click();
     await page.locator('.bottles-tag[data-tag="quality"]').click();
     assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll(".bottles-tag")].map((tag) => tag.getAttribute("aria-pressed"))), ["false", "false", "true"]);
-    const throwButton = page.locator(".bottles-throw");
-    const identity = await throwButton.evaluate((button) => { window.__throwButton = button; return true; });
-    assert.ok(identity);
+    await page.evaluate(() => { window.__throwButton = document.querySelector(".bottles-throw"); window.__firstBottle = document.querySelector(".pile-bottle"); });
     const before = bottleRequests.length;
-    await throwButton.click();
+    await page.locator(".bottles-throw").click();
     await page.waitForFunction(() => document.querySelector(".bottles-throw").disabled && !document.querySelector(".bottles-throw").classList.contains("is-pending"));
-    const after = await page.evaluate(() => ({
-      total: document.querySelector("[data-bottles-total]").textContent,
-      quality: document.querySelector('.bottles-tag[data-tag="quality"] [data-tag-count]').textContent,
-      status: document.querySelector("[data-bottles-status]").textContent,
-      review: !document.querySelector(".bottles-review").hidden,
-      sameButton: window.__throwButton === document.querySelector(".bottles-throw"),
-      flying: document.querySelector(".bottles-fly").classList.contains("is-flying"),
-      stored: localStorage.getItem("haineicunzhi.bottle")
-    }));
+    const after = await page.evaluate(() => {
+      const newest = document.querySelector(".beach-pile").lastElementChild;
+      return {
+        total: document.querySelector("[data-bottles-total]").textContent,
+        quality: document.querySelector('.bottles-tag[data-tag="quality"] [data-tag-count]').textContent,
+        status: document.querySelector("[data-bottles-status]").textContent,
+        review: !document.querySelector(".bottles-review").hidden,
+        sameButton: window.__throwButton === document.querySelector(".bottles-throw"),
+        sameBottle: window.__firstBottle === document.querySelector(".pile-bottle"),
+        pile: document.querySelectorAll(".beach-pile .pile-bottle").length,
+        landing: newest.classList.contains("is-new") && newest.style.getPropertyValue("--from-y") !== "",
+        newOnly: document.querySelectorAll(".pile-bottle.is-new").length,
+        stored: localStorage.getItem("haineicunzhi.bottle")
+      };
+    });
     assert.equal(after.total, "42");
     assert.equal(after.quality, "1");
-    assert.ok(after.review && after.sameButton && after.flying, `${pathname}：扔出后的状态不对 ${JSON.stringify(after)}`);
+    assert.equal(after.pile, 42, `${pathname}：扔出后沙滩上应多一只瓶子`);
+    assert.ok(after.landing && after.newOnly === 1, `${pathname}：只有新瓶子播放落下动画 ${JSON.stringify(after)}`);
+    assert.ok(after.review && after.sameButton && after.sameBottle, `${pathname}：扔出后的状态不对或节点被重建 ${JSON.stringify(after)}`);
+    assert.deepEqual((await pileSpots(page)).slice(0, 41), spotsBefore, `${pathname}：已有瓶子的位置不应变化`);
     assert.match(after.stored, /^\d{4}-\d{2}-\d{2}$/);
     assert.equal(bottleRequests.length, before + 1);
     const sent = bottleRequests.at(-1);
     assert.deepEqual(sent.body, { tag: "quality" }, "只应发送预设标签");
     assert.equal(sent.headers.cookie, undefined, "扔瓶子不应带 Cookie");
-    // 刷新：本机记得扔过，按钮直接停用。
+    // 落下动画结束后去掉 is-new；刷新后瓶子还在原处、本机记得扔过、按钮直接停用。
+    await page.waitForFunction(() => !document.querySelector(".pile-bottle.is-new"), null, { timeout: 5000 });
     await page.reload();
-    await page.evaluate(() => { document.documentElement.style.scrollBehavior = "auto"; document.querySelector("#friend").scrollIntoView(); });
+    await toFooter(page);
     await page.waitForFunction(() => !document.querySelector(".bottles").hidden);
     assert.ok(await page.evaluate(() => document.querySelector(".bottles-throw").disabled), `${pathname}：刷新后应记得已经扔过`);
+    assert.deepEqual((await pileSpots(page)).slice(0, 41), spotsBefore, `${pathname}：刷新后瓶子位置应不变`);
     bottles[pathname] = after.status;
     await page.close();
   }
   {
-    // 接口挂了（503）时一节保持隐藏，页面不报错。
+    // 计数很大时沙滩上的瓶子有上限，数字照常显示。
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.route(BOTTLES_API, (route) => route.fulfill({ json: { total: 12345, tags: { smooth: 1, offline: 2, quality: 3 } } }));
+    await page.goto(`${origin}/`);
+    await toFooter(page);
+    await page.waitForFunction(() => !document.querySelector(".bottles").hidden);
+    const big = await page.evaluate(() => ({ total: document.querySelector("[data-bottles-total]").textContent, pile: document.querySelectorAll(".pile-bottle").length }));
+    assert.deepEqual(big, { total: "12,345", pile: 160 });
+    await page.close();
+  }
+  {
+    // 接口挂了（503）时控件保持隐藏、「到岸了」照常显示，页面不报错。
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     page.bottleMode = "down";
     await page.goto(`${origin}/`);
-    await page.evaluate(() => { document.documentElement.style.scrollBehavior = "auto"; document.querySelector("#friend").scrollIntoView(); });
+    await toFooter(page);
     await page.waitForTimeout(500);
-    assert.ok(await page.evaluate(() => document.querySelector(".bottles").hidden), "接口不可用时漂流瓶一节应保持隐藏");
+    assert.ok(await page.evaluate(() => document.querySelector(".bottles").hidden && !document.querySelector(".shore-caption").hidden && !document.querySelector(".pile-bottle")), "接口不可用时应只剩靠岸的那一只");
     assert.deepEqual(errors, []);
     await page.close();
   }

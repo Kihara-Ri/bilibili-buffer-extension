@@ -35,6 +35,9 @@
       <symbol id="food-cone" viewBox="0 0 48 48"><path d="M16 22h16l-8 22z" fill="#d9954a"/><path d="M18.5 26l9 8M21 32l5-4.5M29.5 26l-9 8" stroke="#b8762f" stroke-width="1.4"/><path d="M14 22c0-4 3-6 5-6 0-5 4-8 5-10 1 2 5 5 5 10 2 0 5 2 5 6z" fill="#fff6e8" stroke="#e8d5bb" stroke-width="1.2"/><path d="M18 18c3 1.5 9 1.5 12 0" stroke="#e8d5bb" stroke-width="1.2" fill="none"/></symbol>
       <symbol id="food-fries" viewBox="0 0 48 48"><g fill="#f6c33b" stroke="#e0a91f" stroke-width=".8"><rect x="14" y="8" width="4" height="20" rx="1" transform="rotate(-8 16 18)"/><rect x="19" y="5" width="4" height="22" rx="1"/><rect x="24" y="6" width="4" height="22" rx="1" transform="rotate(5 26 17)"/><rect x="29" y="9" width="4" height="19" rx="1" transform="rotate(10 31 18)"/></g><path d="M11 20h26l-3 22H14z" fill="#e2412f"/><path d="M11 20c5 5 21 5 26 0" fill="none" stroke="#b92f20" stroke-width="1.4"/><circle cx="24" cy="32" r="3.2" fill="none" stroke="#ffd9d2" stroke-width="1.6"/></symbol>
       <symbol id="food-coffee" viewBox="0 0 48 48"><path d="M14 14h20l-2.6 28H16.6z" fill="#fbfbf8" stroke="#d9d6cc" stroke-width="1.2"/><rect x="12" y="10" width="24" height="5" rx="2" fill="#5b3a29"/><path d="M15.4 22h17.2l-1 11H16.4z" fill="#2f7a55"/><circle cx="24" cy="27.5" r="3" fill="none" stroke="#e9f4ee" stroke-width="1.4"/><path d="M21 4c-1 2 1 3 0 5M27 4c-1 2 1 3 0 5" stroke="#b9a99c" stroke-width="1.4" fill="none" stroke-linecap="round"/></symbol>
+      <!-- 沙滩上的一只漂流瓶（官网「扔一只漂流瓶」每只计数一个）：平躺、瓶口朝左，水面水平，与图标同一瓶身。 -->
+      <clipPath id="pile-glass"><path transform="rotate(-90 16 16)" d="M13 4.5H19V8.5Q19 10 20.5 11Q24.5 13 24.5 17.5V26Q24.5 30 20.5 30H11.5Q7.5 30 7.5 26V17.5Q7.5 13 11.5 11Q13 10 13 8.5Z"/></clipPath>
+      <symbol id="pile-bottle" viewBox="0 6 32 20"><path transform="rotate(-90 16 16)" fill="#2BB3E6" d="M13 4.5H19V8.5Q19 10 20.5 11Q24.5 13 24.5 17.5V26Q24.5 30 20.5 30H11.5Q7.5 30 7.5 26V17.5Q7.5 13 11.5 11Q13 10 13 8.5Z"/><rect transform="rotate(-90 16 16)" x="11.5" y="1" width="9" height="5" rx="1.5" fill="#E9A15B"/><g clip-path="url(#pile-glass)"><rect x="0" y="17.5" width="32" height="10" fill="#1587C6"/></g></symbol>
       <symbol id="food-bottle" viewBox="0 0 48 48"><g transform="rotate(30 24 24)"><rect x="20" y="4" width="8" height="6" rx="2" fill="#e9a15b"/><path d="M20.5 10h7v5c0 2 2 3 3.5 4.5 2 2 3 4 3 7V39c0 3-2 5-5 5H19c-3 0-5-2-5-5V26.5c0-3 1-5 3-7C18.5 18 20.5 17 20.5 15z" fill="#2bb3e6"/><path d="M14 30h20v9c0 3-2 5-5 5H19c-3 0-5-2-5-5z" fill="#1587c6"/></g><path d="M20 26l7 4-7 4z" fill="#fff"/></symbol>
     </svg>
     <a class="skip-link" href="#far">Skip to content</a>
@@ -200,27 +203,6 @@
         </form>
       </section>
 
-      <!-- 扔一只漂流瓶：官网唯一会联网的地方，只连作者自己的服务器（{{BOTTLES_API}}）。
-           只计数、可选一个预设标签，不收文字、不用 Cookie；没有脚本或接口不可用时整节保持隐藏。 -->
-      <section id="bottles" class="section bottles" data-api="{{BOTTLES_API}}" hidden>
-        <div class="bottles-sea">
-          <svg class="bottles-fly" viewBox="0 0 48 48" aria-hidden="true"><use href="#food-bottle"/></svg>
-          <h2>Throw a <em class="key">bottle</em></h2>
-          <p class="bottles-count"><strong data-bottles-total>0</strong><span data-bottles-unit>bottles have washed up here</span></p>
-          <p class="bottles-lead">If Kindred Afar helps you, throw a bottle into the sea. No sign-in, no name: just a sign to the next visitor that they are not alone out here.</p>
-          <form class="bottles-form">
-            <div class="bottles-tags" role="group" aria-label="What goes in the bottle (optional)">
-              <button type="button" class="bottles-tag" data-tag="smooth" aria-pressed="false">Smoother abroad<span data-tag-count></span></button>
-              <button type="button" class="bottles-tag" data-tag="offline" aria-pressed="false">Offline cache<span data-tag-count></span></button>
-              <button type="button" class="bottles-tag" data-tag="quality" aria-pressed="false">High quality<span data-tag-count></span></button>
-            </div>
-            <button class="button button-send bottles-throw" type="submit">Throw a bottle</button>
-            <p class="bottles-status" role="status" aria-live="polite" data-bottles-status></p>
-            <p class="bottles-review" hidden>You can also <a href="{{STORE_URL}}/reviews" rel="noopener">leave a review on the Chrome Web Store</a> to help others find it.</p>
-          </form>
-        </div>
-      </section>
-
       <section id="privacy" class="section section-tint">
         <div class="section-head">
           <h2>Only you know</h2>
@@ -274,20 +256,41 @@
       <!-- 靠岸：首屏的漂流瓶在海上出发，页尾在沙滩上靠岸。滚到页尾时瓶子从左边被浪推上岸（site.js），
            没有脚本或减少动态时直接停在岸上。纯装饰，读屏只读下面的一句话。 -->
       <div class="shore">
-        <svg class="shore-art" viewBox="0 0 240 72" aria-hidden="true">
-          <path class="shore-foam" d="M0 50Q20 44 40 50T80 50" />
-          <path class="shore-foam shore-foam-2" d="M8 58Q26 53 44 58T80 57" />
-          <path class="shore-sand" d="M60 56Q120 44 180 50T240 48V72H60Q50 62 60 56Z"/>
-          <g class="shore-bottle">
-            <!-- 瓶子平躺在沙上（瓶口朝左上）；水面保持水平，与图标一致：裁剪在外层 g，水面是一块水平矩形。 -->
+        <div class="beach" aria-hidden="true">
+          <svg class="beach-art" viewBox="0 0 960 150" preserveAspectRatio="none">
+            <linearGradient id="beach-sand" x1="0" y1="0" x2="0" y2="1"><stop class="beach-sand-top" offset="0.6"/><stop class="beach-sand-mid" offset="0.82"/><stop class="beach-sand-end" offset="1"/></linearGradient>
+            <path class="shore-foam" d="M0 28Q60 21 120 28T240 28T360 28T480 28T600 28T720 28T840 28T960 28"/>
+            <path class="shore-foam shore-foam-2" d="M-20 42Q40 35 100 42T220 42T340 42T460 42T580 42T700 42T820 42T940 42T1060 42"/>
+            <path class="shore-sand" d="M0 66Q120 54 240 62T480 59T720 62T960 56V150H0Z"/>
+          </svg>
+          <!-- 每只扔出的瓶子在这里占一个位置（site.js）；位置由序号决定，刷新后还在原处。 -->
+          <div class="beach-pile"></div>
+          <svg class="shore-bottle" viewBox="126 16 48 44">
+            <!-- 靠岸的那只：瓶口朝左上，水面保持水平（裁剪在外层 g，水面是一块水平矩形）。 -->
             <clipPath id="shore-glass"><path transform="translate(150 38) rotate(-80) scale(1.15) translate(-16 -17)" d="M13 4.5H19V8.5Q19 10 20.5 11Q24.5 13 24.5 17.5V26Q24.5 30 20.5 30H11.5Q7.5 30 7.5 26V17.5Q7.5 13 11.5 11Q13 10 13 8.5Z"/></clipPath>
             <path transform="translate(150 38) rotate(-80) scale(1.15) translate(-16 -17)" fill="#2BB3E6" d="M13 4.5H19V8.5Q19 10 20.5 11Q24.5 13 24.5 17.5V26Q24.5 30 20.5 30H11.5Q7.5 30 7.5 26V17.5Q7.5 13 11.5 11Q13 10 13 8.5Z"/>
             <rect transform="translate(150 38) rotate(-80) scale(1.15) translate(-16 -17)" x="11.5" y="1" width="9" height="5" rx="1.5" fill="#E9A15B"/>
             <g clip-path="url(#shore-glass)"><rect x="120" y="40" width="70" height="20" fill="#1587C6"/></g>
             <path fill="#fff" stroke="#fff" stroke-width="1.2" stroke-linejoin="round" d="M150 34L158 38.6L150 43.2Z"/>
-          </g>
-        </svg>
+          </svg>
+        </div>
         <p class="shore-caption">The bottle has washed ashore.</p>
+        <!-- 扔一只漂流瓶：官网唯一会联网的地方，只连作者自己的服务器（{{BOTTLES_API}}）。
+             只计数、可选一个预设标签，不收文字、不用 Cookie；没有脚本或接口不可用时保持隐藏，只剩上面那句话。 -->
+        <div id="bottles" class="bottles" data-api="{{BOTTLES_API}}" hidden>
+          <p class="bottles-count"><strong data-bottles-total>0</strong><span data-bottles-unit>bottles have washed ashore</span></p>
+          <p class="bottles-lead">If Kindred Afar helps you, throw a bottle. It stays on this beach, a sign to the next visitor that they are not alone out here.</p>
+          <form class="bottles-form">
+            <div class="bottles-tags" role="group" aria-label="What goes in the bottle (optional)">
+            <button type="button" class="bottles-tag" data-tag="smooth" aria-pressed="false">Smoother abroad<span data-tag-count></span></button>
+            <button type="button" class="bottles-tag" data-tag="offline" aria-pressed="false">Offline cache<span data-tag-count></span></button>
+            <button type="button" class="bottles-tag" data-tag="quality" aria-pressed="false">High quality<span data-tag-count></span></button>
+            </div>
+            <button class="button bottles-throw" type="submit">Throw a bottle</button>
+            <p class="bottles-status" role="status" aria-live="polite" data-bottles-status></p>
+            <p class="bottles-review" hidden>You can also <a href="{{STORE_URL}}/reviews" rel="noopener">leave a review on the Chrome Web Store</a> to help others find it.</p>
+          </form>
+        </div>
       </div>
       <p class="footer-verse"><span class="verse-name">Kindred Afar</span><span class="verse-soft"> · far, yet near</span></p>
       <p class="footer-links">

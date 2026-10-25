@@ -273,15 +273,59 @@ h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
 .scope li { padding: 18px 22px; border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--line); color: var(--ink-soft); }
 .scope b { color: var(--ink); margin-right: 4px; }
 .footer { padding: 56px var(--gutter) 64px; background: var(--sea-deep); color: rgba(255, 255, 255, 0.8); text-align: center; }
-/* 页尾靠岸：沙滩色取瓶塞琥珀的浅调，瓶子平躺在沙上。.is-waiting 时停在左边海里，进入视口后被推上岸。 */
-.shore { margin: -8px auto 18px; max-width: 280px; }
-.shore-art { width: 100%; height: auto; overflow: visible; }
-.shore-sand { fill: #d9b98a; fill-opacity: 0.85; }
-.shore-foam { fill: none; stroke: rgba(255, 255, 255, 0.45); stroke-width: 2; stroke-linecap: round; }
+/* 页尾靠岸：一整片沙滩横在页尾，沙色取瓶塞琥珀的浅调。中间那只是首屏出发的瓶子，.is-waiting 时停在左上的海里，
+   进入视口后被推上岸。访客扔的瓶子（.pile-bottle）散落在沙上，位置由序号决定（site.js），越靠前的越大、层级越高。
+   沙滩图形用 preserveAspectRatio="none" 拉伸铺满宽度，浪线用 non-scaling-stroke 保持线宽；沙底向页脚底色渐隐。 */
+.shore { margin: -8px calc(-1 * var(--gutter)) 22px; }
+/* 沙滩横贯整个页脚（抵消页脚左右留白）。左右两端用缓入缓出的多段遮罩渐隐进深海蓝（直线渐变在拐点处会被看成一条竖线）；底边由沙子自身的渐变（#beach-sand）淡出，
+   不叠第二层遮罩：两层遮罩求交在 Chrome 里会在渐隐边界留下竖直接缝。 */
+.beach { position: relative; height: 150px; -webkit-mask: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.12) 3%, rgba(0, 0, 0, 0.4) 7%, rgba(0, 0, 0, 0.72) 11%, rgba(0, 0, 0, 0.92) 15%, #000 19%, #000 81%, rgba(0, 0, 0, 0.92) 85%, rgba(0, 0, 0, 0.72) 89%, rgba(0, 0, 0, 0.4) 93%, rgba(0, 0, 0, 0.12) 97%, transparent); mask: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.12) 3%, rgba(0, 0, 0, 0.4) 7%, rgba(0, 0, 0, 0.72) 11%, rgba(0, 0, 0, 0.92) 15%, #000 19%, #000 81%, rgba(0, 0, 0, 0.92) 85%, rgba(0, 0, 0, 0.72) 89%, rgba(0, 0, 0, 0.4) 93%, rgba(0, 0, 0, 0.12) 97%, transparent); }
+.beach-art { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.shore-sand { fill: url(#beach-sand); }
+.beach-sand-top { stop-color: #d9b98a; stop-opacity: 0.85; }
+.beach-sand-mid { stop-color: #d9b98a; stop-opacity: 0.55; }
+.beach-sand-end { stop-color: #d9b98a; stop-opacity: 0; }
+.shore-foam { fill: none; stroke: rgba(255, 255, 255, 0.45); stroke-width: 2; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .shore-foam-2 { stroke-opacity: 0.6; animation: lap 4s ease-in-out infinite; }
-.shore-bottle { transition: transform 1.8s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.8s ease; transform-box: view-box; }
-.shore.is-waiting .shore-bottle { transform: translate(-110px, 10px) rotate(-14deg); opacity: 0; }
-.shore-caption { margin-top: 2px; font-size: 13px; letter-spacing: 0.06em; color: var(--verse-soft); }
+.beach-pile { position: absolute; inset: 0; }
+.shore-bottle { position: absolute; left: 50%; bottom: 46px; z-index: 60; width: 88px; height: auto; margin-left: -44px; transition: transform 1.8s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.8s ease; }
+.shore.is-waiting .shore-bottle { transform: translate(-200px, -46px) rotate(-14deg); opacity: 0; }
+.shore-caption { margin-top: -6px; padding: 0 var(--gutter); font-size: 13px; letter-spacing: 0.06em; color: var(--verse-soft); }
+.shore-caption[hidden] { display: none; }
+/* 沙滩上的瓶子：left / bottom / 宽度 / 角度由脚本按序号写入；新扔的那只从按钮的方向划一道弧落下（--from-x / --from-y）。 */
+.pile-bottle { position: absolute; height: auto; transform: translateX(-50%) rotate(var(--tilt, 0deg)) scaleX(var(--flip, 1)); filter: drop-shadow(0 2px 1px rgba(80, 52, 20, 0.28)); }
+.pile-bottle.is-new { animation: bottle-land 1.3s cubic-bezier(0.3, 0.5, 0.35, 1) both; }
+@keyframes bottle-land {
+  0% { transform: translate(calc(-50% + var(--from-x, 0px)), var(--from-y, -120px)) rotate(0deg) scaleX(var(--flip, 1)); }
+  55% { transform: translate(calc(-50% + var(--from-x, 0px) * 0.4), calc(var(--from-y, -120px) * 0.4 - 90px)) rotate(200deg) scaleX(var(--flip, 1)); }
+  85% { transform: translate(-50%, -6px) rotate(calc(var(--tilt, 0deg) + 340deg)) scaleX(var(--flip, 1)); }
+  100% { transform: translateX(-50%) rotate(calc(var(--tilt, 0deg) + 360deg)) scaleX(var(--flip, 1)); }
+}
+
+/* 扔瓶子的控件跟在沙滩下面，页脚是深海蓝，文字一律用浅色。数字用等宽数码，增加时不抖动。 */
+.bottles[hidden] { display: none; }
+.bottles { max-width: 640px; margin: -10px auto 0; padding: 0 var(--gutter); }
+.bottles-count { display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; gap: 2px 8px; }
+.bottles-count strong { font-family: var(--serif); font-size: 34px; line-height: 1.2; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; color: #fff; }
+.bottles-count span { white-space: nowrap; color: var(--verse-soft); }
+.bottles-lead { margin-top: 4px; font-size: 14px; color: var(--verse-soft); }
+.bottles-form { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px 8px; margin-top: 16px; }
+.bottles-tags { display: contents; }
+.bottles-tag { min-height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.08); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2); color: #fff; font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer; transition: background 0.15s ease; }
+.bottles-tag:hover { background: rgba(255, 255, 255, 0.14); }
+.bottles-tag[aria-pressed="true"] { background: rgba(43, 179, 230, 0.22); box-shadow: inset 0 0 0 1px var(--sky); }
+.bottles-tag:disabled { cursor: default; opacity: 0.6; }
+.bottles-tag span { margin-left: 6px; font-variant-numeric: tabular-nums; opacity: 0.7; }
+.bottles-tag span:empty { display: none; }
+.bottles-throw { min-height: 36px; padding: 0 18px; border: 0; background: var(--sky); color: #04263a; font-family: inherit; font-size: 14px; cursor: pointer; }
+.bottles-throw:hover { background: #4cc4ef; }
+.bottles-throw:disabled { cursor: default; background: rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.75); }
+.bottles-throw.is-pending { cursor: progress; }
+.bottles-status { flex-basis: 100%; min-height: 1.6em; font-size: 13px; color: rgba(255, 255, 255, 0.86); }
+.bottles-status:empty { min-height: 0; }
+.bottles-review { flex-basis: 100%; margin-top: -6px; font-size: 13px; color: var(--verse-soft); }
+.bottles-review[hidden] { display: none; }
+.bottles-review a { color: var(--sky); }
 @keyframes lap { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(6px); } }
 .footer-verse { font-family: var(--serif); font-size: 24px; letter-spacing: 0.04em; color: #fff; }
 .footer-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 22px; margin-top: 18px; }
@@ -304,40 +348,6 @@ h3 { font-size: 18px; line-height: 1.45; font-weight: 650; }
 .changelog-more { margin-top: 10px; }
 .changelog-more a { color: #fff; }
 
-/* ---------- 扔一只漂流瓶 ---------- */
-/* 深海蓝卡片，与首屏同一片海；底部一道浅色波浪。数字用等宽数码，增加时不抖动。
-   扔出时 .bottles-fly 从按钮附近划一道弧落进海里（.is-flying 只播一次），减少动态时全局停掉动画。 */
-.bottles[hidden] { display: none; }
-.bottles-sea { position: relative; overflow: hidden; max-width: 760px; margin: 0 auto; padding: clamp(36px, 6vw, 56px) clamp(20px, 5vw, 56px) clamp(56px, 8vw, 72px); border-radius: 24px; background: linear-gradient(160deg, var(--sea-deep) 0%, var(--sea) 70%, #11557a 100%); color: #fff; text-align: center; }
-.bottles-sea::after { content: ""; position: absolute; inset: auto 0 0; height: 28px; background: rgba(255, 255, 255, 0.08); -webkit-mask: radial-gradient(14px 10px at 14px 0, transparent 98%, #000) 0 0 / 28px 100% repeat-x; mask: radial-gradient(14px 10px at 14px 0, transparent 98%, #000) 0 0 / 28px 100% repeat-x; }
-.bottles-sea h2 { color: #fff; }
-.bottles-sea .key { color: var(--sky); }
-.bottles-count { display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; gap: 4px 10px; margin-top: 18px; }
-.bottles-count strong { font-family: var(--serif); font-size: clamp(44px, 8vw, 64px); line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.bottles-count span { white-space: nowrap; color: rgba(255, 255, 255, 0.82); }
-.bottles-lead { max-width: 30em; margin: 12px auto 0; color: rgba(255, 255, 255, 0.78); }
-.bottles-form { display: grid; justify-items: center; gap: 16px; margin-top: 26px; }
-.bottles-tags { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
-.bottles-tag { min-height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22); color: #fff; font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer; transition: background 0.15s ease; }
-.bottles-tag:hover { background: rgba(255, 255, 255, 0.16); }
-.bottles-tag[aria-pressed="true"] { background: var(--sky); box-shadow: none; color: #04263a; }
-.bottles-tag:disabled { cursor: default; opacity: 0.7; }
-.bottles-tag span { margin-left: 6px; font-variant-numeric: tabular-nums; opacity: 0.75; }
-.bottles-tag span:empty { display: none; }
-.bottles-throw:disabled { cursor: default; opacity: 0.75; }
-.bottles-throw.is-pending { cursor: progress; }
-.bottles-status { min-height: 1.7em; font-size: 14px; color: rgba(255, 255, 255, 0.86); }
-.bottles-review { margin-top: -10px; font-size: 14px; color: rgba(255, 255, 255, 0.78); }
-.bottles-review[hidden] { display: none; }
-.bottles-review a { color: var(--sky); }
-.bottles-fly { position: absolute; left: 50%; bottom: 44px; width: 40px; height: 40px; margin-left: -20px; opacity: 0; pointer-events: none; }
-.bottles-fly.is-flying { animation: bottle-toss 1.4s cubic-bezier(0.3, 0.6, 0.4, 1) forwards; }
-@keyframes bottle-toss {
-  0% { opacity: 1; transform: translate(0, -60px) rotate(0deg) scale(0.9); }
-  45% { opacity: 1; transform: translate(90px, -150px) rotate(140deg) scale(1); }
-  80% { opacity: 1; transform: translate(170px, 4px) rotate(250deg) scale(0.9); }
-  100% { opacity: 0; transform: translate(190px, 24px) rotate(270deg) scale(0.8); }
-}
 
 /* ---------- 窄屏 ---------- */
 @media (max-width: 860px) {

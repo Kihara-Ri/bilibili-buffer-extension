@@ -96,12 +96,14 @@ test("页面引用的本地文件都存在，且不加载任何第三方资源",
   }
 });
 
-test("漂流瓶计数：只连作者自己的域名，默认隐藏，隐私说明写明这次联网", async () => {
+test("漂流瓶计数：在页尾沙滩上，只连作者自己的域名，默认隐藏，隐私说明写明这次联网", async () => {
   assert.equal(new URL(BOTTLES_API).hostname, "kihara.cn", "计数接口必须是作者自己的服务器");
   for (const html of [page, enPage]) {
-    assert.match(html, new RegExp(`<section id="bottles" class="section bottles" data-api="${BOTTLES_API}" hidden>`));
+    // 控件在页尾沙滩下面，默认隐藏（没有脚本或接口不可用时只剩「漂流瓶到岸了」那句话）。
+    assert.match(html, new RegExp(`<div id="bottles" class="bottles" data-api="${BOTTLES_API}" hidden>`));
+    const section = html.slice(html.indexOf('<div id="bottles"'), html.indexOf("</form>", html.indexOf('<div id="bottles"')));
+    assert.ok(section.indexOf("<footer") === -1 && html.indexOf('<div id="bottles"') > html.indexOf('<footer class="footer">'), "漂流瓶控件应在页尾");
     // 只收预设标签：与服务端 TAGS 一一对应，页面上没有任何文本输入框。
-    const section = html.slice(html.indexOf('<section id="bottles"'), html.indexOf("</section>", html.indexOf('<section id="bottles"')));
     assert.deepEqual([...section.matchAll(/data-tag="(\w+)"/g)].map((match) => match[1]), ["smooth", "offline", "quality"]);
     assert.doesNotMatch(section, /<input|<textarea/);
   }
@@ -203,7 +205,9 @@ test("小巧思的静态结构：顶栏小瓶、时差钟、发弹幕、页尾�
     assert.match(html, /<label class="visually-hidden" for="danmaku-input">[^<]+<\/label>\s*<input id="danmaku-input"[^>]*maxlength="24"/);
     assert.match(html, /role="status" aria-live="polite" data-danmaku-status/);
     const footer = html.slice(html.indexOf('<footer class="footer">'));
-    assert.match(footer, /<div class="shore">[\s\S]*<svg class="shore-art"[^>]*aria-hidden="true"[\s\S]*<p class="shore-caption">[^<]+<\/p>/);
+    // 沙滩整块是装饰（aria-hidden），读屏只读下面那句话；访客扔的瓶子由脚本放进 .beach-pile，引用页面里定义的 #pile-bottle。
+    assert.match(footer, /<div class="shore">\s*<div class="beach" aria-hidden="true">[\s\S]*<div class="beach-pile"><\/div>[\s\S]*<svg class="shore-bottle"[\s\S]*<p class="shore-caption">[^<]+<\/p>/);
+    assert.ok(html.includes('<symbol id="pile-bottle"') && html.includes('<clipPath id="pile-glass">'), "缺少沙滩瓶子的图形定义");
   }
 });
 

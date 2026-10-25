@@ -47,6 +47,8 @@ if (barBottle) {
   }, { passive: true });
   barBottle.addEventListener("animationend", () => barBottle.classList.remove("is-rocking"));
   addEventListener("resize", () => { if (!frame) frame = requestAnimationFrame(update); });
+  // 页面本身会变高（滚到页尾才出现的漂流瓶计数），这时没有滚动事件，水位要跟着页面高度重算。
+  if ("ResizeObserver" in window) new ResizeObserver(() => { if (!frame) frame = requestAnimationFrame(update); }).observe(document.body);
   update();
 }
 
@@ -128,13 +130,19 @@ if (danmakuForm && danmakuBoard) {
 }
 
 // 「扔一只漂流瓶」：官网唯一会联网的地方，只连 data-api 指向的作者自己的服务器（server/bottles/）。
-// - 滚到「知己」一节附近才去取计数，只看首屏的访客不产生任何请求；取不到就整节保持隐藏；
+// - 控件在页尾沙滩下面；滚到页尾附近才去取计数，没读到页尾的访客不产生任何请求；取不到就保持隐藏；
+// - 每只瓶子在沙滩上占一个位置（.pile-bottle），按序号放置、只增不重建，计数刷新不会让已有的瓶子跳动；
 // - 请求不带 Cookie（credentials: omit），只发一个可选的预设标签；同 IP 每天一只由服务端判重；
-// - 本机扔过就记在 localStorage（只存日期，读写都包 try/catch，隐私模式下失效也不影响页面），刷新后不再出按钮。
+// - 本机扔过就记在 localStorage（只存日期，读写都包 try/catch，隐私模式下失效也不影响页面），刷新后按钮停用。
 const bottles = document.querySelector(".bottles");
-if (bottles?.dataset.api) {
+const pile = document.querySelector(".beach-pile");
+if (bottles?.dataset.api && pile) {
   const english = document.documentElement.lang === "en";
   const STORAGE_KEY = "haineicunzhi.bottle";
+  // 沙滩上最多摆这么多只；再多只增加数字，不再加瓶子（再密就看不出是瓶子了）。
+  const PILE_MAX = 160;
+  const SVG = "http://www.w3.org/2000/svg";
+  const caption = document.querySelector(".shore-caption");
   const total = bottles.querySelector("[data-bottles-total]");
   const unit = bottles.querySelector("[data-bottles-unit]");
   const tags = [...bottles.querySelectorAll(".bottles-tag")];
@@ -142,31 +150,77 @@ if (bottles?.dataset.api) {
   const throwButton = bottles.querySelector(".bottles-throw");
   const status = bottles.querySelector("[data-bottles-status]");
   const review = bottles.querySelector(".bottles-review");
-  const fly = bottles.querySelector(".bottles-fly");
   const text = english ? {
-    unit: (count) => (count === 1 ? "bottle has washed up here" : "bottles have washed up here"),
-    empty: "No bottles yet. Be the first to throw one.",
+    unit: (count) => (count === 1 ? "bottle has washed ashore" : "bottles have washed ashore"),
+    empty: "The beach is empty. Be the first to throw one.",
     thrown: "Thrown",
-    thanks: "Your bottle is out at sea. Thank you!",
+    thanks: "Your bottle has landed on the beach. Thank you!",
     again: "You've already thrown one today. Thank you!",
-    remembered: "You've thrown a bottle from this device. Thank you!",
+    remembered: "One of these bottles is yours. Thank you!",
     failed: "The bottle didn't make it out. Please try again later."
   } : {
-    unit: () => "只瓶子已经漂到这里",
-    empty: "还没有人扔过瓶子，做第一个吧。",
+    unit: () => "只漂流瓶已经靠岸",
+    empty: "沙滩上还空着，扔下第一只吧。",
     thrown: "已经扔出去了",
-    thanks: "瓶子已经漂出去了，谢谢你！",
+    thanks: "你的瓶子落在沙滩上了，谢谢你！",
     again: "今天已经扔过一只了，谢谢你！",
-    remembered: "你在这台设备上扔过一只了，谢谢你！",
+    remembered: "这片沙滩上有一只是你扔的，谢谢你！",
     failed: "瓶子没扔出去，稍后再试试。"
   };
   const readThrown = () => { try { return localStorage.getItem(STORAGE_KEY); } catch { return null; } };
   const saveThrown = () => { try { localStorage.setItem(STORAGE_KEY, new Date().toISOString().slice(0, 10)); } catch { /* 存不下就只在本次页面里生效 */ } };
   const request = (init = {}) => fetch(bottles.dataset.api, { ...init, credentials: "omit", signal: AbortSignal.timeout(8000) })
     .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
-    .then((data) => (Number.isInteger(data?.total) && data.tags && typeof data.tags === "object" ? data : Promise.reject(new Error("bad payload"))));
+    .then((data) => (Number.isInteger(data?.total) && data.total >= 0 && data.tags && typeof data.tags === "object" ? data : Promise.reject(new Error("bad payload"))));
   const format = (count) => count.toLocaleString(english ? "en-US" : "zh-CN");
-  // 只改文字：按钮节点一直复用，焦点与按下状态不受计数刷新影响。
+  // 第 index 只瓶子的落点。横向用黄金比例序列：相邻序号落得很开，任意多只都铺得均匀；
+  // 纵深用另一个无理数序列，远处（靠上）的小、层级低，近处的大、压在上面。同一序号永远落在同一处。
+  const place = (index) => {
+    const x = (0.13 + index * 0.6180339887) % 1; // 从 0.13 起步：第一只不落在正中、被靠岸的大瓶子挡住
+    const depth = (0.31 + index * 0.7548776662) % 1;
+    return {
+      left: `${(6 + x * 88).toFixed(2)}%`,
+      bottom: `${Math.round(16 + (1 - depth) * 44)}px`,
+      width: `${Math.round(22 + depth * 12)}px`,
+      tilt: `${Math.round((((index * 0.5698402910) % 1) - 0.5) * 36)}deg`,
+      flip: index % 2 ? "-1" : "1",
+      z: String(Math.round(depth * 50))
+    };
+  };
+  const makeBottle = (index) => {
+    const spot = place(index);
+    const svg = document.createElementNS(SVG, "svg");
+    svg.setAttribute("class", "pile-bottle");
+    svg.setAttribute("viewBox", "0 6 32 20");
+    svg.dataset.index = String(index);
+    Object.assign(svg.style, { left: spot.left, bottom: spot.bottom, width: spot.width, zIndex: spot.z });
+    svg.style.setProperty("--tilt", spot.tilt);
+    svg.style.setProperty("--flip", spot.flip);
+    const use = document.createElementNS(SVG, "use");
+    use.setAttribute("href", "#pile-bottle");
+    svg.append(use);
+    return svg;
+  };
+  // 只在数量变化时增删末尾的节点：已有的瓶子不动，也不会重新播放落下的动画。
+  const renderPile = (count) => {
+    const want = Math.min(count, PILE_MAX);
+    while (pile.childElementCount > want) pile.lastElementChild.remove();
+    for (let index = pile.childElementCount; index < want; index += 1) pile.append(makeBottle(index));
+  };
+  // 刚扔出的那只从按钮所在的方向划一道弧落到自己的位置。
+  const landNewest = () => {
+    const bottle = pile.lastElementChild;
+    if (!bottle || reducedMotion.matches) return;
+    const from = throwButton.getBoundingClientRect();
+    const to = bottle.getBoundingClientRect();
+    bottle.style.setProperty("--from-x", `${Math.round(from.left + from.width / 2 - (to.left + to.width / 2))}px`);
+    bottle.style.setProperty("--from-y", `${Math.round(from.top - to.top)}px`);
+    bottle.classList.remove("is-new");
+    void bottle.getBoundingClientRect(); // 重新触发一次性动画
+    bottle.classList.add("is-new");
+    bottle.addEventListener("animationend", () => bottle.classList.remove("is-new"), { once: true });
+  };
+  // 只改文字：按钮与标签节点一直复用，焦点与按下状态不受计数刷新影响。
   const render = (data) => {
     total.textContent = format(data.total);
     unit.textContent = text.unit(data.total);
@@ -175,6 +229,7 @@ if (bottles?.dataset.api) {
       const count = Number(data.tags[tag.dataset.tag]) || 0;
       tag.querySelector("[data-tag-count]").textContent = count ? format(count) : "";
     }
+    renderPile(data.total);
   };
   const finish = (message) => {
     throwButton.disabled = true;
@@ -200,11 +255,7 @@ if (bottles?.dataset.api) {
       const data = await request({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(tag ? { tag } : {}) });
       saveThrown();
       render(data);
-      if (data.accepted && !reducedMotion.matches) {
-        fly.classList.remove("is-flying");
-        void fly.offsetWidth; // 重新触发一次性动画
-        fly.classList.add("is-flying");
-      }
+      if (data.accepted) landNewest();
       finish(data.accepted ? text.thanks : text.again);
     } catch {
       throwButton.disabled = false;
@@ -216,16 +267,17 @@ if (bottles?.dataset.api) {
   const load = () => request().then((data) => {
     render(data);
     bottles.hidden = false;
+    if (caption) caption.hidden = true;
     if (readThrown()) finish(text.remembered);
-  }).catch(() => { /* 接口不可用：整节保持隐藏，页面其他部分不受影响 */ });
-  const friend = document.querySelector("#friend");
-  if (friend && "IntersectionObserver" in window) {
+  }).catch(() => { /* 接口不可用：保持隐藏，沙滩上只有靠岸的那一只 */ });
+  const shoreArea = document.querySelector(".shore");
+  if (shoreArea && "IntersectionObserver" in window) {
     const observer = new IntersectionObserver((entries) => {
       if (!entries.some((entry) => entry.isIntersecting)) return;
       observer.disconnect();
       load();
-    }, { rootMargin: "0px 0px 400px 0px" });
-    observer.observe(friend);
+    }, { rootMargin: "0px 0px 600px 0px" });
+    observer.observe(shoreArea);
   } else {
     load();
   }
