@@ -25,6 +25,9 @@ export function buildCacheSizeInfo(data, duration = 0) {
 }
 
 export function getCacheSize(info, quality, cached) {
+  // 弹窗把当前选中画质的记录传给每一张画质卡片；别的档位的实际大小不能顶替本档的估算。
+  const cachedQuality = Number(cached?.requestedQuality || cached?.quality) || 0;
+  if (cachedQuality && cachedQuality !== Number(quality)) cached = null;
   const tracks = Object.values(cached?.tracks || {});
   const exactBytes = cached?.status === "complete"
     ? Number(cached.totalBytes || cached.downloadedBytes)

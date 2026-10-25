@@ -84,3 +84,11 @@ test("只有单文件 MP4 时按整段下载体积提示提取音轨", () => {
   assert.equal(getAudioCacheSize(null), null);
   assert.equal(getAudioCacheSize(buildCacheSizeInfo({})), null);
 });
+test("某一档的缓存记录只决定这一档的大小，不能顶替其他画质的估算", () => {
+  // 弹窗把当前选中画质的记录传给每张画质卡片：修复前 4K 在下载时，所有画质都显示 4K 的 557 MB。
+  const info = buildCacheSizeInfo(data);
+  const cached = { mediaKind: "dash", requestedQuality: 80, quality: 80, status: "downloading", tracks: { video: { totalBytes: 100 }, audio: { totalBytes: 20 } } };
+  assert.deepEqual(getCacheSize(info, 80, cached), { bytes: 120, estimated: false });
+  assert.deepEqual(getCacheSize(info, 64, cached), { bytes: 6600000, estimated: true });
+  assert.deepEqual(getCacheSize(info, 64, { ...cached, status: "complete", totalBytes: 120, downloadedBytes: 120 }), { bytes: 6600000, estimated: true });
+});
