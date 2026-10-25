@@ -144,6 +144,11 @@ const state = {
   // 只有用户拖动 / 按键换档时为 true：轮询刷新或首次渲染进入顶档不播「登顶」动画。
   qualityInteractive: false,
   qualityDragPointer: null,
+  // 指针操作的落定阶段：拇指正滑向所选档位，名称/体积等拇指停稳后才切换（见 endQualityDrag）。
+  qualitySettling: false,
+  qualitySettleCancel: null,
+  qualityPress: null,
+  qualityDragRatio: 0,
   qualitySurgeTimer: 0,
   assistConfig: null,
   assistStats: null,
@@ -188,7 +193,7 @@ elements.cacheMode.addEventListener("click", (event) => {
 elements.cacheMode.addEventListener("keydown", navigateCacheModes);
 // 拖动 / 方向键时 input 连续触发，只更新界面；松手或按键结束（change）才把选择存回后台。
 elements.qualitySlider.addEventListener("input", selectQualityFromSlider);
-elements.qualitySlider.addEventListener("change", persistQualitySelection);
+elements.qualitySlider.addEventListener("change", () => { if (!state.qualitySettling) persistQualitySelection(); });
 // 跟手：按住期间看得见的拇指按指针连续移动，松手后弹回所选档位（原生 range 照常按整档改 value）。
 elements.qualitySlider.addEventListener("pointerdown", startQualityDrag);
 elements.qualitySlider.addEventListener("pointermove", followQualityDrag);
@@ -739,7 +744,7 @@ function renderQualitySlider(options, cached, placeholder) {
   setAttr(slider, "aria-valuetext", [selected.label, size].filter(Boolean).join(t("sep.comma")));
   state.qualityRatio = stops.open.length === 1 ? at(count - 1) : at(index);
   // 拖动中拇指跟着指针走，不能被这里写回档位；松手时 endQualityDrag 再落定。
-  if (state.qualityDragPointer === null) elements.qualityTrack.style.setProperty("--q-pos", String(state.qualityRatio));
+  if (state.qualityDragPointer === null && !state.qualitySettling) elements.qualityTrack.style.setProperty("--q-pos", String(state.qualityRatio));
   // 顶档：选中的是整根杆的最右一档（上面没有被锁的档位）时，杆身变成有浪和气泡的海、拇指里是漂流瓶。
   // 未登录或非大会员时可选最高档上面还有锁定段，不算顶档：这层效果留给真正的最高画质。
   const top = String(index === stops.open.length - 1 && !stops.locked.length);
@@ -776,26 +781,116 @@ function qualityRatioAt(clientX) {
   return Math.min(state.qualityReach, Math.max(0, (clientX - box.left - thumb / 2) / span));
 }
 
+/** 第 index 个可选档的拇指位置（0–1）。与 renderQualitySlider 的 at() 同一套坐标。 */
+function qualityStopRatio(index) {
+  const open = state.qualityStops.open.length;
+  return open > 1 ? state.qualityReach * index / (open - 1) : state.qualityReach;
+}
+
+/** 拇指位置 → 最近的可选档序号。 */
+function nearestQualityIndex(ratio) {
+  const open = state.qualityStops.open.length;
+  if (open < 2 || state.qualityReach <= 0) return 0;
+  return Math.min(open - 1, Math.max(0, Math.round(ratio / state.qualityReach * (open - 1))));
+}
+
+function setQualityPos(ratio) {
+  state.qualityDragRatio = ratio;
+  elements.qualityTrack.style.setProperty("--q-pos", ratio.toFixed(4));
+}
+
+function enterQualityDragging() {
+  if (state.qualityPress) state.qualityPress.dragging = true;
+  elements.qualityTrack.dataset.dragging = "true";
+}
+
 function startQualityDrag(event) {
   if (elements.qualitySlider.disabled || state.qualityStops.open.length < 2) return;
+  cancelQualitySettle();
   state.qualityDragPointer = event.pointerId;
   // 捕获指针：拖出杆外（尤其拖向锁定段或弹窗边缘）时仍能收到移动与松开。
   elements.qualitySlider.setPointerCapture?.(event.pointerId);
-  elements.qualityTrack.dataset.dragging = "true";
-  followQualityDrag(event);
+  const box = elements.qualityTrack.getBoundingClientRect();
+  const thumb = parseFloat(getComputedStyle(elements.qualityTrack).getPropertyValue("--thumb")) || 22;
+  // 取正在过渡中的实际位置（而非目标值）：滑行途中再次按下，命中判断要对着眼前看到的拇指。
+  const current = parseFloat(getComputedStyle(elements.qualityTrack).getPropertyValue("--q-pos"));
+  const center = box.left + thumb / 2 + (box.width - thumb) * (Number.isFinite(current) ? current : state.qualityRatio);
+  state.qualityDragRatio = Number.isFinite(current) ? current : state.qualityRatio;
+  state.qualityPress = { x: event.clientX, dragging: false };
+  if (Math.abs(event.clientX - center) <= thumb / 2 + 2) {
+    // 按在拇指上：立刻跟手。
+    enterQualityDragging();
+    followQualityDrag(event);
+  } else {
+    // 按在轨道别处：不让拇指瞬移到指针下（三档时档距很长，会先冲到半路再退回来），
+    // 而是带着过渡平滑滑向最近的档位；之后若指针明显移动，再转为拖动。
+    setQualityPos(qualityStopRatio(nearestQualityIndex(qualityRatioAt(event.clientX))));
+  }
 }
 
 function followQualityDrag(event) {
   if (event.pointerId !== state.qualityDragPointer) return;
-  elements.qualityTrack.style.setProperty("--q-pos", qualityRatioAt(event.clientX).toFixed(4));
+  const press = state.qualityPress;
+  if (press && !press.dragging) {
+    if (Math.abs(event.clientX - press.x) < 6) return;
+    enterQualityDragging();
+  }
+  setQualityPos(qualityRatioAt(event.clientX));
 }
 
 function endQualityDrag(event) {
   if (event.pointerId !== state.qualityDragPointer) return;
   state.qualityDragPointer = null;
+  state.qualityPress = null;
   delete elements.qualityTrack.dataset.dragging;
-  // 去掉拖动态后过渡恢复，拇指与填充用回弹缓动落到所选档位。
-  elements.qualityTrack.style.setProperty("--q-pos", String(state.qualityRatio));
+  // 松手落到最近的档位。名称、体积、顶档效果都要等拇指停稳再换，而不是拖过中点就变。
+  const index = nearestQualityIndex(state.qualityDragRatio);
+  state.qualitySettling = true;
+  setQualityPos(qualityStopRatio(index));
+  settleQualityThen(() => {
+    state.qualitySettling = false;
+    elements.qualitySlider.value = String(index);
+    commitQualityIndex(index);
+    persistQualitySelection();
+  });
+}
+
+/**
+ * 等拇指的滑行过渡结束后执行 done。没有过渡在跑（已在档位上、或「减少动态效果」）就立刻执行；
+ * 过渡被打断时 transitionend 不会来，所以配一个兜底定时器。
+ */
+function settleQualityThen(done) {
+  const track = elements.qualityTrack;
+  if (!track.getAnimations().some((animation) => animation.playState === "running" || animation.playState === "pending")) {
+    done();
+    return;
+  }
+  let timer = 0;
+  const onEnd = (event) => {
+    if (event.target === track && event.propertyName === "--q-pos") finish();
+  };
+  const cleanup = () => {
+    clearTimeout(timer);
+    track.removeEventListener("transitionend", onEnd);
+    track.removeEventListener("transitioncancel", finish);
+    state.qualitySettleCancel = null;
+  };
+  const finish = () => {
+    cleanup();
+    done();
+  };
+  track.addEventListener("transitionend", onEnd);
+  track.addEventListener("transitioncancel", finish);
+  timer = setTimeout(finish, 360);
+  state.qualitySettleCancel = () => {
+    cleanup();
+    state.qualitySettling = false;
+  };
+}
+
+/** 新一轮按下时放弃尚未提交的落定：由这一轮操作决定最终档位。 */
+function cancelQualitySettle() {
+  state.qualitySettleCancel?.();
 }
 
 /** 对比 B 站声明的档位与当前账号实际返回的轨道，作为滑杆与账号说明的悬停提示，让「是不是最高规格」有答案。 */
@@ -808,8 +903,14 @@ function describeQualityLadder(options) {
   };
 }
 
+/** 键盘等非指针途径（原生 input 事件）：立即提交。指针操作的 input 由 endQualityDrag 落定后统一提交。 */
 function selectQualityFromSlider() {
-  const quality = state.qualityStops.open[Number(elements.qualitySlider.value)]?.quality || 0;
+  if (state.qualityDragPointer !== null || state.qualitySettling) return;
+  commitQualityIndex(Number(elements.qualitySlider.value));
+}
+
+function commitQualityIndex(index) {
+  const quality = state.qualityStops.open[index]?.quality || 0;
   if (!quality || quality === state.selectedQuality) return;
   state.selectedQuality = quality;
   state.selectedCodec = "auto";

@@ -288,28 +288,47 @@ try {
   const trackX=ratio=>trackBox.x+11+(trackBox.width-22)*ratio;
   await page.mouse.move(trackX(2/3),trackBox.y+13); await page.mouse.down();
   const dragged=[];
-  for(let i=1;i<=8;i+=1){await page.mouse.move(trackX(2/3-0.3*i/8),trackBox.y+13);dragged.push(await page.evaluate(()=>({pos:Number(document.querySelector('#quality-track').style.getPropertyValue('--q-pos')),value:document.querySelector('#quality-slider').value,dragging:document.querySelector('#quality-track').dataset.dragging,tick:document.querySelector('.quality-knob').classList.contains('is-tick')})));}
+  for(let i=1;i<=8;i+=1){await page.mouse.move(trackX(2/3-0.3*i/8),trackBox.y+13);dragged.push(await page.evaluate(()=>({pos:Number(document.querySelector('#quality-track').style.getPropertyValue('--q-pos')),value:document.querySelector('#quality-slider').value,dragging:document.querySelector('#quality-track').dataset.dragging,name:document.querySelector('#quality-name').textContent,tick:document.querySelector('.quality-knob').classList.contains('is-tick')})));}
   assert(dragged.every(item=>item.dragging==='true'),'按住时应处于拖动态 '+JSON.stringify(dragged));
   assert(dragged.every((item,index)=>index===0||item.pos<dragged[index-1].pos),'拖动时拇指应连续跟手 '+JSON.stringify(dragged));
   assert(dragged.some(item=>Math.abs(item.pos*3-Math.round(item.pos*3))>0.05),'拖动时拇指不应一格一格跳 '+JSON.stringify(dragged));
-  assert(dragged.some(item=>item.value==='1')&&dragged.some(item=>item.tick),'拖过档位时值应吸附并有过档反馈 '+JSON.stringify(dragged));
+  // 落定后才切换：拖过中点期间名称保持不变、没有过档反馈，松手后拇指停稳才换成最近的一档。
+  assert(dragged.every(item=>item.name==='1080P60'),'拖动途中不应提前切换画质 '+JSON.stringify(dragged));
   await page.mouse.up();
+  const releasedAt=await page.evaluate(()=>({name:document.querySelector('#quality-name').textContent}));
+  assert.equal(releasedAt.name,'1080P60','松手瞬间拇指还在滑行，名称不应已切换');
   await page.waitForTimeout(500);
+  assert.equal(await page.evaluate(()=>document.querySelector('#quality-name').textContent),'1080P','拇指停稳后应切到最近的档位');
   const settled=await page.evaluate(()=>{const track=document.querySelector('#quality-track'),knob=document.querySelector('.quality-knob'),stops=[...document.querySelectorAll('.quality-stop')],value=Number(document.querySelector('#quality-slider').value);
     const k=knob.getBoundingClientRect(),s=stops[value].getBoundingClientRect();return {value,dragging:track.dataset.dragging??null,pos:track.style.getPropertyValue('--q-pos'),delta:Math.abs(k.left+11-(s.left+s.width/2))};});
   assert(settled.dragging===null&&settled.delta<1,'松手后拇指应落回档位点 '+JSON.stringify(settled));
+  // 点按两档之间：拇指不瞬移到指针下，也不过冲，直接平滑滑向最近的档位，停稳后才切换。
+  {
+    await page.keyboard.press('End'); await page.waitForTimeout(450);
+    const tap=trackX(0.5), samples=[];
+    await page.mouse.move(tap,trackBox.y+13); await page.mouse.down();
+    for(let i=0;i<10;i+=1){samples.push(await page.evaluate(()=>({pos:Number(document.querySelector('#quality-track').style.getPropertyValue('--q-pos')),dragging:document.querySelector('#quality-track').dataset.dragging??null,name:document.querySelector('#quality-name').textContent})));await page.waitForTimeout(40);}
+    await page.mouse.up();
+    assert(samples.every(item=>item.dragging===null&&Math.abs(item.pos-2/3)<0.01),'点按应直接以最近档位为目标且不进拖动态 '+JSON.stringify(samples));
+    await page.waitForTimeout(450);
+    assert.equal(await page.evaluate(()=>document.querySelector('#quality-name').textContent),'1080P60','点按停稳后切到最近档位');
+    const overshoot=await page.evaluate(()=>{const knob=document.querySelector('.quality-knob'),stop=document.querySelectorAll('.quality-stop')[2].getBoundingClientRect();return Math.abs(knob.getBoundingClientRect().left+11-(stop.left+stop.width/2));});
+    assert(overshoot<1,'点按后拇指应与档位点重合 '+overshoot);
+    await page.keyboard.press('End'); await page.waitForTimeout(450);
+  }
   // 登顶：从次高档拖到最高档，整组一次性动画（浪头扫过、瓶子弹起、水花、名字一跳、卡片外沿一圈光）开始播放；
   // 0.9 秒后摘掉；之后的轮询刷新不会再触发。
   await page.keyboard.press('End'); await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(450);
   await page.mouse.move(trackX(2/3),trackBox.y+13); await page.mouse.down();
   for(let i=1;i<=6;i+=1) await page.mouse.move(trackX(2/3+0.36*i/6),trackBox.y+13);
+  await page.mouse.up();
+  await page.waitForTimeout(120);
   const surge=await page.evaluate(()=>{const row=document.querySelector('#quality-row');const names=row.getAnimations({subtree:true}).map(a=>a.animationName);
     return {top:row.dataset.top,surging:row.classList.contains('is-surging'),names,pos:Number(document.querySelector('#quality-track').style.getPropertyValue('--q-pos'))};});
   assert(surge.top==='true'&&surge.surging,'升到顶档应播登顶动画 '+JSON.stringify(surge));
   for(const name of ['surge-sweep','surge-bottle','surge-ring','surge-drops','surge-name','surge-glow']) assert(surge.names.includes(name),`登顶缺少 ${name}：`+JSON.stringify(surge.names));
   assert(surge.pos<=1,'拖过最右也不能越出杆身 '+JSON.stringify(surge));
   await page.locator('.quality-row').screenshot({path:path.join(shots,'quality-surge.png')});
-  await page.mouse.up();
   await page.waitForTimeout(2400);
   assert.equal(await page.evaluate(()=>document.querySelector('#quality-row').classList.contains('is-surging')),false,'登顶动画播完应摘掉，轮询不应再触发');
   // 键盘升到顶档同样有反馈。
