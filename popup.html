@@ -44,6 +44,16 @@
               <span id="current-detail-text" data-i18n="current.wait">请稍候…</span>
               <span id="page-mark" class="page-mark" hidden></span>
             </p>
+            <!-- 读取页面时的骨架：按「内容切换 + 画质卡片」的形状占位，识别完成后真实控件出现在同一位置，弹窗不跳高度。
+                 只由 CSS 根据主按钮的 data-state="reading" 显示，脚本不管它；纯装饰，读屏只读标题与按钮。 -->
+            <div class="current-skeleton" aria-hidden="true">
+              <span class="skeleton-bar skeleton-mode"></span>
+              <span class="skeleton-card">
+                <span class="skeleton-bar skeleton-name"></span>
+                <span class="skeleton-bar skeleton-size"></span>
+                <span class="skeleton-bar skeleton-track"></span>
+              </span>
+            </div>
 
             <div id="format-controls" class="format-controls" hidden>
               <!-- 内容二选一的分段控件；大会员身份只是一枚小标记，放在同一行右侧。 -->
@@ -66,10 +76,15 @@
                   <span id="quality-size" class="quality-size"></span>
                 </div>
                 <div id="quality-track" class="quality-track">
-                  <span class="quality-fill" aria-hidden="true"></span>
+                  <!-- .quality-surge 在填充里面：升到顶档那一下的浪头只在海面里扫过，不会越出杆身。 -->
+                  <span class="quality-fill" aria-hidden="true"><span class="quality-surge"></span></span>
                   <span id="quality-locked" class="quality-locked" aria-hidden="true" hidden></span>
                   <span id="quality-stops" class="quality-stops" aria-hidden="true"></span>
                   <input id="quality-slider" class="quality-slider" type="range" min="0" max="0" step="1" value="0" aria-labelledby="quality-label" aria-describedby="auth-note">
+                  <!-- 看得见的拇指：原生拇指只负责命中与焦点（透明），这颗跟手连续移动、松手弹回档位；
+                       升到顶档时它变成漂流瓶并弹一下，.quality-splash 在它脚下溅起一圈水花。 -->
+                  <span class="quality-knob" aria-hidden="true"></span>
+                  <span class="quality-splash" aria-hidden="true"></span>
                 </div>
                 <div class="quality-ends" aria-hidden="true"><span id="quality-low"></span><span id="quality-high"></span></div>
               </div>
@@ -85,7 +100,7 @@
             <!-- 主按钮是缓存状态的唯一载体：空闲时是动作，下载时是进度条，完成时是结果。
                  暂停是它内部右侧的图标按钮（不能嵌套 <button>，所以与主按钮并排放在同一容器里）。 -->
             <div class="cache-control">
-              <button id="cache-button" class="cache-button" type="button" disabled aria-describedby="action-hint">
+              <button id="cache-button" class="cache-button" type="button" disabled aria-describedby="action-hint" data-state="reading">
                 <span id="button-progress" class="button-progress" aria-hidden="true"></span>
                 <span class="button-content">
                   <span class="button-text">

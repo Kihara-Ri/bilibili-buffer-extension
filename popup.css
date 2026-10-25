@@ -52,6 +52,10 @@
   --gutter: 16px;
   --radius: 8px;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  /* 带一点回弹的缓动：滑杆松手后拇指弹回档位、顶档的瓶子落定都用它。 */
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* 读取中的骨架与按钮上扫过的一道光。 */
+  --shimmer: rgba(255, 255, 255, 0.7);
   --z-popover: 100;
   --z-toast: 200;
   --font: "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", system-ui, sans-serif;
@@ -102,6 +106,7 @@
     --quality-fill: linear-gradient(90deg, rgba(58, 210, 255, 0.3), #3ad2ff);
     --sea: linear-gradient(90deg, #5fd9ff, #1f9fd6 45%, #0f5f9c);
     --sea-foam: rgba(255, 255, 255, 0.3);
+    --shimmer: rgba(255, 255, 255, 0.07);
     --sea-bubble: rgba(255, 255, 255, 0.65);
     --toast-bg: #222a38;
     --toast-ink: #eef1f5;
@@ -299,6 +304,28 @@ svg { flex: none; }
 }
 .current-owner { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* 读取页面时的骨架：形状与「内容切换 + 画质卡片」一致，识别完成后真实控件在同一位置出现，弹窗不跳高度。
+   只看主按钮的 data-state="reading"（初始 HTML 就是它，脚本第一次设状态后就再也不会回来）。 */
+.current-skeleton { display: none; gap: 8px; }
+.current-video:has(.cache-button[data-state="reading"]) .current-skeleton { display: grid; }
+.skeleton-bar { position: relative; display: block; overflow: hidden; border-radius: 999px; background: var(--surface-soft); }
+.skeleton-bar::after, .cache-button[data-state="reading"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 25%, var(--shimmer) 50%, transparent 75%);
+  transform: translateX(-100%);
+  animation: shimmer-sweep 1.6s ease-in-out infinite;
+}
+.skeleton-mode { width: 156px; height: 32px; border-radius: 10px; }
+.skeleton-card { display: grid; justify-items: center; gap: 6px; padding: 10px 14px 24px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface-raised); }
+.skeleton-name { width: 88px; height: 16px; }
+.skeleton-size { width: 52px; height: 10px; }
+.skeleton-track { justify-self: stretch; height: 26px; margin-top: 2px; }
+.skeleton-card .skeleton-bar::after { animation-delay: 120ms; }
+.skeleton-card .skeleton-track::after { animation-delay: 220ms; }
+@keyframes shimmer-sweep { 60%, 100% { transform: translateX(100%); } }
+
 .format-controls { display: grid; gap: 8px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
@@ -355,6 +382,8 @@ svg { flex: none; }
   height: 26px;
   border-radius: 999px;
   background: var(--surface-soft);
+  /* 让拇指层用 cqw 按轨道宽度平移（transform 的百分比只认自身宽度）。 */
+  container-type: inline-size;
 }
 /* 叠放：轨道上的档位点与锁定斜纹在最下，填充盖住已走过的档位点，range 在最上接收拖动。 */
 .quality-fill {
@@ -364,8 +393,8 @@ svg { flex: none; }
   overflow: hidden;
   border-radius: inherit;
   background: var(--quality-fill);
-  clip-path: inset(0 calc(var(--span) * (1 - var(--q-ratio, 1))) 0 0 round 999px);
-  transition: clip-path 220ms var(--ease-out);
+  clip-path: inset(0 calc(var(--span) * (1 - var(--q-pos, 1))) 0 0 round 999px);
+  transition: clip-path 360ms var(--spring);
 }
 .quality-locked {
   position: absolute;
@@ -398,22 +427,52 @@ svg { flex: none; }
   appearance: none;
 }
 .quality-slider::-webkit-slider-runnable-track { height: 100%; background: transparent; }
+/* 原生拇指透明：它只负责命中、键盘与读屏，位置仍按整档吸附（value 是档位序号）。 */
 .quality-slider::-webkit-slider-thumb {
   width: var(--thumb);
   height: var(--thumb);
   margin-top: 2px;
   border: 0;
   border-radius: 50%;
-  background: #ffffff;
-  box-shadow: 0 1px 4px rgba(10, 16, 28, 0.28), 0 0 0 1px rgba(10, 16, 28, 0.06);
-  transition: transform 140ms var(--ease-out);
+  background: transparent;
   -webkit-appearance: none;
   appearance: none;
 }
-.quality-slider:not(:disabled):hover::-webkit-slider-thumb { transform: scale(1.06); }
-.quality-slider:not(:disabled):active::-webkit-slider-thumb { transform: scale(0.96); }
 .quality-slider:focus-visible { outline: none; }
-.quality-slider:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--blue); }
+/* 看得见的拇指。--q-pos 是它的位置（0–1，与档位坐标同一套）：拖动时由脚本按指针连续写入、关掉过渡，
+   于是它跟手而不是一格一格地跳；松手后 --q-pos 回到所选档位，用带回弹的缓动落定。
+   外层只有拇指大小、只做 translateX（距离用 cqw 按轨道宽算；铺满轨道再平移会撑出弹窗的横向滚动），圆钮画在 ::before 上：
+   悬停 / 按住用 transform 缩放，「过档」与「登顶」的弹跳用独立的 scale / rotate 属性，两者叠加互不覆盖。 */
+.quality-knob, .quality-splash {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 0;
+  width: var(--thumb);
+  height: 100%;
+  pointer-events: none;
+  transform: translateX(calc((100cqw - var(--thumb)) * var(--q-pos, 1)));
+  transition: transform 360ms var(--spring);
+}
+.quality-track[data-dragging="true"] :is(.quality-knob, .quality-splash, .quality-fill) { transition: none; }
+.quality-knob::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 0;
+  width: var(--thumb);
+  height: var(--thumb);
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(10, 16, 28, 0.28), 0 0 0 1px rgba(10, 16, 28, 0.06);
+  transition: transform 160ms var(--ease-out), box-shadow 160ms ease;
+}
+.quality-slider:not(:disabled):hover + .quality-knob::before { transform: scale(1.06); }
+.quality-track[data-dragging="true"] .quality-knob::before { transform: scale(1.16); box-shadow: 0 3px 10px rgba(10, 16, 28, 0.3), 0 0 0 1px rgba(10, 16, 28, 0.06); }
+.quality-slider:focus-visible + .quality-knob::before { box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--blue); }
+/* 拖过一个档位时拇指轻轻一跳，像碰到了一格刻度。 */
+.quality-knob.is-tick::before { animation: knob-tick 220ms var(--ease-out); }
+@keyframes knob-tick { 40% { scale: 1.14; } }
 /* 下载中不能换档：整根杆变淡，浪与气泡也停下。 */
 .quality-slider:disabled { cursor: default; }
 .quality-track:has(.quality-slider:disabled) { opacity: 0.6; }
@@ -423,17 +482,19 @@ svg { flex: none; }
 
 /* 顶档 = 漂流瓶漂到了最远处：杆身是一片由浅到深的海，
    ::before 是水面的浪（两层错位的波纹缓缓向右推），::after 是水里往上冒的气泡，拇指里是一只漂流瓶。
-   只切 data-top，节点常驻：轮询刷新不会让动画从头开始（AGENTS 8.1）。两种动画都只动 transform。 */
+   只切 data-top，节点常驻：轮询刷新不会让动画从头开始（AGENTS 8.1）。两种动画都只动 transform。
+   无缝循环：一圈平移的距离（40px）必须同时是两层波纹花纹宽度（40px、20px）的整数倍，气泡同理（26px），
+   否则每圈结束时花纹会「跳」一下，看起来像动画被截断。 */
 .quality-row[data-top="true"] .quality-fill { background: var(--sea); }
 .quality-row[data-top="true"] .quality-fill::before {
   --swell: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 26'%3E%3Cpath fill='%23fff' d='M0 9Q10 4 20 9T40 9V0H0Z'/%3E%3C/svg%3E");
-  --ripple: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 26'%3E%3Cpath fill='%23fff' d='M0 6Q7 9 14 6T28 6V0H0Z'/%3E%3C/svg%3E");
+  --ripple: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 26'%3E%3Cpath fill='%23fff' d='M0 6Q5 9 10 6T20 6V0H0Z'/%3E%3C/svg%3E");
   content: "";
   position: absolute;
   inset: 0 0 0 -40px;
   background: var(--sea-foam);
-  -webkit-mask: var(--swell) 0 0 / 40px 26px repeat-x, var(--ripple) 0 4px / 28px 26px repeat-x;
-  mask: var(--swell) 0 0 / 40px 26px repeat-x, var(--ripple) 0 4px / 28px 26px repeat-x;
+  -webkit-mask: var(--swell) 0 0 / 40px 26px repeat-x, var(--ripple) 0 4px / 20px 26px repeat-x;
+  mask: var(--swell) 0 0 / 40px 26px repeat-x, var(--ripple) 0 4px / 20px 26px repeat-x;
   animation: quality-tide 3.2s linear infinite;
 }
 .quality-row[data-top="true"] .quality-fill::after {
@@ -456,13 +517,65 @@ svg { flex: none; }
   color: transparent;
 }
 /* 拇指里的漂流瓶：与工具栏图标同一个倾斜瓶身（线稿版），白色圆钮不变，深浅色下都清晰。 */
-.quality-row[data-top="true"] .quality-slider::-webkit-slider-thumb {
+.quality-row[data-top="true"] .quality-knob::before {
   background: #ffffff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg transform='translate(16 16.5) rotate(38) scale(0.9) translate(-16 -16)' fill='none' stroke='%231587c6' stroke-width='2.2' stroke-linejoin='round'%3E%3Cpath d='M13 6.5V8.5Q13 10 11.5 11Q7.5 13 7.5 17.5V26Q7.5 30 11.5 30H20.5Q24.5 30 24.5 26V17.5Q24.5 13 20.5 11Q19 10 19 8.5V6.5'/%3E%3Crect x='11.5' y='2' width='9' height='4.5' rx='1.5' fill='%23E9A15B' stroke='none'/%3E%3Cpath d='M8 21Q12 19 16 21T24 21'/%3E%3C/g%3E%3C/svg%3E") center / 14px no-repeat;
 }
 .quality-track:has(.quality-slider:disabled) .quality-fill::before,
 .quality-track:has(.quality-slider:disabled) .quality-fill::after { animation-play-state: paused; }
 @keyframes quality-tide { to { transform: translateX(40px); } }
 @keyframes quality-bubbles { to { transform: translateY(-26px); } }
+
+/* 登顶：从次高档升到最高档的那一下（只在用户操作时，脚本加 .is-surging，约 0.8 秒后摘掉）。
+   一道白浪头从左到右扫过整片海、海面闪亮一下，漂流瓶被托起来猛弹一下再落定，脚下溅开一圈水花和水滴，
+   画质名字跟着一跳，整张卡片外沿荡开一圈海蓝的光。全部是一次性动画，只动 transform / opacity / filter。 */
+.quality-surge {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.55) 46%, rgba(255, 255, 255, 0.95) 52%, transparent 66%);
+  opacity: 0;
+  transform: translateX(-100%);
+}
+.quality-splash::before, .quality-splash::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 0;
+  width: var(--thumb);
+  height: var(--thumb);
+  border-radius: 50%;
+  opacity: 0;
+}
+.quality-splash::before { border: 2px solid #2bb3e6; }
+.quality-splash::after {
+  background:
+    radial-gradient(circle at 50% 4%, #2bb3e6 0 1.6px, transparent 2px),
+    radial-gradient(circle at 92% 30%, #8fe3ff 0 1.4px, transparent 1.8px),
+    radial-gradient(circle at 88% 82%, #2bb3e6 0 1.2px, transparent 1.6px),
+    radial-gradient(circle at 12% 80%, #8fe3ff 0 1.4px, transparent 1.8px),
+    radial-gradient(circle at 6% 28%, #2bb3e6 0 1.2px, transparent 1.6px);
+}
+.quality-row.is-surging { animation: surge-glow 820ms ease-out; }
+.quality-row.is-surging .quality-name { animation: surge-name 560ms var(--spring); }
+.quality-row.is-surging .quality-track { animation: surge-thump 420ms var(--ease-out); }
+.quality-row.is-surging .quality-fill { animation: surge-flash 760ms ease-out; }
+.quality-row.is-surging .quality-surge { animation: surge-sweep 680ms cubic-bezier(0.2, 0.7, 0.3, 1); }
+.quality-row.is-surging .quality-knob::before { animation: surge-bottle 720ms var(--ease-out); }
+.quality-row.is-surging .quality-splash::before { animation: surge-ring 640ms ease-out 90ms; }
+.quality-row.is-surging .quality-splash::after { animation: surge-drops 700ms ease-out 90ms; }
+@keyframes surge-glow { 0% { box-shadow: 0 0 0 0 rgba(43, 179, 230, 0.5); } 100% { box-shadow: 0 0 0 12px rgba(43, 179, 230, 0); } }
+@keyframes surge-name { 0% { scale: 0.86; } 45% { scale: 1.18; } 100% { scale: 1; } }
+@keyframes surge-thump { 30% { translate: 0 2px; } 60% { translate: 0 -1.5px; } 100% { translate: 0 0; } }
+@keyframes surge-flash { 0% { filter: brightness(1.45) saturate(1.2); } 100% { filter: none; } }
+@keyframes surge-sweep { 0% { opacity: 1; transform: translateX(-100%); } 100% { opacity: 0.2; transform: translateX(100%); } }
+@keyframes surge-bottle {
+  0% { scale: 1; rotate: 0deg; }
+  28% { scale: 1.6; rotate: -22deg; }
+  52% { scale: 0.86; rotate: 12deg; }
+  74% { scale: 1.12; rotate: -5deg; }
+  100% { scale: 1; rotate: 0deg; }
+}
+@keyframes surge-ring { 0% { opacity: 0.9; scale: 0.7; } 100% { opacity: 0; scale: 2.8; } }
+@keyframes surge-drops { 0% { opacity: 1; scale: 0.6; } 70% { opacity: 0.9; } 100% { opacity: 0; scale: 2.4; } }
 
 /* 账号说明：画质下方一行小字，未登录时右侧是「去登录」。 */
 .auth-note { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; margin-top: -2px; padding: 0 2px; color: var(--ink-soft); font-size: 12px; line-height: 1.4; }
@@ -534,7 +647,11 @@ svg { flex: none; }
 }
 .cache-button:is([data-state="paused"], [data-state="error"]) .button-progress::after { animation-play-state: paused; }
 @keyframes progress-tide { to { transform: translateY(18px); } }
-.cache-button:is([data-state="idle"], [data-state="complete"], [data-state="disabled"]) .button-progress { opacity: 0; }
+.cache-button:is([data-state="idle"], [data-state="complete"], [data-state="disabled"], [data-state="reading"]) .button-progress { opacity: 0; }
+/* 读取页面：不是进度（没有水波），只是一道光从左到右扫过，漂流瓶在文字前轻轻摇晃，表示「正在找」。 */
+.cache-button[data-state="reading"] { background: var(--surface-soft); color: var(--ink-soft); box-shadow: none; cursor: progress; }
+.cache-button[data-state="reading"] .button-glyph { display: block; transform-origin: 50% 70%; animation: glyph-bob 1.8s ease-in-out infinite; }
+@keyframes glyph-bob { 0%, 100% { transform: translateY(0) rotate(-8deg); } 50% { transform: translateY(-2px) rotate(8deg); } }
 .button-content {
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;
@@ -930,5 +1047,9 @@ svg { flex: none; }
   }
   .download-arrow { animation: none !important; }
   /* 无限循环的水波、画质顶档的浪与气泡在全局 0.01ms 时长下会变成高频闪烁，必须直接停掉（渐变保留，只是不动）。 */
-  .button-progress::after, .quality-fill::before, .quality-fill::after { animation: none !important; }
+  .button-progress::after, .quality-fill::before, .quality-fill::after,
+  .skeleton-bar::after, .cache-button[data-state="reading"]::after, .cache-button[data-state="reading"] .button-glyph { animation: none !important; }
+  /* 登顶与过档的弹跳、水花在减少动态时整组不播，只保留顶档的配色。 */
+  .quality-row.is-surging, .quality-row.is-surging *, .quality-row.is-surging *::before, .quality-row.is-surging *::after, .quality-knob.is-tick::before { animation: none !important; }
+  .quality-knob, .quality-splash, .quality-fill { transition: none !important; }
 }

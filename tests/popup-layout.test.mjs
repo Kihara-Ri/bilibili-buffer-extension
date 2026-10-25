@@ -46,6 +46,12 @@ test("当前视频：内容二选一、画质是一根滑杆（无下拉）、�
   assert.match(quality, /<input[^>]*id="quality-slider"[^>]*type="range"/);
   assert.match(quality, /id="quality-slider"[^>]*aria-labelledby="quality-label"/);
   assert.doesNotMatch(html, /quality-options|aria-haspopup|popovertarget|\bpopover\b|<select/);
+  // 看得见的拇指与登顶水花是装饰层，放在 range 之后（CSS 用相邻选择器把悬停 / 焦点状态传给拇指）。
+  assert.match(quality, /id="quality-slider"[^>]*>\s*(?:<!--[\s\S]*?-->\s*)?<span class="quality-knob" aria-hidden="true"><\/span>\s*<span class="quality-splash" aria-hidden="true"><\/span>/);
+  assert.match(quality, /<span class="quality-fill" aria-hidden="true"><span class="quality-surge"><\/span><\/span>/);
+  // 读取页面：初始就是 reading 态（没有进度水波），骨架占位是纯装饰。
+  assert.match(html, /<button id="cache-button"[^>]*data-state="reading"/);
+  assert.match(html, /<div class="current-skeleton" aria-hidden="true">/);
   assert.match(html, /id="audio-summary"/);
   const modeRow = between('class="mode-row"', "</div>\n\n");
   assert.match(modeRow, /id="cache-mode"/);

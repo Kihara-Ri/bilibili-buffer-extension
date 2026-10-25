@@ -65,6 +65,7 @@ const elements = {
   qualityLocked: $("#quality-locked"),
   qualityStops: $("#quality-stops"),
   qualitySlider: $("#quality-slider"),
+  qualityKnob: $("#quality-track .quality-knob"),
   qualityLow: $("#quality-low"),
   qualityHigh: $("#quality-high"),
   audioRow: $("#audio-row"),
@@ -137,6 +138,13 @@ const state = {
   qualityStopsSignature: "",
   // 滑杆的档位（从低到高）：open 可选，locked 是当前账号拿不到、画成杆尾斜纹的更高档位。
   qualityStops: { open: [], locked: [] },
+  // 滑杆几何：可选段最右档的位置（0–1）与当前所选档位的位置，供拖动换算与松手落定。
+  qualityReach: 1,
+  qualityRatio: 1,
+  // 只有用户拖动 / 按键换档时为 true：轮询刷新或首次渲染进入顶档不播「登顶」动画。
+  qualityInteractive: false,
+  qualityDragPointer: null,
+  qualitySurgeTimer: 0,
   assistConfig: null,
   assistStats: null,
   assistReadSequence: 0,
@@ -181,6 +189,10 @@ elements.cacheMode.addEventListener("keydown", navigateCacheModes);
 // 拖动 / 方向键时 input 连续触发，只更新界面；松手或按键结束（change）才把选择存回后台。
 elements.qualitySlider.addEventListener("input", selectQualityFromSlider);
 elements.qualitySlider.addEventListener("change", persistQualitySelection);
+// 跟手：按住期间看得见的拇指按指针连续移动，松手后弹回所选档位（原生 range 照常按整档改 value）。
+elements.qualitySlider.addEventListener("pointerdown", startQualityDrag);
+elements.qualitySlider.addEventListener("pointermove", followQualityDrag);
+for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) elements.qualitySlider.addEventListener(type, endQualityDrag);
 elements.authAction.addEventListener("click", () => chrome.tabs.create({ url: BILIBILI_LOGIN_URL }));
 elements.assistDetailsToggle.addEventListener("click", () => {
   const open = elements.assistDetailsToggle.getAttribute("aria-expanded") !== "true";
@@ -698,6 +710,7 @@ function renderQualitySlider(options, cached, placeholder) {
     setText(elements.qualityHigh, count ? short[count - 1] : "");
     elements.qualityHigh.dataset.locked = String(stops.locked.length > 0);
     const reach = stops.open.length > 1 ? at(stops.open.length - 1) : 0;
+    state.qualityReach = reach;
     const track = elements.qualityTrack.style;
     track.setProperty("--q-reach", String(reach));
     // 只有一个档位时拇指停在最右（它就是最高），range 本身只有拇指宽。
@@ -724,11 +737,65 @@ function renderQualitySlider(options, cached, placeholder) {
   if (slider.value !== String(index)) slider.value = String(index);
   slider.disabled = cached?.status === "downloading";
   setAttr(slider, "aria-valuetext", [selected.label, size].filter(Boolean).join(t("sep.comma")));
-  elements.qualityTrack.style.setProperty("--q-ratio", String(stops.open.length === 1 ? at(count - 1) : at(index)));
+  state.qualityRatio = stops.open.length === 1 ? at(count - 1) : at(index);
+  // 拖动中拇指跟着指针走，不能被这里写回档位；松手时 endQualityDrag 再落定。
+  if (state.qualityDragPointer === null) elements.qualityTrack.style.setProperty("--q-pos", String(state.qualityRatio));
   // 顶档：选中的是整根杆的最右一档（上面没有被锁的档位）时，杆身变成有浪和气泡的海、拇指里是漂流瓶。
   // 未登录或非大会员时可选最高档上面还有锁定段，不算顶档：这层效果留给真正的最高画质。
   const top = String(index === stops.open.length - 1 && !stops.locked.length);
-  if (row.dataset.top !== top) row.dataset.top = top;
+  if (row.dataset.top !== top) {
+    row.dataset.top = top;
+    if (top === "true" && state.qualityInteractive) surgeQualityRow();
+  }
+}
+
+/** 登顶反馈：重新挂上 .is-surging 让一次性动画从头播放（popup.css「登顶」一节），播完摘掉。 */
+function surgeQualityRow() {
+  const row = elements.qualityRow;
+  row.classList.remove("is-surging");
+  void row.offsetWidth; // 强制样式重算，同一帧内摘了又挂上也能重新开始动画
+  row.classList.add("is-surging");
+  clearTimeout(state.qualitySurgeTimer);
+  state.qualitySurgeTimer = setTimeout(() => row.classList.remove("is-surging"), 900);
+}
+
+/** 过档反馈：拇指轻轻一跳。 */
+function tickQualityKnob() {
+  const knob = elements.qualityKnob;
+  knob.classList.remove("is-tick");
+  void knob.offsetWidth;
+  knob.classList.add("is-tick");
+}
+
+/** 指针横坐标 → 拇指位置（0–1），夹在可选段之内：锁定段拖不进去，拇指也不越过去。 */
+function qualityRatioAt(clientX) {
+  const box = elements.qualityTrack.getBoundingClientRect();
+  const thumb = parseFloat(getComputedStyle(elements.qualityTrack).getPropertyValue("--thumb")) || 22;
+  const span = box.width - thumb;
+  if (span <= 0) return state.qualityRatio;
+  return Math.min(state.qualityReach, Math.max(0, (clientX - box.left - thumb / 2) / span));
+}
+
+function startQualityDrag(event) {
+  if (elements.qualitySlider.disabled || state.qualityStops.open.length < 2) return;
+  state.qualityDragPointer = event.pointerId;
+  // 捕获指针：拖出杆外（尤其拖向锁定段或弹窗边缘）时仍能收到移动与松开。
+  elements.qualitySlider.setPointerCapture?.(event.pointerId);
+  elements.qualityTrack.dataset.dragging = "true";
+  followQualityDrag(event);
+}
+
+function followQualityDrag(event) {
+  if (event.pointerId !== state.qualityDragPointer) return;
+  elements.qualityTrack.style.setProperty("--q-pos", qualityRatioAt(event.clientX).toFixed(4));
+}
+
+function endQualityDrag(event) {
+  if (event.pointerId !== state.qualityDragPointer) return;
+  state.qualityDragPointer = null;
+  delete elements.qualityTrack.dataset.dragging;
+  // 去掉拖动态后过渡恢复，拇指与填充用回弹缓动落到所选档位。
+  elements.qualityTrack.style.setProperty("--q-pos", String(state.qualityRatio));
 }
 
 /** 对比 B 站声明的档位与当前账号实际返回的轨道，作为滑杆与账号说明的悬停提示，让「是不是最高规格」有答案。 */
@@ -746,7 +813,13 @@ function selectQualityFromSlider() {
   if (!quality || quality === state.selectedQuality) return;
   state.selectedQuality = quality;
   state.selectedCodec = "auto";
-  renderCurrent();
+  state.qualityInteractive = true;
+  try {
+    renderCurrent();
+  } finally {
+    state.qualityInteractive = false;
+  }
+  if (!elements.qualityRow.classList.contains("is-surging") || elements.qualityRow.dataset.top !== "true") tickQualityKnob();
 }
 
 function persistQualitySelection() {

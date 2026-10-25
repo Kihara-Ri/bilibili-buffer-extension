@@ -272,6 +272,50 @@ try {
     return stops.map((stop,index)=>{const s=stop.getBoundingClientRect();const thumb=r.left+11+(r.width-22)*index/max;return Math.abs(s.left+s.width/2-thumb);});});
   assert(thumbAligned.every(delta=>delta<1),'拇指位置与档位点错位：'+JSON.stringify(thumbAligned));
   await page.locator('.quality-row').screenshot({path:path.join(shots,'quality-top.png')});
+  // 进入顶档本身（首次渲染、轮询刷新）不能播「登顶」：只有用户拖动或按键升上来才播。
+  assert.equal(await page.evaluate(()=>document.querySelector('#quality-row').classList.contains('is-surging')),false,'首次渲染不应播登顶动画');
+  // 浪与气泡必须无缝循环：把动画定格在一圈的开头与末尾，两帧像素完全一致（花纹宽度整除平移距离）。
+  const tideFrame=async(fraction)=>{await page.evaluate(f=>{for(const a of document.querySelector('.quality-fill').getAnimations({subtree:true})){a.pause();a.currentTime=a.effect.getTiming().duration*f;}},fraction);return page.locator('.quality-fill').screenshot();};
+  const tideStart=await tideFrame(0), tideEnd=await tideFrame(0.99999);
+  await page.evaluate(()=>{for(const a of document.querySelector('.quality-fill').getAnimations({subtree:true}))a.play();});
+  assert(Buffer.compare(tideStart,tideEnd)===0,'顶档的浪或气泡每圈结尾会跳一下（循环不连续）');
+  // 拖动手感：从 1080P60 按住往左拖，看得见的拇指连续跟手（--q-pos 不是档位的整格值），值仍按整档吸附；
+  // 拖过一档时拇指跳一下；松手后拇指弹回所选档位并与档位点重合。
+  await page.locator('#quality-slider').focus();
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForTimeout(450);
+  const trackBox=await page.locator('#quality-track').boundingBox();
+  const trackX=ratio=>trackBox.x+11+(trackBox.width-22)*ratio;
+  await page.mouse.move(trackX(2/3),trackBox.y+13); await page.mouse.down();
+  const dragged=[];
+  for(let i=1;i<=8;i+=1){await page.mouse.move(trackX(2/3-0.3*i/8),trackBox.y+13);dragged.push(await page.evaluate(()=>({pos:Number(document.querySelector('#quality-track').style.getPropertyValue('--q-pos')),value:document.querySelector('#quality-slider').value,dragging:document.querySelector('#quality-track').dataset.dragging,tick:document.querySelector('.quality-knob').classList.contains('is-tick')})));}
+  assert(dragged.every(item=>item.dragging==='true'),'按住时应处于拖动态 '+JSON.stringify(dragged));
+  assert(dragged.every((item,index)=>index===0||item.pos<dragged[index-1].pos),'拖动时拇指应连续跟手 '+JSON.stringify(dragged));
+  assert(dragged.some(item=>Math.abs(item.pos*3-Math.round(item.pos*3))>0.05),'拖动时拇指不应一格一格跳 '+JSON.stringify(dragged));
+  assert(dragged.some(item=>item.value==='1')&&dragged.some(item=>item.tick),'拖过档位时值应吸附并有过档反馈 '+JSON.stringify(dragged));
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  const settled=await page.evaluate(()=>{const track=document.querySelector('#quality-track'),knob=document.querySelector('.quality-knob'),stops=[...document.querySelectorAll('.quality-stop')],value=Number(document.querySelector('#quality-slider').value);
+    const k=knob.getBoundingClientRect(),s=stops[value].getBoundingClientRect();return {value,dragging:track.dataset.dragging??null,pos:track.style.getPropertyValue('--q-pos'),delta:Math.abs(k.left+11-(s.left+s.width/2))};});
+  assert(settled.dragging===null&&settled.delta<1,'松手后拇指应落回档位点 '+JSON.stringify(settled));
+  // 登顶：从次高档拖到最高档，整组一次性动画（浪头扫过、瓶子弹起、水花、名字一跳、卡片外沿一圈光）开始播放；
+  // 0.9 秒后摘掉；之后的轮询刷新不会再触发。
+  await page.keyboard.press('End'); await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(450);
+  await page.mouse.move(trackX(2/3),trackBox.y+13); await page.mouse.down();
+  for(let i=1;i<=6;i+=1) await page.mouse.move(trackX(2/3+0.36*i/6),trackBox.y+13);
+  const surge=await page.evaluate(()=>{const row=document.querySelector('#quality-row');const names=row.getAnimations({subtree:true}).map(a=>a.animationName);
+    return {top:row.dataset.top,surging:row.classList.contains('is-surging'),names,pos:Number(document.querySelector('#quality-track').style.getPropertyValue('--q-pos'))};});
+  assert(surge.top==='true'&&surge.surging,'升到顶档应播登顶动画 '+JSON.stringify(surge));
+  for(const name of ['surge-sweep','surge-bottle','surge-ring','surge-drops','surge-name','surge-glow']) assert(surge.names.includes(name),`登顶缺少 ${name}：`+JSON.stringify(surge.names));
+  assert(surge.pos<=1,'拖过最右也不能越出杆身 '+JSON.stringify(surge));
+  await page.locator('.quality-row').screenshot({path:path.join(shots,'quality-surge.png')});
+  await page.mouse.up();
+  await page.waitForTimeout(2400);
+  assert.equal(await page.evaluate(()=>document.querySelector('#quality-row').classList.contains('is-surging')),false,'登顶动画播完应摘掉，轮询不应再触发');
+  // 键盘升到顶档同样有反馈。
+  await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowRight');
+  assert.equal(await page.evaluate(()=>document.querySelector('#quality-row').classList.contains('is-surging')),true,'键盘升到顶档也应有登顶反馈');
+  await page.waitForTimeout(1000);
   // 键盘：方向键逐档移动，离开顶档后海与漂流瓶消失；End 回到最高档，效果恢复。
   await page.locator('#quality-slider').focus();
   await page.keyboard.press('ArrowLeft');
@@ -282,6 +326,23 @@ try {
   // 减少动态效果：顶档仍是海的配色，但浪与气泡都静止。
   await page.emulateMedia({reducedMotion:'reduce'});
   assert.deepEqual(await page.evaluate(()=>[getComputedStyle(document.querySelector('.quality-fill'),'::before').animationName,getComputedStyle(document.querySelector('.quality-fill'),'::after').animationName]),['none','none'],'减少动态效果时浪与气泡应静止');
+  await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowRight');
+  assert.deepEqual(await page.evaluate(()=>document.querySelector('#quality-row').getAnimations({subtree:true}).filter(a=>a.playState==='running').map(a=>a.animationName)),[],'减少动态效果时登顶不应有任何动画');
+  await page.emulateMedia({reducedMotion:'no-preference'});
+  // 读取页面：脚本还没拿到页面信息时（初始 HTML 的 data-state="reading"），按钮上没有水波，
+  // 显示骨架占位与扫过的光，漂流瓶在摇；拿到信息后骨架消失。
+  {
+    const reading=await browser.newPage({viewport:{width:360,height:600}});
+    await reading.route('**/src/popup.js',route=>route.fulfill({body:'',contentType:'text/javascript'}));
+    await reading.goto(origin + '/popup.html');
+    const look=await reading.evaluate(()=>{const button=document.querySelector('#cache-button');return {state:button.dataset.state,wave:getComputedStyle(document.querySelector('.button-progress')).opacity,
+      skeleton:getComputedStyle(document.querySelector('.current-skeleton')).display,glyph:getComputedStyle(document.querySelector('.button-glyph')).animationName,
+      sweep:getComputedStyle(button,'::after').animationName,bars:[...document.querySelectorAll('.skeleton-bar')].every(bar=>getComputedStyle(bar,'::after').animationName==='shimmer-sweep')};});
+    assert.deepEqual(look,{state:'reading',wave:'0',skeleton:'grid',glyph:'glyph-bob',sweep:'shimmer-sweep',bars:true},'读取页面的样子不对');
+    await reading.screenshot({path:path.join(shots,'reading.png')});
+    await reading.close();
+    assert.equal(await page.evaluate(()=>getComputedStyle(document.querySelector('.current-skeleton')).display),'none','识别完成后骨架应消失');
+  }
   // 未登录：B 站只返回 720P / 1080P，1080P+ / 1080P60 / 4K 是杆尾的锁定段；拖不进去，也不算顶档。
   await page.goto(origin + '/store/scene/popup-scene.html?auth=signedout');
   await page.waitForFunction(()=>globalThis.__storeScene&&document.querySelector('#quality-row').dataset.empty==='false');
