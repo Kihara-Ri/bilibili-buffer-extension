@@ -1,6 +1,6 @@
 # 下载工作内存与背压
 
-> 适用版本：v2.14.2 · 最后核对：2026-10-25
+> 适用版本：v2.14.3 · 最后核对：2026-10-25
 > 对应实现：`src/playback-network.js`、`src/playback-cache.js`、`src/range-downloader.js` 的 `downloadByteRanges`。
 
 本文列出插件自己的工作缓冲在各环节的字节上限。
