@@ -1,6 +1,6 @@
 # 完整缓存（离线片库）
 
-> 适用版本：v2.14.1 · 最后核对：2026-10-25
+> 适用版本：v2.14.2 · 最后核对：2026-10-25
 > 对应实现：`src/background.js`（识别与取地址）、`src/offscreen.js`（下载、合并、本地播放）、
 > `src/range-downloader.js`、`src/download-retry.js`、`src/db.js`、`src/mp4-merge.js`、
 > `src/media-selection.js`、`src/utils.js`、`src/content.js`。
@@ -132,9 +132,11 @@
 | 音频轨并发（与视频并行时） | 2 | `offscreen.js` 的 `trackConcurrency` |
 | 每轨乱序窗口 | 16 MiB（含在途、乱序完成、待提交） | `downloadByteRanges` 的 `maxBufferedBytes` |
 | 停滞超时 | 首字节或正文连续 20 秒没有新字节 | `DEFAULT_RANGE_TIMEOUT` |
+| 队头对冲 | 队头分块在途 ≥ max(2 秒, 正常分块耗时中位数 × 3) 时重复请求一次；同时至多 2 路 | `DEFAULT_HEDGE_AFTER_MS`、`MAX_HEDGES_IN_FLIGHT` |
 | 每块最多尝试 | 6 次 | `DEFAULT_RANGE_ATTEMPTS` |
 
 - **只按停滞判超时，不设总时长**：海外单连接常只有几十 KB/s，2 MiB 正常也可能要一分钟。
+- **队头对冲**：分块只能按序落盘，最前面那块卡在一条「涓流但不停滞」的连接上时，后面的块下完也只能在窗口里干等：界面速度还在跳、百分比不动，停滞超时又永远不触发（真实 B 站 1 小时视频复现过 12 秒零落盘、0.17 MB/s）。现在空闲工作者不再干等，而是对队头分块再发一次请求，优先换到另一个节点，只有一个节点时用同一地址的新连接；先拿到完整正文的一方胜出，另一方立即取消并回滚已收字节，也会被记一次失败，参与后续节点排序。对冲次数记在 `hedgeCount` / `hedgeWins`。
 - **分块内消化故障**：每次尝试前按实时成绩重排候选，失败多的地址排后；有别的地址就立刻换，只剩同一地址时按 1 → 2 → 4 → 8 秒退避。
 - **403** 表示这个签名地址被拒，从本块候选中剔除；所有地址都被拒才向上抛，由任务刷新播放地址。
 
@@ -269,7 +271,7 @@ stateDiagram-v2
 
 | 覆盖 | 位置 |
 | --- | --- |
-| 分块、校验、停滞、退避、403 剔除 | `tests/range-downloader.test.mjs` |
+| 分块、校验、停滞、退避、403 剔除、队头对冲 | `tests/range-downloader.test.mjs` |
 | 可恢复错误分类、看门狗间隔 | `tests/download-retry.test.mjs` |
 | 确认水位不提前发布 | `tests/download-watermark.test.mjs` |
 | 乱序窗口与背压 | `tests/download-memory.test.mjs` |

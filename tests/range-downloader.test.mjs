@@ -354,3 +354,75 @@ test("所有地址都返回 403（签名失效）时立即交还上层刷新地�
   }), /HTTP 403/);
   assert.deepEqual(calls, ["https://a.example/video", "https://b.example/video"]);
 });
+
+// 队头阻塞：分块只能按序落盘，最前面那块碰上「涓流但不停滞」的连接时，后面的块下完也只能在窗口里干等，
+// 总速度跌到那条慢连接的水平、进度不动，而停滞超时永远不触发（真实 B 站 1 小时视频复现：12 秒零落盘、0.17 MB/s）。
+test("队头分块拖慢整个窗口时，空闲连接向备用节点对冲请求，先完成的一方胜出", async () => {
+  const data = Uint8Array.from({ length: 64 }, (_, index) => index);
+  const calls = [];
+  let received = 0;
+  const startedAt = performance.now();
+  const result = await downloadByteRanges({
+    urls: ["https://primary.example/video", "https://backup.example/video"],
+    start: 0, totalBytes: data.length, rangeSize: 8, concurrency: 2, maxBufferedBytes: 16,
+    hedgeAfterMs: 40, timeoutMs: 5_000,
+    fetchImpl: async (url, init) => {
+      const [, start, end] = init.headers.Range.match(/bytes=(\d+)-(\d+)/).map(Number);
+      calls.push([new URL(url).hostname, start]);
+      // 主节点上的首块：每 60 ms 才来一小片，整块要 3 秒，但从不停滞。
+      if (start === 0 && url.includes("primary") && calls.filter(([, s]) => s === 0).length === 1) return trickleResponse(data, start, end, 60, init.signal, 50);
+      return rangeResponse(data, start, end);
+    },
+    onReceive: (delta) => { received += delta; },
+    onCommit: async () => {}
+  });
+  assert.ok(performance.now() - startedAt < 1_000, "对冲后不应再等涓流连接把首块传完");
+  assert.equal(result.metrics.committedBytes, data.length);
+  assert.ok(result.metrics.hedgeCount >= 1);
+  assert.ok(result.metrics.hedgeWins >= 1);
+  assert.ok(calls.some(([host, start]) => host === "backup.example" && start === 0), "对冲应优先换到另一个节点");
+  assert.equal(received, data.length, "败方已收字节必须回滚，不能重复计入");
+});
+
+test("只有一个节点时对冲改用新连接，败方被取消且字节不重复计入", async () => {
+  const data = Uint8Array.from({ length: 32 }, (_, index) => index);
+  let firstHead = true, aborted = 0, received = 0;
+  const committed = [];
+  const result = await downloadByteRanges({
+    urls: ["https://cdn.example/video"], start: 0, totalBytes: data.length, rangeSize: 8, concurrency: 2, maxBufferedBytes: 16,
+    hedgeAfterMs: 40, timeoutMs: 5_000,
+    fetchImpl: async (_url, init) => {
+      const [, start, end] = init.headers.Range.match(/bytes=(\d+)-(\d+)/).map(Number);
+      if (start === 0 && firstHead) {
+        firstHead = false;
+        init.signal.addEventListener("abort", () => { aborted += 1; }, { once: true });
+        return trickleResponse(data, start, end, 60, init.signal, 50);
+      }
+      return rangeResponse(data, start, end);
+    },
+    onReceive: (delta) => { received += delta; },
+    onCommit: async (batch) => { committed.push(...batch.map((entry) => entry.range.ordinal)); }
+  });
+  assert.equal(result.metrics.committedBytes, data.length);
+  assert.deepEqual(committed, [0, 1, 2, 3]);
+  assert.equal(aborted, 1, "胜负已分后必须取消涓流连接");
+  assert.equal(received, data.length);
+});
+
+test("正常速度的分块不触发对冲", async () => {
+  const data = Uint8Array.from({ length: 64 }, (_, index) => index);
+  let requests = 0;
+  const result = await downloadByteRanges({
+    urls: ["https://a.example/video", "https://b.example/video"], start: 0, totalBytes: data.length, rangeSize: 8, concurrency: 2, maxBufferedBytes: 16,
+    hedgeAfterMs: 200,
+    fetchImpl: async (_url, init) => {
+      requests += 1;
+      const [, start, end] = init.headers.Range.match(/bytes=(\d+)-(\d+)/).map(Number);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return rangeResponse(data, start, end);
+    },
+    onCommit: async () => {}
+  });
+  assert.equal(result.metrics.hedgeCount, 0);
+  assert.equal(requests, 8);
+});

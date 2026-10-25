@@ -12,6 +12,12 @@ export const DEFAULT_RANGE_TIMEOUT = 20_000;
 // 单个分块的尝试次数：有别的地址就立刻换，同一地址重试按 1→8 秒退避。
 export const DEFAULT_RANGE_ATTEMPTS = 6;
 const DEFAULT_RETRY_BASE_MS = 1_000;
+// 队头对冲：分块只能按序落盘，最前面那块卡在一条「涓流但不停滞」的连接上时，后面的块下完也只能在窗口里干等，
+// 停滞超时又永远不触发。空闲工作者等了这么久（且不短于正常分块耗时的 3 倍）就对队头分块再发一次请求，
+// 先拿到完整正文的一方胜出。同时在跑的对冲至多两路，额外内存至多 2 × 分块大小。
+export const DEFAULT_HEDGE_AFTER_MS = 2_000;
+const MAX_HEDGES_IN_FLIGHT = 2;
+const HEDGE_LOST = new DOMException("对冲中另一方已完成", "AbortError");
 
 export function buildByteRanges(start, totalBytes, rangeSize = DEFAULT_RANGE_SIZE) {
   const first = Math.max(0, Math.floor(Number(start) || 0));
@@ -98,6 +104,8 @@ export async function downloadByteRanges(options) {
     retryCount: 0,
     slowRequestCount: 0,
     cdnSwitchCount: 0,
+    hedgeCount: 0,
+    hedgeWins: 0,
     networkBytes: 0,
     committedBytes: 0,
     rangeCount,
@@ -119,14 +127,50 @@ export async function downloadByteRanges(options) {
   const wake=()=>{for(const resolve of waiters)resolve();waiters.clear();};
   const cancel=()=>{controller.abort(options.signal.reason);wake();};
   options.signal?.addEventListener('abort',cancel,{once:true});if(options.signal?.aborted)cancel();
-  async function takeRange(){
+  // 在途分块：ordinal → 槽位。槽位在胜出的一次尝试拿到完整正文时移除（随后才排队落盘）。
+  const slots = new Map();
+  const hedgeAfterMs = Math.max(1, Number(options.hedgeAfterMs) || DEFAULT_HEDGE_AFTER_MS);
+  const durations = [];
+  let hedgesInFlight = 0;
+  // 对冲门槛随实测分块耗时自适应：正常分块本来就要 5 秒的慢链路上，不能 2 秒就重复请求。
+  const hedgeThreshold = () => Math.max(hedgeAfterMs, 3 * (percentile(durations, 0.5) || 0));
+  /** 队头（最小序号）的在途分块，等得够久且当前没有对冲在跑时才可对冲。 @returns {object|null} */
+  const hedgeCandidate = () => {
+    if (hedgesInFlight >= MAX_HEDGES_IN_FLIGHT || !slots.size) return null;
+    const head = slots.get(Math.min(...slots.keys()));
+    if (!head || head.liveHedge) return null;
+    return now() - (head.lastHedgeAt || head.startedAt) >= hedgeThreshold() ? head : null;
+  };
+  /** 下次可能出现对冲时机的等待毫秒数；没有在途分块时返回 0（只等唤醒）。 */
+  const nextHedgeCheck = () => {
+    if (!slots.size) return 0;
+    const head = slots.get(Math.min(...slots.keys()));
+    return Math.max(10, (head.lastHedgeAt || head.startedAt) + hedgeThreshold() - now());
+  };
+  /**
+   * 取下一份工作：优先领新分块；窗口已满或分块已领完时，不再空等，而是检查队头是否需要对冲。
+   * @returns {Promise<{ordinal:number, hedge:boolean}|null>} null 表示没有新分块、也没有在途分块，工作者退出
+   */
+  async function takeWork(){
     for(;;){
       if(controller.signal.aborted)throw controller.signal.reason;
-      if(nextRange>=rangeCount)return -1;
-      const range=rangeAt(nextRange),size=range.end-range.start+1;
-      // 只有事务成功后才释放字节；慢首块与慢磁盘都会对后续请求产生背压。
-      if(bufferedBytes+size<=maxBufferedBytes){bufferedBytes+=size;metrics.peakBufferedBytes=Math.max(metrics.peakBufferedBytes,bufferedBytes);return nextRange++;}
-      await new Promise(resolve=>waiters.add(resolve));
+      if(nextRange<rangeCount){
+        const range=rangeAt(nextRange),size=range.end-range.start+1;
+        // 只有事务成功后才释放字节；慢首块与慢磁盘都会对后续请求产生背压。
+        if(bufferedBytes+size<=maxBufferedBytes){bufferedBytes+=size;metrics.peakBufferedBytes=Math.max(metrics.peakBufferedBytes,bufferedBytes);return {ordinal:nextRange++,hedge:false};}
+      } else if(!slots.size) return null;
+      const head = hedgeCandidate();
+      if (head) {
+        hedgesInFlight += 1; head.liveHedge = true; head.lastHedgeAt = now();
+        return { ordinal: head.ordinal, hedge: true };
+      }
+      const waitMs = nextHedgeCheck();
+      await new Promise(resolve=>{
+        let timer = null;
+        const done = () => { clearTimeout(timer); resolve(); };
+        waiters.add(done);
+        if (waitMs) timer = setTimeout(() => { waiters.delete(done); resolve(); }, waitMs);
+      });
     }
   }
 
@@ -156,41 +200,92 @@ export async function downloadByteRanges(options) {
     commitQueue = operation;
     return operation;
   };
+  const fail = (error) => { fatalError ||= error; controller.abort(fatalError); wake(); };
+
+  /**
+   * 跑一次分块尝试。对冲尝试与原尝试共享槽位：先拿到完整正文的一方胜出并取消另一方；
+   * 败方已收字节在 fetchRangeWithFallback 里回滚，所以界面速度与在途字节不会重复计入。
+   * 只有槽位里最后一个存活的尝试失败，才算这个分块失败（进而让整轨失败，交给上层续传）。
+   */
+  async function runAttempt({ ordinal, hedge }) {
+    let slot = slots.get(ordinal);
+    if (hedge && (!slot || slot.done)) { hedgesInFlight -= 1; wake(); return; }
+    if (!slot) {
+      slot = { ordinal, startedAt: now(), lastHedgeAt: 0, done: false, live: 0, liveHedge: hedge, controllers: new Set(), busyUrls: new Set() };
+      slots.set(ordinal, slot);
+    }
+    if (hedge) metrics.hedgeCount += 1;
+    const attempt = new AbortController();
+    const abortFromJob = () => attempt.abort(controller.signal.reason);
+    if (controller.signal.aborted) abortFromJob();
+    else controller.signal.addEventListener("abort", abortFromJob, { once: true });
+    slot.controllers.add(attempt);
+    slot.live += 1;
+    let result = null;
+    try {
+      const rank = () => {
+        const ranked = rankDynamicCandidates(urls, candidateStats, options.slowTtfbMs);
+        if (!hedge) return ranked;
+        // 对冲优先换一个节点；只有一个节点时仍可用同一地址的新连接，绕开那条涓流连接。
+        return [...ranked.filter((url) => !slot.busyUrls.has(url)), ...ranked.filter((url) => slot.busyUrls.has(url))];
+      };
+      const rankedUrls = rank();
+      if (!hedge && rankedUrls[0] !== preferredUrl) {
+        preferredUrl = rankedUrls[0];
+        metrics.cdnSwitchCount += 1;
+      }
+      result = await fetchRangeWithFallback(rank, rangeAt(ordinal), {
+        fetchImpl,
+        signal: attempt.signal,
+        totalBytes: options.totalBytes,
+        timeoutMs: options.timeoutMs,
+        maxAttempts: options.maxAttempts,
+        retryBaseMs: options.retryBaseMs,
+        slowTtfbMs: options.slowTtfbMs,
+        candidateStats,
+        metrics,
+        receive,
+        onAttemptUrl: (url, active) => { if (active) slot.busyUrls.add(url); else slot.busyUrls.delete(url); }
+      });
+      if (slot.done) {
+        // 与胜方几乎同时完成：这份正文作废，已计入的字节回滚。
+        receive(-result.data.size, { range: result.range, rollback: true });
+        result = null;
+      } else {
+        slot.done = true;
+        slots.delete(ordinal);
+        for (const other of slot.controllers) if (other !== attempt) other.abort(HEDGE_LOST);
+        if (hedge) metrics.hedgeWins += 1;
+        boundedPush(durations, now() - slot.startedAt, 50);
+      }
+    } catch (error) {
+      // 败方被取消，或另一个尝试仍在跑：都不算这个分块失败。
+      if (!slot.done && !controller.signal.aborted && attempt.signal.reason !== HEDGE_LOST && slot.live <= 1) fail(error);
+      else if (controller.signal.aborted) fatalError ||= error;
+    } finally {
+      slot.live -= 1;
+      slot.controllers.delete(attempt);
+      controller.signal.removeEventListener("abort", abortFromJob);
+      if (hedge) { hedgesInFlight -= 1; slot.liveHedge = false; }
+      wake();
+    }
+    if (!result) return;
+    // 已通过 Content-Range 逐字节校验的范围才交给镜像；回调失败绝不影响下载主流程。
+    try {
+      options.onVerifiedRange?.({
+        url: result.url, start: result.range.start, end: result.range.end + 1,
+        total: result.totalBytes, data: result.data, contentType: result.contentType
+      });
+    } catch { /* 镜像只是优化，失败不能中断下载。 */ }
+    try { await commitCompleted(result); } catch (error) { fail(error); }
+  }
 
   const worker = async () => {
     while (!fatalError) {
-      try {
-        const index=await takeRange();if(index<0)return;
-        const rank = () => rankDynamicCandidates(urls, candidateStats, options.slowTtfbMs);
-        const rankedUrls = rank();
-        if (rankedUrls[0] !== preferredUrl) {
-          preferredUrl = rankedUrls[0];
-          metrics.cdnSwitchCount += 1;
-        }
-        const result = await fetchRangeWithFallback(rank, rangeAt(index), {
-          fetchImpl,
-          signal: controller.signal,
-          totalBytes: options.totalBytes,
-          timeoutMs: options.timeoutMs,
-          maxAttempts: options.maxAttempts,
-          retryBaseMs: options.retryBaseMs,
-          slowTtfbMs: options.slowTtfbMs,
-          candidateStats,
-          metrics,
-          receive
-        });
-        // 已通过 Content-Range 逐字节校验的范围才交给镜像；回调失败绝不影响下载主流程。
-        try {
-          options.onVerifiedRange?.({
-            url: result.url, start: result.range.start, end: result.range.end + 1,
-            total: result.totalBytes, data: result.data, contentType: result.contentType
-          });
-        } catch { /* 镜像只是优化，失败不能中断下载。 */ }
-        await commitCompleted(result);
-      } catch (error) {
-        fatalError ||= error;controller.abort(fatalError);wake();
-        return;
-      }
+      let work;
+      try { work = await takeWork(); } catch (error) { fail(error); return; }
+      if (!work) return;
+      await runAttempt(work);
     }
   };
 
@@ -265,6 +360,7 @@ async function fetchRangeWithFallback(rank, range, options) {
       await abortableDelay(Math.min(8_000, (Number(options.retryBaseMs) || DEFAULT_RETRY_BASE_MS) * 2 ** (attempt - 1)), options.signal);
     }
     lastUrl = url;
+    options.onAttemptUrl?.(url, true);
     let attemptBytes = 0;
     const idle = createAttemptSignal(options.signal, options.timeoutMs || DEFAULT_RANGE_TIMEOUT);
     options.metrics.requestCount += 1;
@@ -296,6 +392,7 @@ async function fetchRangeWithFallback(rank, range, options) {
       if (/HTTP 403/.test(String(error?.message))) rejected.add(url);
     } finally {
       idle.cleanup();
+      options.onAttemptUrl?.(url, false);
     }
   }
   throw lastError || new Error(t("err.chunkAllFailed"));
