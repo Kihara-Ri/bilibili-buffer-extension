@@ -1,6 +1,6 @@
 # 弹窗
 
-> 适用版本：v2.14.3 · 最后核对：2026-10-25
+> 适用版本：v2.14.4 · 最后核对：2026-10-25
 > 对应实现：`popup.html`、`popup.css`、`src/popup.js`、`src/task-presentation.js`、`src/popup-snapshot.js`、`src/cache-size.js`。
 > 实时刷新规则的来历见 [2.6.2 弹窗稳定性设计记录](../history/2.6.2-popup-stability.md)。
 
