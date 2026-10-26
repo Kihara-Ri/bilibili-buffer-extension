@@ -25,6 +25,7 @@ import {
   toPublicError
 } from "./utils.js";
 import { listVideos, putVideo } from "./db.js";
+import { createPendingDeleteRegistry } from "./pending-deletes.js";
 import { startDevReloadBackground } from "./dev-reload.js";
 import {
   choosePopupCodec,
@@ -139,6 +140,13 @@ chrome.cookies.onChanged.addListener((changeInfo) => {
     void invalidatePopupSnapshots();
   }
 });
+
+// 弹窗关闭时提交它撤销期内的删除。监听必须在 SW 顶层同步注册，休眠唤醒后的首个 connect 才不会漏掉。
+const pendingDeletes = createPendingDeleteRegistry({
+  commit: (videoId) => deleteCachedVideo(videoId),
+  onError: (error, videoId) => console.warn("[海内存知] 弹窗关闭后提交删除失败：", videoId, toPublicError(error))
+});
+chrome.runtime.onConnect.addListener((port) => { pendingDeletes.attach(port); });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.target && message.target !== "background") return false;
@@ -257,7 +265,7 @@ async function handleMessage(message, sender) {
       return { pageInfo, video: cached };
     }
     case "DELETE_VIDEO":
-      return unwrap(await sendToOffscreen({ type: "DELETE_VIDEO", videoId: message.videoId }));
+      return deleteCachedVideo(message.videoId);
     case "PAUSE_CACHE": {
       const result = unwrap(await sendToOffscreen({ type: "PAUSE_DOWNLOAD", videoId: message.videoId }));
       void syncDownloadWatchdog();
@@ -558,6 +566,12 @@ async function resumeCache(videoId) {
   const result = await restartDownload(resumed, await getBiliSessionState());
   if (!result?.ok) throw new Error(result?.error || t("err.cannotContinue"));
   return resumed;
+}
+
+/** 弹窗的 DELETE_VIDEO 与弹窗关闭后的补提交共用；更新锁期间同样拒绝，避免改动正在被替换的数据。 */
+async function deleteCachedVideo(videoId) {
+  await updater.assertUnlocked();
+  return unwrap(await sendToOffscreen({ type: "DELETE_VIDEO", videoId }));
 }
 
 async function ensureDownloadWatchdog(nextRetryAt = 0) {

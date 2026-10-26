@@ -207,6 +207,8 @@ globalThis.chrome = {
   runtime: {
     getManifest: () => MANIFEST,
     onMessage: { addListener(callback) { listener = callback; } },
+    // 撤销期删除的登记通道（src/pending-deletes.js）；场景页不需要真的提交。
+    connect(info) { return { name: info?.name, postMessage() {}, onDisconnect: { addListener() {} }, onMessage: { addListener() {} } }; },
     async sendMessage(message) {
       switch (message.type) {
         case "GET_POPUP_SNAPSHOT":

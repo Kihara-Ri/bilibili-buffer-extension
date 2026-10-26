@@ -17,7 +17,7 @@
     "site:preview": "node scripts/build-site.mjs --preview",
     "test:site": "node tests/run-site-check.mjs",
     "test": "node scripts/run-tests.mjs",
-    "test:popup": "node tests/run-popup-stability.mjs && node tests/run-review-prompt.mjs",
+    "test:popup": "node tests/run-popup-stability.mjs && node tests/run-review-prompt.mjs && node tests/run-popup-close-delete.mjs",
     "test:network": "node tests/run-playback-network.mjs && node tests/run-playback-demand.mjs",
     "test:playback": "node tests/run-playback-cache-integration.mjs",
     "test:extension": "npm run build && node tests/run-playback-extension-smoke.mjs",

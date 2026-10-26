@@ -17,6 +17,7 @@ import {
   shouldShowInLibrary
 } from "./utils.js";
 import { choosePopupQuality } from "./popup-snapshot.js";
+import { connectPendingDeletes } from "./pending-deletes.js";
 import {
   DEFAULT_PREHEAT_COLOR,
   normalizePreheatColor,
@@ -127,6 +128,8 @@ const state = {
   deletedAt: new Map(),
   // 待删除：videoId → { timer, resume }。期间行被隐藏，撤销即恢复。
   pendingDeletes: new Map(),
+  // 与后台的待删登记通道；弹窗关闭时由后台提交仍在撤销期内的删除。
+  pendingDeleteChannel: null,
   speedSamples: new Map(),
   confirmedAssistConfig: null,
   appearancePending: 0,
@@ -314,6 +317,11 @@ function setSettingsOpen(open, { focus = null, restoreFocus = true, moveFocus = 
 // ---- 初始化与数据刷新 ---------------------------------------------------------
 
 async function initialize() {
+  // 撤销期内的删除登记到后台：弹窗怎么关闭都由后台提交（见 pending-deletes.js）。
+  state.pendingDeleteChannel = connectPendingDeletes({
+    connect: (info) => chrome.runtime.connect(info),
+    getPending: () => state.pendingDeletes.keys()
+  });
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   state.tab = tabs[0] || null;
   await loadCacheModePreference();
@@ -331,8 +339,7 @@ async function initialize() {
   window.addEventListener("pagehide", () => {
     clearInterval(state.refreshTimer);
     clearInterval(state.assistTimer);
-    // 弹窗关闭时把还在撤销窗口里的删除立即提交，不能让「已删除」的条目下次又出现。
-    for (const videoId of state.pendingDeletes.keys()) void send("DELETE_VIDEO", { videoId }).catch(() => {});
+    // 撤销期内的删除不在这里补发：关闭中的弹窗发出的消息会被丢弃，由后台在 port 断开时提交。
   }, { once: true });
 }
 
@@ -1383,13 +1390,14 @@ function mergeTask(video) {
 
 /**
  * 删除：立即从列表隐藏并给出可撤销提示（不用确认弹窗），超时后才真正删除数据。
- * 下载中的任务先暂停，撤销时再继续；弹窗关闭时未撤销的删除立即提交（见 initialize）。
+ * 下载中的任务先暂停，撤销时再继续；弹窗关闭时未撤销的删除由后台提交（见 pending-deletes.js）。
  */
 function deleteWithUndo(video) {
   if (state.pendingDeletes.has(video.id)) return;
   const title = video.partTitle || video.title || t("video.untitled");
   const pending = { resume: video.status === "downloading", timer: null };
   state.pendingDeletes.set(video.id, pending);
+  state.pendingDeleteChannel?.schedule(video.id);
   renderLibrary();
   if (state.pageInfo) renderCurrent();
   if (pending.resume) void send("PAUSE_CACHE", { videoId: video.id }).catch(() => {});
@@ -1400,6 +1408,7 @@ function deleteWithUndo(video) {
     onAction: () => {
       clearTimeout(pending.timer);
       state.pendingDeletes.delete(video.id);
+      state.pendingDeleteChannel?.release(video.id);
       renderLibrary();
       if (state.pageInfo) renderCurrent();
       if (pending.resume) void resumeTask(video.id);
@@ -1420,6 +1429,7 @@ function cancelPendingDeleteForSelection() {
     if (!audioMode && (Number(video.requestedQuality || video.quality) !== state.selectedQuality || !isVideoCodecSelectionMatch(video, state.selectedCodec))) continue;
     clearTimeout(pending.timer);
     state.pendingDeletes.delete(videoId);
+    state.pendingDeleteChannel?.release(videoId);
     hideToast();
   }
   renderLibrary();
@@ -1435,7 +1445,9 @@ async function commitDelete(videoId) {
   } catch (error) {
     showToast(t("toast.deleteFailed", { error: error.message }));
   } finally {
+    // 请求结束后才撤销后台登记：请求途中弹窗被关，后台补删一次也无害；反过来先撤销就可能两头都没删。
     state.pendingDeletes.delete(videoId);
+    state.pendingDeleteChannel?.release(videoId);
     renderLibrary();
     if (state.pageInfo) renderCurrent();
   }

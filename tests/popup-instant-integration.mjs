@@ -119,6 +119,8 @@ globalThis.chrome = {
   },
   runtime: {
     onMessage: { addListener(callback) { listener = callback; } },
+    // 撤销期删除的登记通道（pending-deletes.js）；夹具只需一个不会断开的 port。
+    connect(info) { return { name: info?.name, postMessage() {}, onDisconnect: { addListener() {} }, onMessage: { addListener() {} } }; },
     async sendMessage(message) {
       calls.push(message.type);
       if (message.type === "GET_POPUP_SNAPSHOT") {
