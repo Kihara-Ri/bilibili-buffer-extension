@@ -122,9 +122,10 @@ async function createPlaybackUrl(videoId) {
 
   const existingUrl = playbackUrls.get(videoId);
   if (existingUrl) {
-    return video.mediaKind === "dash" && !isAudioOnlyCache(video)
-      ? { playback: existingUrl, video }
-      : { playbackUrl: existingUrl, video };
+    // DASH 合并后仍保留 mediaKind，但缓存值已是单文件 URL；重复请求必须与首次返回同一契约。
+    return typeof existingUrl === "string"
+      ? { playbackUrl: existingUrl, video }
+      : { playback: existingUrl, video };
   }
 
   // 仅音频缓存只组装音频轨，不参与网页自动播放。

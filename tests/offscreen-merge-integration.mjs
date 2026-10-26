@@ -2,6 +2,7 @@
 // 分块下载 → 重封装合并 → 用合并结果播放 → 仅缓存音频（Hi-Res 无损优先）。
 import { deleteVideoData, getChunks, putChunk, putVideo } from "../src/db.js";
 import { listBoxes, parseFragment, readBoxHeader, verifyMergedHeader } from "../src/mp4-merge.js";
+import { buildCachedDownloadPlan } from "../src/utils.js";
 
 const VIDEO = new Uint8Array(await (await fetch("./fixtures/dash-video-2frag.mp4")).arrayBuffer());
 const AUDIO = new Uint8Array(await (await fetch("./fixtures/dash-audio-2frag.mp4")).arrayBuffer());
@@ -133,6 +134,17 @@ try {
   const playbackResult = await probePlayback(element, playback.playbackUrl);
   assert(playbackResult.decodedVideoFrames > 0, `合并文件没有解出视频帧：${JSON.stringify(playbackResult)}`);
   assert(playbackResult.decodedAudioBytes > 0, `合并文件没有解出音频：${JSON.stringify(playbackResult)}`);
+
+  // 页面自动播放会先取一次 URL；片库首次下载和再次下载都将命中同一内存缓存。
+  mark("save-after-playback");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const cached = await send({ type: "GET_PLAYBACK_URL", videoId });
+    const plan = buildCachedDownloadPlan(cached);
+    assert(cached.ok && cached.playbackUrl === playback.playbackUrl, "播放后的保存请求丢失单文件地址");
+    assert(!plan.splitTracks && plan.items.length === 1, "合并视频重复保存应始终生成单文件计划");
+    const saved = new Uint8Array(await (await fetch(plan.items[0].url)).arrayBuffer());
+    assert(saved.length === mergedBytes.length && saved.every((byte, index) => byte === mergedBytes[index]), "播放后的下载计划必须保留完整合并字节");
+  }
 
   // 3) 仅音频模式：只下载音频轨，Hi-Res 无损优先，并保留原始容器。
   mark("start-audio");

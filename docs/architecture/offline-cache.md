@@ -257,6 +257,8 @@ stateDiagram-v2
 
 ## 8. 保存文件
 
+本地播放和保存共用 `GET_PLAYBACK_URL`：单文件返回 `playbackUrl` 字符串，未合并的双轨返回 `playback: { kind: "dash", tracks }`。首次组装与后续复用内存 URL 必须保持相同返回格式；DASH 合并后元数据仍是 `mediaKind: "dash"`，因此要按实际缓存值的类型区分，不能只按来源格式判断。页面自动播放后再从片库下载会走这条复用路径。
+
 保存前再次校验完整性，文件名按缓存内容决定：
 
 | 缓存内容 | 保存结果 |
@@ -274,6 +276,7 @@ stateDiagram-v2
 | 分块、校验、停滞、退避、403 剔除、队头对冲 | `tests/range-downloader.test.mjs` |
 | 可恢复错误分类、看门狗间隔 | `tests/download-retry.test.mjs` |
 | 确认水位不提前发布 | `tests/download-watermark.test.mjs` |
+| 播放后重复保存的 URL 契约、单文件与双轨复用 | `tests/cached-playback-url.test.mjs`、`tests/offscreen-merge-integration.mjs` |
 | 乱序窗口与背压 | `tests/download-memory.test.mjs` |
 | 重封装、音轨提取 | `tests/mp4-merge.test.mjs`、`tests/mp4-audio.test.mjs` |
 | 音视频轨选择 | `tests/media-selection.test.mjs`、`tests/utils.test.mjs` |
