@@ -1,3 +1,5 @@
+import { BUILD_VERSION } from "./distribution.js";
+import { createWorkGate } from "./update-work-gate.js";
 import { t } from "./i18n.js";
 import {
   chooseAudioRepresentation,
@@ -93,7 +95,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
+const updateGate = createWorkGate();
 async function handleMessage(message) {
+  if (message.type === 'GET_UPDATE_HEALTH') return {version:BUILD_VERSION};
+  if (message.type === 'UNLOCK_FOR_UPDATE') { updateGate.open(); return {}; }
+  if (message.type === 'LOCK_FOR_UPDATE') {
+    await updateGate.close();
+    const ids = [...new Set([...activeDownloads.keys(), ...(await listVideos()).filter(video=>video.status==='downloading').map(video=>video.id)])];
+    await Promise.all(ids.map(id=>pauseDownload(id)));
+    await Promise.all([...mergeTasks.values()]);
+    return {pausedIds:ids};
+  }
+  if (['START_DOWNLOAD','GET_PLAYBACK_URL','DELETE_VIDEO','PAUSE_DOWNLOAD'].includes(message.type)) return updateGate.run(()=>handleCacheCommand(message));
+  return handleCacheCommand(message);
+}
+async function handleCacheCommand(message) {
   switch (message.type) {
     case "START_DOWNLOAD":
       return startDownload(message.video);

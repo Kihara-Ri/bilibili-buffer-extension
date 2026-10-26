@@ -30,6 +30,7 @@
 | 文档 | 一句话 |
 | --- | --- |
 | [热更新、构建与发布](development/build-and-release.md) | `npm run dev` 的重载链路、发布包剥离、扩展 ID 与 DNR、权限白名单、图标、隐私、官网 |
+| [GitHub 更新维护](development/github-updates.md) | 两渠道构建、签名密钥、内部目录更新与恢复边界 |
 | [测试与验收](development/testing.md) | 测试分层、浏览器套件前提、现有 Chrome 探针、测试原则 |
 | [浏览器版本兼容与自检](development/browser-compat.md) | Chrome 版本门禁、同版验收、运行期能力自检 |
 | [商店提审流程](../store/README.md) | 素材生成、首次提交、每版发布步骤、常见驳回 |

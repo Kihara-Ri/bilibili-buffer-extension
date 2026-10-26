@@ -62,10 +62,10 @@
         <img src="assets/icon-master.svg" alt="" width="44" height="44">
         <h1>海内存知 · 隐私说明</h1>
       </header>
-      <p class="updated">最后更新：2026-10-25 · 适用于扩展版本 2.6.3 及以后</p>
+      <p class="updated">最后更新：2026-10-26 · 适用于扩展版本 2.6.3 及以后</p>
 
       <p class="lead">
-        本扩展没有服务器。它不会把任何数据发送给开发者或第三方，所有缓存、偏好与任务状态都只保存在你自己的 Chrome 配置里。
+        本扩展没有用于接收用户缓存或账号信息的服务器，所有缓存、偏好与任务状态都保存在你自己的 Chrome 配置里。GitHub 版按你的操作访问发布服务获取更新，详见下文。
       </p>
 
       <h2>1. 扩展会接触哪些数据</h2>
@@ -113,11 +113,11 @@
 
       <h2>3. 数据流向</h2>
       <p>
-        扩展只会与你正在观看的 B 站域名通信：<code>*.bilibili.com</code>、<code>*.bilivideo.com</code>、
+        缓存和播放功能与以下 B 站域名通信：<code>*.bilibili.com</code>、<code>*.bilivideo.com</code>、
         <code>*.bilivideo.cn</code>、<code>*.hdslb.com</code>、<code>*.akamaized.net</code>。
         这些请求由你点击“缓存”或开启“提前加载”后发起，内容与你直接播放视频时浏览器发出的请求相同。
         扩展为这些 CDN 请求补上 B 站 <code>Referer</code> 以满足防盗链校验，不会修改其他网站的任何请求。
-        除此之外没有任何外部端点，也没有开发者运营的服务端。
+        GitHub 解压版还会按需连接下文披露的 GitHub 更新域名；扩展不连接开发者运营的服务端。
       </p>
 
       <h2>4. 数据删除</h2>
@@ -139,7 +139,7 @@
           <tr><td><code>offscreen</code></td><td>在后台文档中执行下载与 MP4 重封装，使关闭弹窗或原视频页后任务仍可继续。</td></tr>
           <tr><td><code>storage</code></td><td>保存偏好设置、任务进度与界面快照。</td></tr>
           <tr><td><code>unlimitedStorage</code></td><td>允许在 IndexedDB 中保存体积可能超过默认配额的视频缓存。</td></tr>
-          <tr><td>站点访问权限</td><td>仅限上列 B 站视频与 CDN 域名；扩展不使用 <code>*://*/*</code> 一类的通配权限。</td></tr>
+          <tr><td>站点访问权限</td><td>缓存功能限上列 B 站视频与 CDN 域名；GitHub 版另有按需授权的更新域名。扩展不使用 <code>*://*/*</code> 一类的通配权限。</td></tr>
         </tbody>
       </table>
 
@@ -183,11 +183,14 @@
         数据仅用于实现“缓存并离线播放 B 站视频”这一已披露的单一用途，不出售、不转让、不用于广告或信用评估。
       </p>
 
+      <h2>GitHub 版更新</h2>
+      <p>仅 GitHub 解压版在用户主动检查更新并授权后连接 api.github.com、github.com、release-assets.githubusercontent.com 和 objects.githubusercontent.com 获取发布版本及签名更新包；不携带 B 站 cookie，不上传缓存、账号或目录内容。GitHub 作为服务提供方会接收正常网络请求信息。商店版只提供下载链接，仍通过 Chrome 商店更新。</p>
+      <p>安装目录授权和旧文件恢复快照仅保存在本机独立 IndexedDB。每次需要写权限时由 Chrome 请求确认，可通过页面权限撤销目录访问；恢复快照在更新验证成功或恢复完成后清理。选择的安装目录只用于更新扩展文件。</p>
       <hr>
       <h2 lang="en">Privacy Policy (English)</h2>
       <p lang="en">
-        This extension has no server. It does not transmit any data to the developer or to third parties; all cached media,
-        preferences and task state stay in your local Chrome profile.
+        This extension has no server for receiving cached media or account information. All cached media,
+        preferences and task state stay in your local Chrome profile. The GitHub edition contacts release services for updates when you request it, as disclosed below.
       </p>
       <ul lang="en">
         <li><strong>Login state:</strong> it only checks whether the <code>SESSDATA</code> cookie exists in order to show a login hint. The cookie value is never read, stored or transmitted.</li>
@@ -195,7 +198,7 @@
         <li><strong>Cached media:</strong> downloaded from Bilibili CDNs only when you click "cache", and stored in your local IndexedDB.</li>
         <li><strong>Preferences and task progress:</strong> stored in <code>chrome.storage.local</code> so progress can resume after a restart.</li>
         <li>No analytics, telemetry, ads, or third-party SDKs. No selling or transferring of data. No browsing-history collection.</li>
-        <li>Network access is limited to <code>*.bilibili.com</code>, <code>*.bilivideo.com</code>, <code>*.bilivideo.cn</code>, <code>*.hdslb.com</code> and <code>*.akamaized.net</code>.</li>
+        <li>For caching, network access is limited to <code>*.bilibili.com</code>, <code>*.bilivideo.com</code>, <code>*.bilivideo.cn</code>, <code>*.hdslb.com</code> and <code>*.akamaized.net</code>.</li>
         <li>Deleting a video from the library, clearing the extension's data, or uninstalling the extension removes all local data.</li>
         <li><strong>Website only:</strong> the "Throw a bottle" counter on <code>haineicunzhi.kihara.cn</code> fetches an anonymous count from the developer's own server (<code>kihara.cn</code>) and, when you click the button, sends one optional preset tag and no free text. No cookies are sent and no access logs are kept. To limit repeat votes, the server stores only a keyed hash of "IP + date", deleted after two days; raw IPs are never stored. The page remembers the date you threw a bottle in <code>localStorage</code>. The extension itself never contacts this server.</li>
       </ul>
@@ -203,6 +206,8 @@
         The use of information received from Google APIs will adhere to the Chrome Web Store User Data Policy,
         including the Limited Use requirements.
       </p>
+      <p lang="en"><strong>GitHub edition updates:</strong> after an explicit update check and optional permission grant, the unpacked edition contacts api.github.com, github.com, release-assets.githubusercontent.com and objects.githubusercontent.com for release metadata and signed packages. Requests omit Bilibili cookies and never upload cached media, account data or folder contents. GitHub receives normal request metadata. The store edition only links to downloads and updates through Chrome Web Store.</p>
+      <p lang="en">The selected installation folder handle and recovery snapshots stay in a separate local IndexedDB. Chrome may request write access again; it can be revoked through page permissions. Snapshots are removed after verified success or completed recovery. Folder access is used only to update extension files.</p>
       <footer>
         本页面可离线打开；扩展包内的 <code>privacy.html</code> 与线上版本内容一致。
       </footer>

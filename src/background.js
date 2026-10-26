@@ -1,3 +1,4 @@
+import { createRuntimeUpdater } from "./update-runtime.js";
 import { newerTask, taskBadge } from "./task-presentation.js";
 import { t } from "./i18n.js";
 import { buildCacheSizeInfo } from "./cache-size.js";
@@ -72,6 +73,32 @@ let badgeQueue = Promise.resolve();
 const popupSnapshotMemory = new Map();
 let healthReportQueue = null;
 
+// 文件替换期间锁住新缓存、合并及保存；暂停清单先落盘，SW 休眠也不会丢失恢复意图。
+const updater = createRuntimeUpdater({
+  runtime: chrome.runtime, storage: chrome.storage.local, session: chrome.storage.session,
+  async freeze(persist) {
+    const ids = (await listVideos()).filter(video => video.status === 'downloading').map(video => video.id);
+    await persist(ids);
+    const result = unwrap(await sendToOffscreen({type:'LOCK_FOR_UPDATE'}));
+    return [...new Set([...ids, ...(result.pausedIds || [])])];
+  },
+  async thaw(ids) {
+    await sendToOffscreen({type:'UNLOCK_FOR_UPDATE'});
+    return Promise.all(ids.map(async id => {
+      try { const video = (await listVideos()).find(value => value.id === id); if (video?.status === 'paused' || video?.status === 'downloading') await resumeCache(id); return {id,resumed:true}; }
+      catch (error) { return {id,resumed:false,error:toPublicError(error)}; }
+    }));
+  },
+  ping: async () => unwrap(await sendToOffscreen({type:'GET_UPDATE_HEALTH'})),
+  async refresh() {
+    const tabs = await chrome.tabs.query({url:['https://www.bilibili.com/video/*','https://www.bilibili.com/list/*']});
+    await Promise.allSettled(tabs.map(tab=>chrome.tabs.reload(tab.id)));
+  },
+  ownerAlive: async id => { try { await chrome.tabs.get(id); return true; } catch { return false; } },
+  openPage: () => chrome.tabs.create({url:chrome.runtime.getURL('update.html#resume')}),
+  hasSaving: async () => (await chrome.downloads.search({state:'in_progress',urlRegex:`^blob:chrome-extension://${chrome.runtime.id}/`})).length > 0
+});
+
 /**
  * 浏览器侧能力自检结论。Chrome 更新（onInstalled 的 chrome_update）会强制刷新，
  * 其余情况 6 小时内复用，避免每次打开弹窗都重跑一遍探测。
@@ -94,6 +121,7 @@ function readHealthReport({ refresh = false } = {}) {
 }
 
 if (chrome.runtime.id) startDevReloadBackground(ensureOffscreenDocument);
+void updater.startup().catch(() => {});
 void restoreActiveDownloads();
 void restoreTaskBadges();
 chrome.runtime.onInstalled.addListener((details) => {
@@ -122,6 +150,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function handleMessage(message, sender) {
+  if (String(message?.type || "").startsWith("UPDATER_")) return updater.handle(message,sender);
+  if (["START_CACHE","RESUME_CACHE","DELETE_VIDEO","PAUSE_CACHE","GET_PLAYBACK_URL"].includes(message?.type)) await updater.assertUnlocked();
   switch (message?.type) {
     case "SOURCE_RANGE": {
       const request = message.request;
@@ -208,7 +238,7 @@ async function handleMessage(message, sender) {
     case "GET_PLAYBACK_URL":
       return unwrap(await sendToOffscreen({ type: "GET_PLAYBACK_URL", videoId: message.videoId }));
     case "SAVE_VIDEO":
-      return saveCachedVideo(message.videoId);
+      return updater.withSave(() => saveCachedVideo(message.videoId));
     case "GET_CACHED_FOR_URL": {
       const pageInfo = await getPageInfo(message.url);
       if (!pageInfo.supported) return { pageInfo, video: null };
@@ -476,6 +506,7 @@ async function ensureOffscreenDocument() {
 
 async function sendToOffscreen(message) {
   await ensureOffscreenDocument();
+  if (["START_DOWNLOAD","GET_PLAYBACK_URL","DELETE_VIDEO","PAUSE_DOWNLOAD"].includes(message.type)) await updater.assertUnlocked();
   return chrome.runtime.sendMessage({ ...message, target: "offscreen" });
 }
 
@@ -763,6 +794,7 @@ async function restoreActiveDownloads() {
 
 async function restoreActiveDownloadsNow() {
   try {
+    if (await updater.isLocked()) return;
     const interrupted = [];
     for (const video of await listVideos()) {
       if (video.status === "complete" && !hasCompleteByteCount(video)) {

@@ -112,4 +112,12 @@ npm run test:live    # 联网：真实 Chromium 加载扩展，对真实 B 站�
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — 参考项目与许可声明
 - [store/](store/) — Chrome Web Store 提审资料
 
-当前版本 2.14.5。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。问题与建议请提 [Issue](https://github.com/Kihara-Ri/bilibili-buffer-extension/issues)。
+当前版本 2.15.0。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。问题与建议请提 [Issue](https://github.com/Kihara-Ri/bilibili-buffer-extension/issues)。
+
+### 两个发布渠道
+
+商店版使用 Chrome 商店更新；设置 → 关于 →「下载 GitHub 版」可打开 GitHub Releases。GitHub 版更新更频繁，下载 `haineicunzhi-github-<版本>.zip` 后解压，并以开发者模式「加载已解压的扩展程序」。首次获得更新器仍需手动安装此版本。两种安装相互独立，本地缓存不会自动迁移；不要同时启用两份。
+
+GitHub 版设置中点「检查 GitHub 更新」，首次选择实际安装目录。检查新版本后点「更新并重载」，按 Chrome 提示确认写入权限，随后自动验证签名、暂停任务、备份、替换、重载及检查新后台。保持开发者模式开启；更新成功后默认刷新 B 站视频页，可取消勾选。写入未完成时勿关闭更新页。出错时可从同一入口恢复旧文件；若扩展已无法启动，下载可信 ZIP 覆盖原目录并重新加载，保留原安装与缓存。
+
+发布者配置与验证见 [GitHub 更新维护说明](docs/development/github-updates.md)。

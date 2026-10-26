@@ -24,7 +24,7 @@ Manifest 里固定的 `key` 让扩展 ID 保持不变；IndexedDB 归属于这�
 
 ## 2. 发布构建
 
-`npm run build` 生成 `dist/unpacked/` 与 `dist/haineicunzhi-<version>.zip`，然后自动运行 `npm run verify`。构建脚本会：
+默认商店构建 `npm run build` 生成 `dist/unpacked/` 与 `dist/haineicunzhi-<version>.zip`，然后自动运行 `npm run verify`。构建脚本会：
 
 - 删除 `src/dev-reload.js`，并从 background 与 offscreen 里剥离热更新的 import 与调用；
 - 通过 `toReleaseManifest`（`scripts/lib/release-checks.mjs`）删除 `key` 字段和 `http://127.0.0.1/*` 主机权限——开发态与发布态清单共用同一份变换规则，构建和校验不会各维护一套；
@@ -33,6 +33,10 @@ Manifest 里固定的 `key` 让扩展 ID 保持不变；IndexedDB 归属于这�
 - 用 `scripts/lib/zip.mjs`（Node 内置 zlib，不依赖系统 `zip`，Windows 同样可用）写出 zip：条目按路径排序、时间戳固定为 `SOURCE_DATE_EPOCH`（默认 2026-01-01）、不写权限位。同一份源码重复构建逐字节相同。
 
 `scripts/verify-release.mjs` 用同一模块读回 zip，逐字节核对它与 `dist/unpacked` 一致，并打印 SHA-256。
+
+### GitHub 渠道
+
+`UPDATE_SIGNING_KEY=/仓库外/签名私钥.pem npm run build:github` 生成 `dist/github/unpacked/`、`haineicunzhi-github-<version>.zip` 和 `.update.json`。GitHub 包保留固定开发 key，包含内部更新页和按需授权的 GitHub 域名；商店包物理移除更新实现。签名 JSON 与 ZIP 使用相同文件快照。初始化、恢复与兼容边界见 [GitHub 更新维护](github-updates.md)。
 
 ## 3. 上架合规
 

@@ -3,8 +3,8 @@
 本文件是开发者仪表盘（[Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole)）里要逐项粘贴的内容。
 **正文以本文件为准**；改完扩展后请同步这里，`npm test` 会校验中英文摘要与 `_locales` 是否一致。
 
-- 对应版本：2.14.5
-- 提交包：`dist/haineicunzhi-2.14.5.zip`
+- 对应版本：2.15.0
+- 提交包：`dist/haineicunzhi-2.15.0.zip`
 - 提交前校验：`npm run check && npm test && npm run build`
 
 ---

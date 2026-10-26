@@ -249,7 +249,8 @@ test("发布构建剥离开发态入口：源仓库保留，脚本负责移除",
   assert.ok(source.includes("startDevReloadBackground"), "开发目录本身仍需热更新能力");
   const build = await readText("scripts/build-release.mjs");
   assert.ok(build.includes("无法从发布构建中剥离开发态热更新入口"));
-  assert.ok(build.includes("toReleaseManifest"), "发布构建必须走共享的发布态清单变换");
+  const distribution = await readText("scripts/lib/distribution-build.mjs");
+  assert.ok(build.includes("prepareDistribution") && distribution.includes("toReleaseManifest"), "两个渠道必须走共享的发布态清单变换");
   const checks = await readText("scripts/lib/release-checks.mjs");
   // 可复现构建：由内置 ZIP 写入器固定时间戳、不写权限位（行为见 tests/release-zip.test.mjs）。
   assert.ok(build.includes("createZip"), "发布构建必须使用内置的可复现 ZIP 写入器");

@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "publicKey": {
+    "kty": "EC",
+    "x": "GVU4BkD8Qfy2aGh56TqBu7fVH7GncWmK2lflb6xx_A4",
+    "y": "fFNFT28DMIwHrTBTl4ovavwSQ7eV4r61VlC8YDb7NKA",
+    "crv": "P-256"
+  }
+}

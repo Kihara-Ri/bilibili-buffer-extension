@@ -1,3 +1,4 @@
+import { DISTRIBUTION, GITHUB_RELEASES } from "./distribution.js";
 import { committedBytes, taskProgress, compareLibraryTasks, newerTask, sampleSpeed } from "./task-presentation.js";
 import { getAudioCacheSize, getCacheSize } from "./cache-size.js";
 import {
@@ -33,6 +34,13 @@ import {
   shouldShowReviewPrompt,
   snoozeReviewPrompt
 } from "./review-prompt.js";
+
+const updateLink = document.querySelector('#update-link');
+if (updateLink) {
+  const github = DISTRIBUTION !== 'store';
+  updateLink.href = github && chrome.runtime.getURL ? chrome.runtime.getURL('update.html') : GITHUB_RELEASES;
+  updateLink.dataset.i18n = github ? 'update.open' : 'update.download';
+}
 
 const DEFAULT_PROGRESS_COLOR = "#00a1d6";
 // 删除先从列表隐藏，提示里可撤销；超时（或弹窗关闭）才真正删除数据。
