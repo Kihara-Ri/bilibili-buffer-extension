@@ -105,3 +105,9 @@
 | 待删登记：关闭时提交、撤销与已提交不重复、SW 重启重连不误删、畸形消息 | `tests/pending-deletes.test.mjs` |
 | 真实工具栏弹窗（经 CDP 操作 `chrome.action.openPopup()` 打开的弹窗）：删除后在撤销期内关闭弹窗，未撤销的被删除、已撤销的保留 | `npm run test:popup`（`tests/run-popup-close-delete.mjs`） |
 | 后台与 Offscreen 消息链路、双任务徽标 | 同一运行器执行的 `background-popup-integration` / `offscreen-integration` / `offscreen-merge-integration` |
+
+## 减少动态效果下的画质区域
+
+画质区域在 `prefers-reduced-motion: reduce` 下直接禁用元素、子元素与伪元素的 CSS Transition，而不是缩短至 0.01ms；后者仍会创建一帧运行中的过渡，切档时颜色、裁剪和位移都可能被观察到。已有静态配色保留，普通模式的波浪、气泡和登顶反馈不变。
+
+`tests/run-quality-reduced-motion.mjs` 在同一任务里连续切档并强制样式计算，断言减少动态模式下没有运行/待决动画，再切回普通模式确认波浪和登顶动画存在；该检查纳入 `npm run test:popup`。

@@ -1055,5 +1055,8 @@ svg { flex: none; }
   .skeleton-bar::after, .cache-button[data-state="reading"]::after, .cache-button[data-state="reading"] .button-glyph { animation: none !important; }
   /* 登顶与过档的弹跳、水花在减少动态时整组不播，只保留顶档的配色。 */
   .quality-row.is-surging, .quality-row.is-surging *, .quality-row.is-surging *::before, .quality-row.is-surging *::after, .quality-knob.is-tick::before { animation: none !important; }
-  .quality-track { transition: none !important; }
+  /* 0.01ms 仍会创建至少一帧的 CSS Transition；减少动态时直接禁止画质区域过渡，
+     避免颜色、裁剪和拇指位移仍进入动画状态，而不是依赖下一帧把它们结束。 */
+  .quality-row, .quality-row::before, .quality-row::after,
+  .quality-row *, .quality-row *::before, .quality-row *::after { transition: none !important; }
 }
