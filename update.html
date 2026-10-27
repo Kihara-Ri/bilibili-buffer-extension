@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>GitHub 更新 · 海内存知</title><link rel="stylesheet" href="update.css"></head>
 <body><main>
   <header><img src="assets/icon-48.png" width="42" height="42" alt=""><div><p id="channel-label" class="eyebrow" data-i18n="update.channelGithub">海内存知 · GitHub 版</p><h1 data-i18n="update.title">扩展更新</h1></div></header>
-  <p id="intro" class="intro" data-i18n="update.intro">首次连接安装文件夹，以后直接点更新。你的设置和本地缓存会保留。</p>
+  <p id="intro" class="intro" data-i18n="update.intro">首次连接一次，以后直接更新。设置和本地缓存会保留。</p>
   <section class="versions"><span data-i18n="update.current">当前版本</span><strong id="current-version">—</strong><span data-i18n="update.latest">可用版本</span><strong id="latest-version">—</strong></section>
   <section id="source-install" class="source-notice" hidden>
     <p class="eyebrow" data-i18n="update.detected">已识别安装方式</p><h2 data-i18n="update.sourceTitle">这份扩展由项目源码加载</h2>
@@ -16,14 +16,14 @@
   </section>
   <section id="directory-setup" class="directory" hidden>
     <h2 id="connection-heading" data-i18n="update.connectTitle">首次设置 · 连接安装文件夹</h2>
-    <p id="connection-description" data-i18n="update.connectHint">不用记住文件夹在哪，按下面的步骤找到它。只需连接一次，之后会自动记住。</p>
+    <p id="connection-description" data-i18n="update.connectHint">按这三步找到文件夹，连接后会自动记住。无需新建文件夹。</p>
     <details id="connection-help" open>
       <summary data-i18n="update.connectionHelp">如何找到安装文件夹</summary>
       <ol class="setup-steps">
-        <li><div><strong data-i18n="update.stepLocate">查看 Chrome 记录的位置</strong><p data-i18n="update.locateHint">打开扩展详情，找到底部的“加载来源”，点击路径可在系统中找到文件夹。</p><a id="installation-location" class="button-link" target="_blank" rel="noopener" data-i18n="update.locate">查看安装位置</a>
+        <li><div><strong data-i18n="update.stepLocate">找到安装位置</strong><p data-i18n="update.locateHint">在详情页底部点“加载来源”的路径，找到文件夹。</p><a id="installation-location" class="button-link" target="_blank" rel="noopener" data-i18n="update.locate">查看安装位置</a>
           <div class="location-preview" aria-hidden="true"><span data-i18n="update.previewChrome">Chrome · 扩展详情页底部</span><div><strong data-i18n="update.previewLocation">加载来源</strong><span class="preview-path">… / haineicunzhi</span><span class="preview-arrow">↗</span></div></div></div></li>
-        <li><div><strong data-i18n="update.stepConnect">回来连接这个文件夹</strong><p data-i18n="update.selectHint">也可以选择它的上一级，我们会自动查找并核对。无需新建文件夹。</p></div></li>
-        <li><div><strong data-i18n="update.stepUpdate">以后直接点更新</strong><p data-i18n="update.rememberHint">文件夹会保存在本机。如果 Chrome 再次询问权限，点允许即可。</p></div></li>
+        <li><div><strong data-i18n="update.stepConnect">连接安装文件夹</strong><p data-i18n="update.selectHint">选这个文件夹或上一级，无需新建。</p></div></li>
+        <li><div><strong data-i18n="update.stepUpdate">以后直接更新</strong><p data-i18n="update.rememberHint">文件夹会自动记住；Chrome 询问权限时点允许。</p></div></li>
       </ol>
     </details>
     <div class="directory-row"><div><span id="directory-name" data-i18n="update.unbound">尚未连接</span><p id="directory-permission"></p></div><button id="bind" type="button" data-i18n="update.connect">连接安装文件夹</button></div>
@@ -31,6 +31,6 @@
   <label id="refresh-option" class="refresh" hidden><input id="refresh-tabs" type="checkbox" checked><span data-i18n="update.refresh">更新成功后刷新已打开的 B 站视频页，让页面使用新版本</span></label>
   <div class="actions"><button id="check" type="button" data-i18n="update.check">检查更新</button><button id="install" class="primary" type="button" disabled data-i18n="update.install">更新并重载</button><button id="recover" type="button" hidden data-i18n="update.recover">恢复更新前的文件</button><button id="cancel" type="button" hidden data-i18n="update.cancel">取消未写入的更新</button></div>
   <p id="status" role="status" aria-live="polite" data-state="loading"></p>
-  <p id="update-note" class="footnote" data-i18n="update.note" hidden>更新前会暂停缓存任务并备份文件。只有新版本通过检查后才恢复任务。请勿在写入期间关闭本页。</p>
+  <p id="update-note" class="footnote" data-i18n="update.note" hidden>保持开发者模式开启。更新会备份文件、暂停缓存；完成前请勿关闭本页。</p>
   <a href="https://github.com/Kihara-Ri/bilibili-buffer-extension/releases" target="_blank" rel="noopener noreferrer" data-i18n="update.manual">打开 GitHub 下载页</a>
 </main><script type="module" src="src/github-updater-page.js"></script></body></html>

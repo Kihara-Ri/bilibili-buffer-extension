@@ -21,7 +21,8 @@ const unpacked=path.join(fixture,'dist/github/unpacked');
 execFileSync(process.execPath,[path.join(root,'tests/run-github-update-check.mjs'),unpacked],{stdio:'inherit'});
 const manifest=JSON.parse(await readFile(path.join(unpacked,'manifest.json'))),id=extensionIdFromKey(manifest.key);
 // 目标包来自同一生产构建器，仅版本与测试标记不同。
-const targetVersion='2.15.1';
+const versionParts=manifest.version.split('.').map(Number);versionParts[versionParts.length-1]++;
+const targetVersion=versionParts.join('.');
 const targetManifest={...manifest,version:targetVersion};
 await writeFile(path.join(fixture,'manifest.json'),JSON.stringify(targetManifest));
 execFileSync(process.execPath,[path.join(fixture,'scripts/build-release.mjs'),'--github','--out',path.join(base,'target')],{env:{...process.env,UPDATE_SIGNING_KEY:privatePath},stdio:'pipe'});

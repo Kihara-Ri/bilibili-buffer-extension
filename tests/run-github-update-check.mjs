@@ -25,6 +25,10 @@ for(const file of ['src','_locales','assets','rules','manifest.json','popup.html
 await writeFile(path.join(fixture,'manifest.json'),JSON.stringify({...manifest,host_permissions:[...(manifest.host_permissions||[]),...(manifest.optional_host_permissions||[])]}));
 const context=await chromium.launchPersistentContext(profile,chromiumLaunchOptions({headless:true,args:[`--disable-extensions-except=${fixture}`,`--load-extension=${fixture}`]}));
 context.setDefaultTimeout(10000);
+async function assertOneViewport(page,label) {
+ const bounds=await page.evaluate(()=>({width:innerWidth,height:innerHeight,contentWidth:document.documentElement.scrollWidth,contentHeight:document.documentElement.scrollHeight}));
+ assert(bounds.contentWidth<=bounds.width&&bounds.contentHeight<=bounds.height+1,`${label} 应在一个视口内显示：${JSON.stringify(bounds)}`);
+}
 try {
  let requests=0,releases=[];
  await context.route('https://api.github.com/repos/Kihara-Ri/bilibili-buffer-extension/releases?per_page=20',route=>{
@@ -34,6 +38,7 @@ try {
  const page=await context.newPage();
  await page.goto(`chrome-extension://${id}/update.html`);
  await page.waitForFunction(()=>document.querySelector('#status')?.dataset.state==='ready');
+ await assertOneViewport(page,'首次打开');
  assert.equal(await page.locator('#bind').isVisible(),!source,'源码安装不应显示目录选择入口');
  assert.equal(await page.locator('#source-install').isVisible(),source);
  if(!source)assert.equal(await page.locator('#installation-location').getAttribute('href'),`chrome://extensions/?id=${id}`);
@@ -54,6 +59,7 @@ try {
  if(source) {
   assert.equal(await page.locator('#install').isVisible(),false);
   await page.locator('#source-guide').click();
+  await assertOneViewport(page,'源码安装说明展开');
   assert.equal(await page.locator('#source-instructions li').count(),3,'源码更新说明直接在本页展示');
   await page.emulateMedia({colorScheme:'dark'});
   await page.screenshot({path:path.join(base,'source-install.png'),fullPage:true});
@@ -82,12 +88,19 @@ try {
   assert.equal(await details.locator('#load-path').isVisible(),true,'当前扩展详情应显示可点击的安装路径');
   assert((await details.locator('#load-path').textContent()).includes('加载来源'),'引导用词应和真实 Chrome 界面一致');
   await details.close();
+  const mobile=await context.newPage();await mobile.setViewportSize({width:360,height:740});
+  await mobile.goto(`chrome-extension://${id}/update.html`);
+  await mobile.waitForFunction(()=>document.querySelector('#status')?.dataset.state==='ready');
+  await assertOneViewport(mobile,'中文 360×740');
+  await mobile.screenshot({path:path.join(base,'guided-chinese-mobile.png'),fullPage:true});
+  await mobile.close();
   const english=await context.newPage();
   await english.addInitScript(()=>{if(globalThis.chrome?.i18n)chrome.i18n.getUILanguage=()=> 'en';});
   await english.setViewportSize({width:390,height:844});
   await english.goto(`chrome-extension://${id}/update.html`);
   await english.waitForFunction(()=>document.querySelector('#status')?.dataset.state==='ready');
   assert.equal(await english.locator('#bind').textContent(),'Connect installation folder');
+  await assertOneViewport(english,'英文 390×844');
   assert.equal(await english.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'英文窄屏无横向溢出');
   await english.screenshot({path:path.join(base,'guided-english-mobile.png'),fullPage:true});
   await english.close();
