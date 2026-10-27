@@ -1,0 +1,320 @@
+{
+  "service_version": "0.1.0",
+  "synthetic": true,
+  "notice": "虚构账号与可控上游；不是用户资料或真实媒体凭据。QR/错误示例见 API.md。",
+  "examples": [
+    {
+      "name": "health",
+      "method": "GET",
+      "path": "/health",
+      "response_status": 200,
+      "response": {
+        "status": "ok",
+        "version": "0.1.0",
+        "service": "bilibili-content-engine"
+      }
+    },
+    {
+      "name": "empty_queue",
+      "method": "GET",
+      "path": "/v1/queue",
+      "response_status": 200,
+      "response": []
+    },
+    {
+      "name": "resolve",
+      "method": "POST",
+      "path": "/v1/videos/resolve",
+      "response_status": 200,
+      "response": {
+        "bvid": "BV1TUno6bEwA",
+        "title": "测试：几何推导",
+        "creator_id": "7",
+        "creator_name": "测试作者",
+        "selected_id": "BV1TUno6bEwA",
+        "parts": [
+          {
+            "id": "BV1TUno6bEwA",
+            "bvid": "BV1TUno6bEwA",
+            "cid": 1230,
+            "page": 1,
+            "part_title": "正片",
+            "duration_seconds": 120,
+            "revision": 1
+          }
+        ]
+      },
+      "request": {
+        "url": "BV1TUno6bEwA"
+      }
+    },
+    {
+      "name": "sync",
+      "method": "POST",
+      "path": "/v1/watchlater/sync",
+      "response_status": 200,
+      "response": {
+        "status": "complete",
+        "collected": 1,
+        "total": 1,
+        "checked_at": "2026-10-27T00:00:00+00:00",
+        "account_id": "42"
+      },
+      "request": {
+        "page_size": 20,
+        "max_pages": 20
+      }
+    },
+    {
+      "name": "subtitle",
+      "method": "POST",
+      "path": "/v1/content/BV1TUno6bEwA/subtitles",
+      "response_status": 200,
+      "response": {
+        "work_id": "BV1TUno6bEwA",
+        "cid": 1230,
+        "status": "ready",
+        "segments": 2,
+        "language": "ai-zh",
+        "content_hash": "81ced9ad4ad0fce830f300385e3659eea65a6c2803c8652973bf0579e7d21784"
+      },
+      "request": {}
+    },
+    {
+      "name": "content",
+      "method": "GET",
+      "path": "/v1/content/BV1TUno6bEwA",
+      "response_status": 200,
+      "response": {
+        "available": true,
+        "creator_id": "7",
+        "creator_name": "测试作者",
+        "duration_seconds": 120,
+        "evidence": [
+          {
+            "coverage": "full",
+            "end": 110,
+            "id": "subtitle:1230:ai-zh:full",
+            "kind": "transcript",
+            "language": "ai-zh",
+            "locator": "bilibili:subtitle:BV1TUno6bEwA:1230:ai-zh",
+            "machine_generated": true,
+            "start": 0,
+            "text": "[0–15s] 先提出问题。\n[15–110s] 再推导并说明边界。"
+          },
+          {
+            "coverage": "excerpt",
+            "end": 15,
+            "id": "subtitle:1230:ai-zh:1",
+            "kind": "transcript",
+            "language": "ai-zh",
+            "locator": "bilibili:subtitle:BV1TUno6bEwA:1230:ai-zh",
+            "machine_generated": true,
+            "start": 0,
+            "text": "先提出问题。"
+          },
+          {
+            "coverage": "excerpt",
+            "end": 110,
+            "id": "subtitle:1230:ai-zh:2",
+            "kind": "transcript",
+            "language": "ai-zh",
+            "locator": "bilibili:subtitle:BV1TUno6bEwA:1230:ai-zh",
+            "machine_generated": true,
+            "start": 15,
+            "text": "再推导并说明边界。"
+          }
+        ],
+        "family_id": "BV1TUno6bEwA",
+        "id": "BV1TUno6bEwA",
+        "sources": [
+          {
+            "added_at": 1700000000,
+            "bvid": "BV1TUno6bEwA",
+            "cid": 1230,
+            "kind": "watch_later",
+            "locator": "bilibili:account:watchlater",
+            "page": 1,
+            "part_title": "正片"
+          }
+        ],
+        "tags": [],
+        "title": "测试：几何推导",
+        "revision": 3,
+        "fingerprint": "ffdf564118ce66f28dc868cb415c544c302609c2f226afc5899f1eab60aad393"
+      }
+    },
+    {
+      "name": "queue",
+      "method": "GET",
+      "path": "/v1/queue",
+      "response_status": 200,
+      "response": [
+        {
+          "id": "BV1TUno6bEwA",
+          "title": "测试：几何推导",
+          "bvid": "BV1TUno6bEwA",
+          "cid": 1230,
+          "page": 1,
+          "part_title": "正片",
+          "duration_seconds": 120,
+          "creator_id": "7",
+          "creator_name": "测试作者",
+          "available": true,
+          "subtitle_status": "ready",
+          "rules_blocked": false,
+          "revision": 3,
+          "fingerprint": "ffdf564118ce66f28dc868cb415c544c302609c2f226afc5899f1eab60aad393"
+        }
+      ]
+    },
+    {
+      "name": "queue_item",
+      "method": "GET",
+      "path": "/v1/queue/BV1TUno6bEwA",
+      "response_status": 200,
+      "response": {
+        "id": "BV1TUno6bEwA",
+        "title": "测试：几何推导",
+        "bvid": "BV1TUno6bEwA",
+        "cid": 1230,
+        "page": 1,
+        "part_title": "正片",
+        "duration_seconds": 120,
+        "creator_id": "7",
+        "creator_name": "测试作者",
+        "available": true,
+        "subtitle_status": "ready",
+        "rules_blocked": false,
+        "revision": 3,
+        "fingerprint": "ffdf564118ce66f28dc868cb415c544c302609c2f226afc5899f1eab60aad393"
+      }
+    },
+    {
+      "name": "snapshot",
+      "method": "GET",
+      "path": "/v1/account-status",
+      "response_status": 200,
+      "response": {
+        "account": {
+          "id": "42",
+          "name": "测试账号",
+          "observed_at": "2026-10-27T00:00:00+00:00"
+        },
+        "last_sync": {
+          "account_id": "42",
+          "checked_at": "2026-10-27T00:00:00+00:00",
+          "collected": 1,
+          "status": "complete",
+          "total": 1
+        }
+      }
+    },
+    {
+      "name": "subtitle_batch",
+      "method": "POST",
+      "path": "/v1/subtitles/collect",
+      "response_status": 200,
+      "response": {
+        "results": [
+          {
+            "work_id": "BV1TUno6bEwA",
+            "cid": 1230,
+            "status": "ready",
+            "segments": 2,
+            "language": "ai-zh",
+            "content_hash": "81ced9ad4ad0fce830f300385e3659eea65a6c2803c8652973bf0579e7d21784"
+          }
+        ]
+      },
+      "request": {
+        "limit": 5,
+        "force": true
+      }
+    },
+    {
+      "name": "playback",
+      "method": "POST",
+      "path": "/v1/playback",
+      "response_status": 200,
+      "response": {
+        "id": "SYNTHETIC-MEDIA-TOKEN",
+        "work_id": "BV1TUno6bEwA",
+        "bvid": "BV1TUno6bEwA",
+        "cid": 1230,
+        "format": "mp4",
+        "content_type": "video/mp4",
+        "url": "/v1/media/SYNTHETIC-MEDIA-TOKEN",
+        "quality": 16,
+        "requested_quality": 32,
+        "access": "anonymous",
+        "duration_seconds": 120,
+        "expires_at": "2026-10-27T00:10:00+00:00"
+      },
+      "request": {
+        "work_id": "BV1TUno6bEwA",
+        "quality": 32
+      }
+    },
+    {
+      "name": "rule",
+      "method": "POST",
+      "path": "/v1/rules",
+      "response_status": 200,
+      "response": {
+        "scope": "work",
+        "target": "BV1TUno6bEwA",
+        "blocked": false
+      },
+      "request": {
+        "scope": "work",
+        "target": "BV1TUno6bEwA",
+        "blocked": false
+      }
+    },
+    {
+      "name": "capture_list",
+      "method": "POST",
+      "path": "/v1/captures",
+      "response_status": 200,
+      "response": {
+        "status": "complete",
+        "collected": 1,
+        "total": 1,
+        "checked_at": "2026-10-27T00:00:00+00:00",
+        "account_id": "42"
+      },
+      "request": {
+        "type": "watchlater",
+        "account": {
+          "id": "42",
+          "name": "测试账号"
+        },
+        "total": 1,
+        "items": [
+          {
+            "aid": 123,
+            "bvid": "BV1TUno6bEwA",
+            "title": "测试：几何推导",
+            "state": 0,
+            "duration": 120,
+            "cid": 1230,
+            "owner": {
+              "mid": 7,
+              "name": "测试作者"
+            },
+            "add_at": 1700000000,
+            "pages": [
+              {
+                "page": 1,
+                "cid": 1230,
+                "part": "正片",
+                "duration": 120
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -26,7 +26,8 @@
     "check": "node scripts/check-syntax.mjs && node scripts/check-browser-compat.mjs",
     "build:github": "node scripts/build-release.mjs --github",
     "update:key": "node scripts/github-update-key.mjs",
-    "test:updater": "node tests/run-github-updater.mjs"
+    "test:updater": "node tests/run-github-updater.mjs",
+    "test:content": "python3 -m unittest discover -s server/content/tests -v"
   },
   "devDependencies": {
     "playwright": "1.64.0"

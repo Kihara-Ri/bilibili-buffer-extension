@@ -82,7 +82,7 @@ flowchart LR
 
 ## 隐私
 
-没有服务器、没有遥测，登录态只在本机使用，Cookie 原文从不展示或保存。详见[隐私说明](privacy.html)。
+Chrome 扩展本身没有服务器或遥测，登录态只在本机使用，Cookie 原文从不展示或保存。下述独立内容服务是用户自行启用的另一条运行路径，会在用户自己的服务器保存 B 站登录态和内容数据，具体边界见[内容服务架构](server/content/ARCHITECTURE.md)。详见[隐私说明](privacy.html)。
 
 ## 开发
 
@@ -121,3 +121,14 @@ npm run test:live    # 联网：真实 Chromium 加载扩展，对真实 B 站�
 GitHub 版设置中点「检查 GitHub 更新」，首次选择实际安装目录。检查新版本后点「更新并重载」，按 Chrome 提示确认写入权限，随后自动验证签名、暂停任务、备份、替换、重载及检查新后台。保持开发者模式开启；更新成功后默认刷新 B 站视频页，可取消勾选。写入未完成时勿关闭更新页。出错时可从同一入口恢复旧文件；若扩展已无法启动，下载可信 ZIP 覆盖原目录并重新加载，保留原安装与缓存。
 
 发布者配置与验证见 [GitHub 更新维护说明](docs/development/github-updates.md)。
+
+## 独立内容读取接口（开发中）
+
+仓库另提供 `server/content/`：Python 3.11+、零运行时第三方依赖的本机内容引擎，可供独立网页或手机前端调用。它与上面的 Chrome 扩展分开运行，不改扩展的原生播放器、下载链路或权限。
+
+```bash
+python3 server/content/run.py serve --port 8765
+npm run test:content
+```
+
+接口覆盖账号状态／扫码登录、稍后再看、视频 URL 与分 P 解析、字幕时间段、短期 MP4 播放及 Range 转发。**不包含 UI、控件、发现算法或 AI 审阅**；完整的前端接入说明见 [内容引擎 API](server/content/API.md)。服务进程只监听回环地址；已在 rasp5remote 通过 Nginx、正式 HTTPS 和站点认证部署到 `https://bilibili.kihara.cn`，尚无手机 UI 或 iPhone 播放验收。目标、约束、参考项目与路线见[项目说明](server/content/PROJECT.md)，完整文档从[模块入口](server/content/README.md)读取。

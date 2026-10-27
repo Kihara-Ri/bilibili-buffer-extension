@@ -80,7 +80,7 @@ The full design is in [技术文档.md](技术文档.md) (Chinese).
 
 ## Privacy
 
-No server, no telemetry. Sign-in state is only used locally, and cookie values are never shown or stored. See the [privacy policy](privacy.html) (English version at the end).
+The Chrome extension has no server or telemetry. Its sign-in state is only used locally, and cookie values are never shown or stored. The separately enabled content service stores Bilibili credentials and content on the user’s own server; see its [architecture and data boundaries](server/content/ARCHITECTURE.md). See the [privacy policy](privacy.html) (English version at the end).
 
 ## Development
 
@@ -110,3 +110,14 @@ The store edition updates through Chrome Web Store and provides a GitHub downloa
 In the GitHub edition, choose Check GitHub updates and select the actual installation folder once. After checking, choose Update and reload and confirm write access when Chrome requests it. The extension verifies the signature, pauses tasks, backs up files, replaces them, reloads, and verifies the new background. Keep Developer mode enabled and the update page open during writes. Open Bilibili video pages refresh after a successful update unless unchecked. Use the recovery button after an interrupted update; if the extension cannot start, replace files in the original folder with a trusted ZIP and reload.
 
 Publisher setup: [GitHub update maintenance](docs/development/github-updates.md) (Chinese).
+
+## Standalone content API (development)
+
+`server/content/` is a separate Python 3.11+ content-acquisition service with no third-party runtime dependencies. It exposes account/QR login, watch-later, URL and multipart resolution, timestamped subtitles, and short-lived MP4 streaming with byte-range support. It does not change the Chrome extension's player, downloader, UI, or permissions.
+
+```bash
+python3 server/content/run.py serve --port 8765
+npm run test:content
+```
+
+No frontend, discovery ranking, or model calls are included. See the [API handoff](server/content/API.md). The Python process remains loopback-only; Nginx now exposes it at https://bilibili.kihara.cn on rasp5remote with trusted HTTPS and separate site authentication. A phone UI and iPhone playback acceptance are still pending. See the [project scope](server/content/PROJECT.md), [references](server/content/REFERENCES.md), and [module documentation index](server/content/README.md).

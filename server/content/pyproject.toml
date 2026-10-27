@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bilibili-content-engine"
+version = "0.1.0"
+description = "Read-only Bilibili account, subtitle and media APIs"
+requires-python = ">=3.11"
+license = "GPL-3.0-only"
+dependencies = []
+
+[project.scripts]
+bilibili-content = "bilibili_content.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["bilibili_content*"]

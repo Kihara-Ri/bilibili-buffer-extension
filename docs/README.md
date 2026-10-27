@@ -25,6 +25,19 @@
 | [兼容与回退](architecture/compat-fallback.md) | 能力缺失或运行期失败时的降级承诺与熔断 |
 | [弹窗](architecture/popup.md) | 界面结构、状态文案、键盘与无障碍、实时刷新规则 |
 
+## 独立个人内容服务
+
+`server/content/` 与 Chrome 扩展分开运行，拥有独立服务端数据与部署。
+
+| 文档 | 一句话 |
+| --- | --- |
+| [项目目标与约束](../server/content/PROJECT.md) | 产品目标、当前范围、待验收项与后续顺序 |
+| [架构与技术路线](../server/content/ARCHITECTURE.md) | 模块、数据流、身份/凭据边界及技术取舍 |
+| [参考项目](../server/content/REFERENCES.md) | 来源、使用方式与核查时间 |
+| [接口与示例](../server/content/API.md) | HTTP/CLI、DTO、错误、限制和离线导入 |
+| [前端交接](../server/content/HANDOFF.md) | Claude Code 可接能力与真机验收条件 |
+| [部署与回滚](../server/content/deploy/README.md) | rasp5remote、域名、认证、TLS、状态目录 |
+
 ## 开发
 
 | 文档 | 一句话 |

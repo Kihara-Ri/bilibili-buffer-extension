@@ -1,0 +1,29 @@
+[Unit]
+Description=Bilibili content engine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/bilibili-content/current
+ExecStart=/usr/bin/python3 /opt/bilibili-content/current/run.py --db /var/lib/bilibili-content/content.sqlite3 serve --port 18711 --session-file /var/lib/bilibili-content/credentials/bilibili.json --allow-origin https://bilibili.kihara.cn
+Environment=PYTHONDONTWRITEBYTECODE=1
+DynamicUser=yes
+StateDirectory=bilibili-content
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=384M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
