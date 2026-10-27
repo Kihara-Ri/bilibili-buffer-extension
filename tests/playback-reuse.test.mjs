@@ -213,3 +213,10 @@ test('复用查询期间播放器取消：不再发起任何网络分片，直�
   // 桩网络的 get 会抛「不应走网络」；修复前这里拿到的是那个错误而不是取消。
   await assert.rejects(() => internals.loadPlayerRange(url(), 'bytes=0-299', controller.signal), { name: 'AbortError' });
 });
+
+
+test('语言前缀视频页与列表页拥有相同的源范围读取权限，其他路径仍拒绝', () => {
+  const identity = {runtimeId:'extension-id'};
+  for (const path of ['/zh-Hans/video/BV1/', '/en/list/watchlater']) assert.equal(sourceRangeScope({id:'extension-id',url:'https://www.bilibili.com'+path},identity),'reader');
+  assert.equal(sourceRangeScope({id:'extension-id',url:'https://www.bilibili.com/other/deep/video/BV1/'},identity),null);
+});

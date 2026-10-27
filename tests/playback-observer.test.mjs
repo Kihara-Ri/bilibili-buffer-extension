@@ -392,3 +392,17 @@ function stop(internals) {
 function fromVm(value) {
   return JSON.parse(JSON.stringify(value));
 }
+
+test('无 SIDX 且时长为小数时，码率估算仍只发整数 Range', async () => {
+  const {internals,window,video,requests}=loadObserver({hangFetch:true});
+  const MiB=1024*1024,url='https://a.bilivideo.com/progressive.mp4';
+  window.__biliBufferCache.ranges=()=>[[0,MiB]];
+  video.duration=431.7;
+  const track=internals.trackFor(url);track.size=10*MiB;track.anchor=MiB;
+  internals.cfg.mode='always';
+  try{
+    internals.planPrefetch();await new Promise(r=>setTimeout(r,5));
+    assert(requests.length>0);
+    assert(requests.every(r=>/^bytes=\d+-\d+$/.test(r.range)),JSON.stringify(requests));
+  }finally{stop(internals);}
+});

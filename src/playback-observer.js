@@ -43,6 +43,7 @@
   const observedVideos = new WeakSet();
   let lastPageKey = currentPageKey();
   let playerSequence = 0;
+  let sessionGeneration = 0;
   const stats = {
     requests: 0,
     slowRequests: 0,
@@ -446,6 +447,20 @@
     for (const video of videos()) observeVideo(video);
   }
 
+  /** 原地址的文件头可能来自原生初始化响应或离线复用；规划器会跳过这些已驻留字节，
+   * 因此必须主动把现成身份交给调度器，否则永远不会再有 start=0 的下载来启用镜像。
+   * @param {string} url @returns {void} */
+  function seedCachedReference(url) {
+    if (!network.needsReference?.(url) || !playbackCache?.copy) return;
+    const prefix = playbackCache.ranges(url)[0];
+    if (!prefix || prefix[0] !== 0) return;
+    const size = Math.min(1024, prefix[1]);
+    if (!Number.isSafeInteger(size) || size <= 0) return;
+    const bytes = new Uint8Array(size);
+    const meta = playbackCache.copy(url, 0, size, bytes, 0);
+    if (meta) network.seedReference(url, bytes, meta.total);
+  }
+
   // ---- 播放器请求 ----------------------------------------------------------------
 
   /**
@@ -496,34 +511,41 @@
     resetTracksAfterNavigation(); captureInitialPlayinfo();
     const track = trackFor(url);
     if (!track) return null;
+    seedCachedReference(url);
     const known = track.size || network.total(url);
     const start = Number(parsed[1]);
     const end = parsed[2] ? Number(parsed[2]) + 1 : known;
     if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start || end - start > MAX_RANGE || (known && end > known)) return null;
     // 预热窗口（无索引时）从播放器正在要的位置之后接续；向后拖动也必须允许回退。
     track.anchor = end;
+    const pageKey = currentPageKey(), generation = sessionGeneration;
+    const current = () => !signal.aborted && cfg.mode === "always" && generation === sessionGeneration &&
+      currentPageKey() === pageKey && tracks.get(track.key) === track && track.url === url;
     // 只有本次会话已在 playurl 里授权过的地址才尝试复用本机已下载的原始范围；
     // 未授权、无总量、超限、超时或桥不可用都返回 null，随后走网络路径。
     if (reuseClient) {
       const reuseTotal = reuse.totalHint(url) || known;
       const reused = reuseTotal > 0 ? await reuseClient.read({ url, start, end, total: reuseTotal }) : null;
+      // 离线查询的 await 期间也可能取消、导航或关闭后重开；命中与未命中都要先核对归属，
+      // 不能把旧会话字节重新放回刚清空的缓存，也不能用它建立新会话的镜像身份。
+      if (!current()) throw new DOMException("旧媒体请求已取消", "AbortError");
       if (reused) {
         track.size = reused.total;
         // 复用的字节来自本机磁盘，单独计数，不参与 CDN 吞吐与节点健康度统计。
         stats.reuseHits += 1;
         stats.reuseBytes += reused.body.length;
         playbackCache?.put(url, start, reused.body, reused.total, { contentType: reused.contentType });
+        seedCachedReference(url);
         renderPreheatProgress();
         return { body: reused.body, start, end: start + reused.body.length, total: reused.total, contentType: reused.contentType };
       }
     }
-    const pageKey = currentPageKey();
     try {
       // assembleRange 同步登记急需分片后才让规划器运行，后台不会抢先把同一段切成大分片。
       const pending = assembleRange(url, start, end, signal, known);
       queuePump();
       const result = await pending;
-      if (signal.aborted || cfg.mode !== "always" || currentPageKey() !== pageKey || tracks.get(track.key) !== track) throw new DOMException("旧媒体请求已取消", "AbortError");
+      if (!current()) throw new DOMException("旧媒体请求已取消", "AbortError");
       track.size = result.total;
       renderPreheatProgress();
       return result;
@@ -555,6 +577,7 @@
   /** 轨道前方想要的字节区间，附带 order（距播放点的秒数），越近越先下载。
    * @returns {{start: number, end: number, order: number}[]} */
   function wantedRanges(track, position) {
+    seedCachedReference(track.url);
     const lead = Math.max(1, Number(cfg.leadSeconds) || LEAD_SECONDS);
     const index = playbackCache?.index(track.url);
     if (index?.segments?.length) {
@@ -578,7 +601,9 @@
     if (!track.size || !track.anchor) return [];
     const duration = Number(currentVideo()?.duration) || 0;
     const rate = duration > 0 ? track.size / duration : 0;
-    const bytes = Math.min(AHEAD_BYTES_CAP, rate ? rate * lead : 24 * MB);
+    // 时长通常含小数，平均码率对应的窗口也可能有小数；HTTP Range 必须用整数，
+    // 向下取整既不越过字节预算，也避免最后一片因小数终点被 CDN 拒绝。
+    const bytes = Math.floor(Math.min(AHEAD_BYTES_CAP, rate ? rate * lead : 24 * MB));
     return [{ start: track.anchor, end: Math.min(track.size, track.anchor + bytes), order: 1 }];
   }
 
@@ -946,6 +971,7 @@
   // ---- 生命周期 ---------------------------------------------------------------------
 
   function clearSession() {
+    sessionGeneration += 1;
     network.reset();
     playbackCache?.clear();
     timelineMemo = { key: "", ranges: [] };

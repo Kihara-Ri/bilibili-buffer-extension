@@ -259,3 +259,186 @@ test('救援次数只统计对冲副本胜出，普通的失败换节点不算',
   await network.get(primary, 0, 4, { signal: signal() });
   assert.equal(network.snapshot().rescues, 0);
 });
+
+test('全部普通槽位等待首字节时，救援仍能启动而非等到 8 秒超时', async () => {
+  const { fetch, log } = server(4096, { onRequest: (url, init) => url === primary ? hang(init) : null });
+  const network = createNetwork({ fetch, maxSlots: 2, hedgeMs: 30, firstByteMs: 1500 });
+  network.register(manifest);
+  const jobs = [network.get(primary, 0, 4, { signal: signal() }), network.get(primary, 4, 8, { signal: signal() })];
+  const completion = Promise.all(jobs);
+  try {
+    const result = await Promise.race([completion, delay(650).then(() => null)]);
+    assert(result, '槽位被无首字节请求占满时，对冲不能饿死');
+    assertBytes(result[1].bytes, 4);
+    assert(log.peak <= 4, '普通 2 槽外只允许 2 个有界救援槽');
+  } finally { network.reset(); await completion.catch(() => {}); }
+});
+
+const mirrorSource = 'https://upos-hz-mirrorakam.akamaized.net/upgcxcode/01/02/test.m4s?deadline=9999999999&sign=secret';
+const hw = mirrorSource.replace('upos-hz-mirrorakam.akamaized.net', 'upos-sz-mirrorhw.bilivideo.com');
+const ali = mirrorSource.replace('upos-hz-mirrorakam.akamaized.net', 'upos-sz-mirrorali.bilivideo.com');
+
+test('健康原线路不探测镜像；原线路失败后校验文件头再使用额外 CDN', async () => {
+  let failed = false;
+  const { fetch, log } = server(4096, { onRequest: url => url === mirrorSource && failed ? new Response('no', { status: 503 }) : null });
+  const network = createNetwork({ fetch });
+  network.register({ data: { dash: { video: [{ baseUrl: mirrorSource }] } } });
+  assertBytes((await network.get(mirrorSource, 0, 1024, { signal: signal(), total: 4096 })).bytes, 0);
+  assert.deepEqual(log.requests.map(r => r.url), [mirrorSource], '健康线路没有探针流量');
+  failed = true;
+  try {
+    const result = await network.get(mirrorSource, 2048, 3072, { signal: signal(), total: 4096 });
+    assertBytes(result.bytes, 2048);
+    assert(log.requests.some(r => r.url === hw && r.a === 0 && r.b === 1023), '镜像需先取得相同初始化指纹');
+    assert.equal(network.snapshot().host, 'upos-sz-mirrorhw.bilivideo.com');
+    assert(!JSON.stringify(network.snapshot()).includes('secret'));
+  } finally { network.reset(); }
+});
+
+test('同总长但文件头不一致的镜像不得交付媒体；继续下一条 CDN', async () => {
+  let failed = false;
+  const { fetch, log } = server(4096, { onRequest: (url, _init, a, b) => {
+    if(url === mirrorSource && failed) return new Response('no', {status:503});
+    if(url === hw) return new Response(new Uint8Array(b-a+1).fill(255), {status:206,headers:{'content-range':`bytes ${a}-${b}/4096`}});
+    return null;
+  } });
+  const network = createNetwork({ fetch });
+  network.register({data:{dash:{video:[{baseUrl:mirrorSource}]}}});
+  await network.get(mirrorSource,0,1024,{signal:signal(),total:4096}); failed=true;
+  try {
+    assertBytes((await network.get(mirrorSource,2048,3072,{signal:signal(),total:4096})).bytes,2048);
+    assert(!log.requests.some(r=>r.url===hw&&r.a===2048),'不一致镜像不能进入媒体下载');
+    assert(log.requests.some(r=>r.url===ali));
+  } finally {network.reset();}
+});
+
+test('取消正在共享镜像校验的请求立即释放自己的槽位，不等另一个请求的探针', async () => {
+  let failed=false, release, observed;
+  const gate=new Promise(r=>{release=r;}), began=new Promise(r=>{observed=r;});
+  const {fetch}=server(4096,{onRequest:async(url,_init,a)=>{
+    if(url===mirrorSource&&failed)return new Response('no',{status:503});
+    if(url===hw&&a===0){observed();await gate;}
+  }});
+  const network=createNetwork({fetch});network.register({data:{dash:{video:[{baseUrl:mirrorSource}]}}});
+  await network.get(mirrorSource,0,1024,{signal:signal(),total:4096});failed=true;
+  const first=network.get(mirrorSource,2048,2304,{signal:signal(),total:4096});
+  const controller=new AbortController();let second;
+  try{
+    await began;
+    second=network.get(mirrorSource,3072,3328,{signal:controller.signal,total:4096});second.catch(()=>{});
+    await delay(10);controller.abort();await assert.rejects(second,{name:'AbortError'});await delay(5);
+    assert.equal(network.snapshot().active,1,'只应剩下首个请求持有的校验槽');
+  }finally{release();await first.catch(()=>{});network.reset();}
+});
+
+test('所有候选无响应时急需请求有总等待上限，归还原生路径且取消自建分片', async () => {
+  const {fetch}=server(4096,{onRequest:(_url,init)=>hang(init)});
+  const network=createNetwork({fetch,hedgeMs:10,firstByteMs:1000,demandTimeoutMs:60});network.register(manifest);
+  const outcome=network.get(primary,0,4,{signal:signal(),total:4096});outcome.catch(()=>{});
+  try{
+    const result=await Promise.race([outcome.then(()=> 'success',e=>e.name),delay(180).then(()=> 'still waiting')]);
+    assert.equal(result,'TimeoutError','新增候选不能成倍延长播放器总等待');
+    await delay(5);assert.equal(network.snapshot().active,0);assert.deepEqual(network.inflightRanges(primary),[]);
+  }finally{network.reset();await outcome.catch(()=>{});}
+});
+
+test('共享镜像校验的发起者取消，其他有效请求仍可使用同一候选', async () => {
+  let failed=false, observed;const began=new Promise(r=>{observed=r;});
+  const {fetch}=server(4096,{onRequest:async(url,init,a)=>{
+    if(!failed)return null;
+    if(url===mirrorSource)return new Response('no',{status:503});
+    if(url===hw&&a===0){observed();await new Promise((resolve,reject)=>{const t=setTimeout(resolve,80);init.signal.addEventListener('abort',()=>{clearTimeout(t);reject(init.signal.reason);},{once:true});});return null;}
+    if(url===hw)return null;
+    return hang(init);
+  }});
+  const network=createNetwork({fetch,demandTimeoutMs:350,firstByteMs:1000});network.register({data:{dash:{video:[{baseUrl:mirrorSource}]}}});
+  await network.get(mirrorSource,0,1024,{signal:signal(),total:4096});failed=true;
+  const controller=new AbortController(),first=network.get(mirrorSource,2048,2304,{signal:controller.signal,total:4096});first.catch(()=>{});
+  try{
+    await began;const second=network.get(mirrorSource,3072,3328,{signal:signal(),total:4096});
+    await delay(10);controller.abort();await assert.rejects(first,{name:'AbortError'});
+    assertBytes((await second).bytes,3072);assert.equal(network.snapshot().host,'upos-sz-mirrorhw.bilivideo.com');
+  }finally{network.reset();}
+});
+
+test('主备都不出首字节时轮换停滞备用，保留原请求并让额外镜像及时接手', async () => {
+  const nativeBackup=mirrorSource.replace('upos-hz-mirrorakam.akamaized.net','upos-sz-mirrorcosov.bilivideo.com');let failed=false;
+  const {fetch}=server(4096,{onRequest:(url,init)=>failed&&[mirrorSource,nativeBackup].includes(url)?hang(init):null});
+  const network=createNetwork({fetch,hedgeMs:20,firstByteMs:2000,demandTimeoutMs:1000});
+  network.register({data:{dash:{video:[{baseUrl:mirrorSource,backupUrl:[nativeBackup]}]}}});
+  await network.get(mirrorSource,0,1024,{signal:signal(),total:4096});failed=true;
+  try{assertBytes((await network.get(mirrorSource,2048,3072,{signal:signal(),total:4096})).bytes,2048);assert.equal(network.snapshot().host,'upos-sz-mirrorhw.bilivideo.com');}
+  finally{network.reset();}
+});
+
+test('最后一个镜像校验等待者取消时，独立探针与排队均被释放', async () => {
+ let failed=false,observed;const began=new Promise(r=>{observed=r;});
+ const {fetch}=server(4096,{onRequest:(url,init)=>{if(!failed)return null;if(url===mirrorSource)return new Response('no',{status:503});observed();return hang(init);}});
+ const network=createNetwork({fetch});network.register({data:{dash:{video:[{baseUrl:mirrorSource}]}}});
+ await network.get(mirrorSource,0,1024,{signal:signal(),total:4096});failed=true;
+ const controller=new AbortController(),job=network.get(mirrorSource,2048,2304,{signal:controller.signal,total:4096});job.catch(()=>{});
+ try{await began;controller.abort();await assert.rejects(job,{name:'AbortError'});await delay(5);assert.equal(network.snapshot().active,0);assert.equal(network.snapshot().queued,0);}
+ finally{network.reset();}
+});
+
+test('后台镜像校验排队后被播放器复用，优先级随分片提升而立即启动', async () => {
+ const blocker='https://block.bilivideo.com/block.m4s';let failed=false,scheduled=false,network;
+ const {fetch}=server(4096,{onRequest:(url,init)=>{
+  if(url===blocker)return hang(init);
+  if(failed&&url===mirrorSource){if(!scheduled){scheduled=true;network.prefetch(blocker,0,256,{total:4096});}return new Response('no',{status:503});}
+ }});
+ network=createNetwork({fetch,backgroundSlots:1,demandTimeoutMs:300});network.register({data:{dash:{video:[{baseUrl:mirrorSource}]}}});
+ await network.get(mirrorSource,0,1024,{signal:signal(),total:4096});failed=true;
+ network.prefetch(mirrorSource,2048,2304,{total:4096});
+ try{await delay(25);assert.equal(network.snapshot().queued,1);assertBytes((await network.get(mirrorSource,2048,2304,{signal:signal(),total:4096})).bytes,2048);}
+ finally{network.reset();}
+});
+
+test('首次并发探测总长未知时，异总长分片不能混入缓存或拼装响应', async () => {
+  const writes=[];
+  const {fetch}=server(4*MiB,{onRequest:(_url,_init,a,b)=>reply(a,b,a===0?4*MiB:8*MiB)});
+  const network=createNetwork({fetch,onPiece:(_url,start,_bytes,total)=>writes.push({start,total})});
+  try{
+    await assert.rejects(network.get(primary,0,128*KiB,{signal:signal()}),/总长|范围校验/);
+    assert(writes.every(w=>w.total===4*MiB),'错误长度的分片不能先进入驻留缓存');
+  }finally{network.reset();}
+});
+
+test('超出安全整数范围的 Content-Range 总长必须拒绝，不能交付错误元数据', async () => {
+  let writes=0;
+  const fetch=async()=>new Response(new Uint8Array([1,2,3,4]),{status:206,headers:{'content-range':'bytes 0-3/9007199254740993'}});
+  const network=createNetwork({fetch,onPiece:()=>writes++});
+  try{await assert.rejects(network.get(primary,0,4,{signal:signal()}),/范围校验/);assert.equal(writes,0);}
+  finally{network.reset();}
+});
+
+for(const updateAt of ['primary','backup'])test(`清单在 ${updateAt} 请求中更新时，不得让旧候选跳过校验或写缓存`,async()=>{
+ const origin=mirrorSource.replace('sign=secret','sign=primary');
+ const oldBackup=mirrorSource.replace('upos-hz-mirrorakam.akamaized.net','upos-sz-mirrorcosov.bilivideo.com').replace('sign=secret','sign=backup');
+ const staleMirror=oldBackup.replace('upos-sz-mirrorcosov.bilivideo.com','upos-sz-mirrorhw.bilivideo.com');
+ const writes=[],requests=[];let updated=false,network;
+ network=createNetwork({onPiece:(_u,_a,body)=>writes.push(body[0]),fetch:async(url,init)=>{
+  const [a,b]=rangeOf(init);requests.push({url,a});
+  if(!updated&&url===(updateAt==='primary'?origin:oldBackup)){
+   updated=true;network.register({dash:{video:[{baseUrl:origin}]}});network.seedReference(origin,new Uint8Array(1024).fill(7),4096);
+   if(updateAt==='backup')return new Response(new Uint8Array(b-a+1).fill(255),{status:206,headers:{'content-range':`bytes ${a}-${b}/4096`}});
+  }
+  if(url===staleMirror)return new Response(new Uint8Array(b-a+1).fill(255),{status:206,headers:{'content-range':`bytes ${a}-${b}/4096`}});
+  return new Response('no',{status:503});
+ }});
+ network.register({dash:{video:[{baseUrl:origin,backupUrl:[oldBackup]}]}});network.seedReference(origin,new Uint8Array(1024).fill(7),4096);
+ try{await assert.rejects(network.get(origin,2048,2304,{signal:signal(),total:4096}));assert.deepEqual(writes,[]);assert(!requests.some(r=>r.url===staleMirror&&r.a===2048));}
+ finally{network.reset();}
+});
+
+test('清单修订后能重新选择健康候选，旧轮次作废不应隔离正常节点',async()=>{
+ let network,changed=false;const writes=[];
+ network=createNetwork({onPiece:(_u,_a,body)=>writes.push(body[0]),fetch:async(url,init)=>{
+  const [a,b]=rangeOf(init);
+  if(!changed){changed=true;network.register({dash:{video:[{baseUrl:mirrorSource,backupUrl:[backup]}]}});return new Response(new Uint8Array(b-a+1).fill(255),{status:206,headers:{'content-range':`bytes ${a}-${b}/4096`}});}
+  return reply(a,b,4096);
+ }});
+ network.register({dash:{video:[{baseUrl:mirrorSource}]}});
+ try{assertBytes((await network.get(mirrorSource,2048,2304,{signal:signal(),total:4096})).bytes,2048);assert.deepEqual(writes,[byteAt(2048)]);assert.equal(network.snapshot().blocked,0);assert.equal(network.snapshot().active,0);}
+ finally{network.reset();}
+});

@@ -59,6 +59,7 @@ Watching Bilibili from abroad usually means three headaches: constant buffering,
 <summary>How it works (for the curious)</summary>
 
 - Prefetch: after the player's first media request, multiple Range chunks are pipelined in parallel to warm up the window ahead. When a player request is fully covered it's answered from local data; gaps are split and filled, reusing in-flight chunks.
+- Slow or failed manifest routes can fall back to compatible mirrors after checking the original media prefix and total size; healthy routes do not trigger mirror probes. Language-prefixed video and list pages are supported.
 - Progress bar coloring maps the real SIDX segment index onto the timeline instead of estimating from byte ratios.
 - The in-page memory cache is capped at 128 MiB, with the window ahead capped separately at 96 MiB; turning the switch off cancels prefetching and cleans up.
 - Full caching writes chunks in IndexedDB transactions and only counts progress once chunks are contiguously committed; expired playback addresses are refreshed and tasks resume automatically in the background.
@@ -101,7 +102,7 @@ UI strings live in `src/locales/{zh-CN,en}.js`; `tests/i18n.test.mjs` checks the
 
 [GPL-3.0](LICENSE). You may use, modify and redistribute it freely; redistributed versions based on this project must also be open-sourced under GPL-3.0. Notices for referenced projects are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Current version 2.15.0. History: [开发日志.md](开发日志.md) (Chinese) and [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases). Issues and suggestions are welcome in [Issues](https://github.com/Kihara-Ri/bilibili-buffer-extension/issues), in English or Chinese.
+Current version 2.16.0. History: [开发日志.md](开发日志.md) (Chinese) and [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases). Issues and suggestions are welcome in [Issues](https://github.com/Kihara-Ri/bilibili-buffer-extension/issues), in English or Chinese.
 
 ### Release channels
 

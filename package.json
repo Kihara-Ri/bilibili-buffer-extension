@@ -1,6 +1,6 @@
 {
   "name": "haineicunzhi",
-  "version": "2.15.0",
+  "version": "2.16.0",
   "private": true,
   "license": "GPL-3.0-only",
   "type": "module",
@@ -26,7 +26,9 @@
     "check": "node scripts/check-syntax.mjs && node scripts/check-browser-compat.mjs",
     "build:github": "node scripts/build-release.mjs --github",
     "update:key": "node scripts/github-update-key.mjs",
-    "test:updater": "node tests/run-github-updater.mjs"
+    "test:updater": "node tests/run-github-updater.mjs",
+    "test:cdn": "node tests/run-cdn-recovery-comparison.mjs",
+    "test:live:playback": "node scripts/live-playback-recovery.mjs"
   },
   "devDependencies": {
     "playwright": "1.64.0"

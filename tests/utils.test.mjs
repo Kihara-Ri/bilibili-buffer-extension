@@ -317,3 +317,8 @@ test("关闭原标签页后可从仅音频记录恢复地址", () => {
   assert.equal(source.mimeType, "audio/mp4");
   assert.equal(getPersistedMediaSource({ mediaKind: "audio", tracks: {} }), null);
 });
+
+
+test("带语言前缀的稍后再看页可识别当前视频", () => {
+  assert.deepEqual(parseBiliVideoUrl("https://www.bilibili.com/zh-Hans/list/watchlater?bvid=BV1LP8C6sEAm&p=2"), {supported:true,bvid:"BV1LP8C6sEAm",aid:null,page:2});
+});

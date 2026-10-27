@@ -42,7 +42,7 @@ export function sourceRangeScope(sender, { runtimeId, offscreenUrl } = {}) {
   const frameUrl = String(sender.url || "").split("#")[0];
   if (offscreenUrl && !sender.tab && frameUrl === offscreenUrl) return "writer";
   const pageUrl = sender.tab?.url || frameUrl;
-  return /^https:\/\/www\.bilibili\.com\/(video|list)\//.test(String(pageUrl || "")) ? "reader" : null;
+  return /^https:\/\/www\.bilibili\.com\/(?:[a-z]{2}(?:-[A-Za-z]{2,4})?\/)?(video|list)\//.test(String(pageUrl || "")) ? "reader" : null;
 }
 
 /** 有界源范围库；写入在事务成功后才算完成，异常一律向上抛给服务层吞掉。
