@@ -1,4 +1,5 @@
 import { sha256, validateUpdatePath } from './github-update-protocol.js';
+import { t } from './i18n.js';
 
 /** @param {FileSystemDirectoryHandle} directory @returns {{read:Function,write:Function,remove:Function}} */
 export function directoryIO(directory) {
@@ -26,22 +27,46 @@ export function directoryIO(directory) {
   };
 }
 
-/**
- * 选择另一份同名扩展不能当成选中了当前运行目录；写入一次性文件，由当前扩展读取验证。
- * @param {FileSystemDirectoryHandle} directory
- * @param {{manifest:object,readResource:(path:string)=>Promise<string>}} options @returns {Promise<void>}
- */
+/** 错误码与界面语言分开，查找时只跳过明确的不匹配，不能吞掉权限或设备故障。 @param {string} key @returns {Error & {code:string}} */
+function directoryError(key) { return Object.assign(new Error(t(key)), {code:key}); }
+
+/** 只读预检，查找目录时不得先向所有文件夹写探针。 @param {FileSystemDirectoryHandle} directory @param {{manifest:object}} options @returns {Promise<object>} */
+export async function inspectInstallDirectory(directory, { manifest }) {
+  let repository = false;
+  try { await directory.getDirectoryHandle('.git'); repository = true; }
+  catch (error) {
+    // worktree 的 .git 是文件；TypeMismatch 同样说明选中了受版本控制的源码目录。
+    if (error.name === 'TypeMismatchError') repository = true;
+    else if (error.name !== 'NotFoundError') throw error;
+  }
+  if (repository) throw directoryError('update.directoryRepository');
+  let text;
+  try { text = await (await (await directory.getFileHandle('manifest.json')).getFile()).text(); }
+  catch (error) {
+    // 空目录／数据目录要指出缺少的安装文件；权限和设备故障仍保留原始错误。
+    if (error.name === 'NotFoundError' || error.name === 'TypeMismatchError') throw directoryError('update.directoryMissingManifest');
+    throw error;
+  }
+  let local;
+  try { local = JSON.parse(text); }
+  catch { throw directoryError('update.directoryInvalidManifest'); }
+  if (!local || typeof local !== 'object' || Array.isArray(local)) throw directoryError('update.directoryInvalidManifest');
+  if (local.version !== manifest.version || local.background?.service_worker !== manifest.background?.service_worker) throw directoryError('update.directoryWrongInstallation');
+  return local;
+}
+
+/** 随机探针必须由当前扩展读回，防止把下载副本当作安装目录。 @param {FileSystemDirectoryHandle} directory @param {{manifest:object,readResource:Function}} options @returns {Promise<void>} */
 export async function bindInstallDirectory(directory, { manifest, readResource }) {
-  try { await directory.getDirectoryHandle('.git'); throw new Error('Choose an unpacked release folder, not a development repository'); }
-  catch (error) { if (error.name !== 'NotFoundError') throw error; }
-  const local = JSON.parse(await (await (await directory.getFileHandle('manifest.json')).getFile()).text());
-  if (local.version !== manifest.version || local.background?.service_worker !== manifest.background?.service_worker) throw new Error('The selected folder does not match this installation');
+  await inspectInstallDirectory(directory, {manifest});
   const nonce = crypto.randomUUID(), path = `.haineicunzhi-update-${nonce}.json`;
   try {
     const writable = await (await directory.getFileHandle(path, { create: true })).createWritable();
     try { await writable.write(nonce); await writable.close(); }
     catch (error) { await writable.abort?.().catch(() => {}); throw error; }
-    if (await readResource(path) !== nonce) throw new Error('The selected folder is not the running extension');
+    let actual;
+    try { actual = await readResource(path); }
+    catch (cause) { throw Object.assign(directoryError('update.directoryWrongInstallation'), {cause}); }
+    if (actual !== nonce) throw directoryError('update.directoryWrongInstallation');
   } finally { await directory.removeEntry(path).catch(() => {}); }
 }
 

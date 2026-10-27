@@ -24,6 +24,12 @@
     "https://*.hdslb.com/*",
     "https://*.akamaized.net/*"
   ],
+  "optional_host_permissions": [
+    "https://api.github.com/*",
+    "https://github.com/*",
+    "https://release-assets.githubusercontent.com/*",
+    "https://objects.githubusercontent.com/*"
+  ],
   "background": {
     "service_worker": "src/background.js",
     "type": "module"

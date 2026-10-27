@@ -1,7 +1,18 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {generateKeyPairSync} from 'node:crypto';
 import {createSignedUpdate} from '../scripts/lib/github-update-package.mjs';
 import {verifyUpdateEnvelope} from '../src/github-update-protocol.js';
+import {readFile} from 'node:fs/promises';
+import {GITHUB_ORIGINS} from '../src/github-update-network.js';
 const pair=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
+test('直接加载源码目录也能申请更新域名，商店构建仍剔除这些权限',async()=>{
+ const source=await readFile(new URL('../manifest.json',import.meta.url));
+ const manifest=JSON.parse(source);
+ assert.deepEqual(manifest.optional_host_permissions,[...GITHUB_ORIGINS]);
+ const {prepareDistribution}=await import('../scripts/lib/distribution-build.mjs');
+ const files=()=>new Map([['manifest.json',source]]);
+ assert.equal(JSON.parse(prepareDistribution(files(),'store').get('manifest.json')).optional_host_permissions,undefined);
+ assert.deepEqual(JSON.parse(prepareDistribution(files(),'github').get('manifest.json')).optional_host_permissions,[...GITHUB_ORIGINS]);
+});
 test('构建签名更新集合，浏览器协议可验证相同原始文件',async()=>{const manifest={manifest_version:3,version:'2.15.0',background:{service_worker:'src/background.js'}};const files=new Map([['manifest.json',Buffer.from(JSON.stringify(manifest))],['src/background.js',Buffer.from('export const initialized=true;')]]);const envelope=createSignedUpdate(files,pair.privateKey);const result=await verifyUpdateEnvelope(envelope,pair.publicKey.export({format:'jwk'}),{currentVersion:'2.14.5'});assert.equal(result.version,'2.15.0');assert.equal(new TextDecoder().decode(result.files.get('src/background.js')),'export const initialized=true;');});
 test('发布集合不得混入私钥、开发入口和非法文件路径',()=>{for(const path of ['.env','private.pem','src/dev-reload.js','../manifest.json']){const files=new Map([['manifest.json',Buffer.from('{"version":"2.15.0"}')],[path,Buffer.from('secret')]]);assert.throws(()=>createSignedUpdate(files,pair.privateKey));}});
 

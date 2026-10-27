@@ -18,6 +18,7 @@ await writeFile(path.join(fixture,'update-public-key.json'),JSON.stringify({sche
 const privatePath=path.join(base,'test-key.pem');await writeFile(privatePath,pair.privateKey.export({format:'pem',type:'pkcs8'}),{mode:0o600});
 execFileSync(process.execPath,[path.join(fixture,'scripts/build-release.mjs'),'--github'],{env:{...process.env,UPDATE_SIGNING_KEY:privatePath},stdio:'pipe'});
 const unpacked=path.join(fixture,'dist/github/unpacked');
+execFileSync(process.execPath,[path.join(root,'tests/run-github-update-check.mjs'),unpacked],{stdio:'inherit'});
 const manifest=JSON.parse(await readFile(path.join(unpacked,'manifest.json'))),id=extensionIdFromKey(manifest.key);
 // 目标包来自同一生产构建器，仅版本与测试标记不同。
 const targetVersion='2.15.1';
