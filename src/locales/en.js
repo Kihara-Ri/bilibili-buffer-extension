@@ -129,6 +129,7 @@ export default {
   "hint.incomplete": "Caching didn't finish",
   "button.connecting": "Connecting to the CDN",
   "hint.starting": "Fetching the cacheable versions of this video…",
+  "hint.startUnconfirmed": "The cache task has not been confirmed yet. Try again; progress will appear automatically if it starts later.",
   "button.retry": "Try again",
   "audio.unknownSize": "Size unknown",
   "audio.extractTip": "This video is a single MP4: the whole file is downloaded, then the audio track is extracted losslessly and saved in its original format",

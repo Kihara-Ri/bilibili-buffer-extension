@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="../popup.css"><title>缓存启动状态测试</title></head>
+<body>
+<script type="module">
+  // 只替换 Chrome 消息边界；结构、样式和交互均使用生产文件。
+  const parsed = new DOMParser().parseFromString(await (await fetch('../popup.html')).text(), 'text/html');
+  for (const node of [...parsed.body.children]) {
+    if (node.tagName === 'SCRIPT') continue;
+    const element = document.importNode(node, true);
+    for (const asset of element.querySelectorAll('[src], [href]')) {
+      for (const attribute of ['src', 'href']) {
+        const value = asset.getAttribute(attribute);
+        if (value && !/^(https?:|\.\.\/|#|data:)/.test(value)) asset.setAttribute(attribute, '../' + value);
+      }
+    }
+    document.body.append(element);
+  }
+  await import('./popup-startup-integration.mjs');
+</script>
+</body></html>

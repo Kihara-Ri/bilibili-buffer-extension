@@ -65,4 +65,9 @@
 
 新增同帧连续切档测试，稳定复现减少动态模式下仍有四个 CSSTransition：color、clip-path 和两项 transform，时长均为 0.01ms。这解释了先前动画名为 undefined、串行重试可能通过的断言：CSS Transition 不是 CSS Animation，animationName 不存在，但过渡在同帧仍处于 running。
 
-修复在减少动态媒体查询中直接禁用整个画质区域与伪元素的 transition。新的回归在减少动态模式下连续四次切档均为零运行/待决动画；切回普通模式后仍能观察到 quality-tide、quality-bubbles 与登顶动画。新增同帧回归、完整 `npm run test:popup`（节点稳定性、焦点、pending、滑杆、减少动态、评价邀请）、321/321 单测、语法/浏览器门禁与构建均通过。当前测试包哈希已在上节同步，减少动态截图在 `.tmp/repair/quality-reduced-motion.png`。
+修复在减少动态媒体查询中直接禁用整个画质区域与伪元素的 transition。新的回归在减少动态模式下连续四次切档均为零运行/待决动画；切回普通模式后仍能观察到 quality-tide、quality-bubbles 与登顶动画。新增同帧回归、完整 `npm run test:popup`（节点稳定性、焦点、pending、滑杆、减少动态、评价邀请）、321/321 单测、语法/浏览器门禁与构建均通过。当时测试包哈希保留在上节，减少动态截图在 `.tmp/repair/quality-reduced-motion.png`。
+
+
+## 后续修复：缓存启动按钮闪回
+
+随后修复了启动状态被 700ms 片库刷新覆盖的问题。启动 pending 与当前选择绑定，等待实际任务登记；失败、超时重试及迟到响应分别处理，避免恢复粉色或改回旧画质。新增 9 组真实弹窗行为回归，完整弹窗套件、321/321 单测、语法/兼容门禁与构建通过。该阶段测试包已包含修复；正式版本另整合了主分支的关闭弹窗删除修复，发布校验值见下列记录。边界与证据见[缓存启动按钮修复](2026-10-27-cache-button-startup.md)。

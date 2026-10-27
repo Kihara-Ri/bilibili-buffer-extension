@@ -46,6 +46,9 @@ if (updateLink) {
 const DEFAULT_PROGRESS_COLOR = "#00a1d6";
 // 删除先从列表隐藏，提示里可撤销；超时（或弹窗关闭）才真正删除数据。
 const DELETE_UNDO_MS = 6000;
+// START_CACHE 成功只代表已提交启动；任务落盘还要经过媒体初始化，不能据响应清掉 pending。
+const CACHE_START_TIMEOUT_MS = 30_000;
+const CACHE_START_CHECK_MS = 5000;
 // 未登录时「去登录」打开的 B 站登录页；只是新开一个标签，不需要额外权限，也不读取任何账号数据。
 const BILIBILI_LOGIN_URL = "https://passport.bilibili.com/login";
 const TASK_EVENTS = ["CACHE_PROGRESS", "CACHE_RETRY", "CACHE_COMPLETE", "CACHE_ERROR", "CACHE_PAUSED", "CACHE_DELETED"];
@@ -124,7 +127,8 @@ const state = {
   activeView: "current",
   settingsOpen: false,
   libraryRevision: 0,
-  libraryLoading: false,
+  libraryLoading: null,
+  cacheStarts: new Map(),
   deletedAt: new Map(),
   // 待删除：videoId → { timer, resume }。期间行被隐藏，撤销即恢复。
   pendingDeletes: new Map(),
@@ -339,6 +343,7 @@ async function initialize() {
   window.addEventListener("pagehide", () => {
     clearInterval(state.refreshTimer);
     clearInterval(state.assistTimer);
+    for (const request of state.cacheStarts.values()) clearTimeout(request.timer);
     // 撤销期内的删除不在这里补发：关闭中的弹窗发出的消息会被丢弃，由后台在 port 断开时提交。
   }, { once: true });
 }
@@ -396,9 +401,13 @@ function applyPopupSnapshot(snapshot) {
   renderCurrent();
 }
 
-async function refreshLibrary() {
-  if (state.libraryLoading) return;
-  state.libraryLoading = true;
+function refreshLibrary() {
+  // 复用在途查询，启动看门狗必须等待同一份结果，不能把“查询中”当成空列表。
+  if (!state.libraryLoading) state.libraryLoading = readLibrary();
+  return state.libraryLoading;
+}
+
+async function readLibrary() {
   const revision = state.libraryRevision;
   try {
     const result = await send("LIST_VIDEOS");
@@ -411,15 +420,13 @@ async function refreshLibrary() {
       for (const video of state.videos) if (!incoming.has(video.id) && !state.deletedAt.has(video.id)) incoming.set(video.id, video);
     }
     state.videos = [...incoming.values()].sort(compareLibraryTasks);
-    const active = getCurrentPageVideos().find((video) => video.status === "downloading");
-    const activeQuality = Number(active?.requestedQuality || active?.quality) || 0;
-    if (activeQuality) { state.selectedQuality = activeQuality; state.selectedCodec = "auto"; }
+    // 打开弹窗时由快照恢复活动画质；此后的轮询不能让迟到的旧任务改掉用户的新选择。
     renderLibrary();
     if (state.pageInfo) renderCurrent();
   } catch (error) {
     if (!state.videos.length) renderEmptyLibrary(t("library.readFailed"), error.message);
   } finally {
-    state.libraryLoading = false;
+    state.libraryLoading = null;
   }
 }
 
@@ -491,6 +498,7 @@ function renderCurrent() {
   elements.pageMark.hidden = info.pageCount <= 1;
   setText(elements.pageMark, `P${info.page} / ${info.pageCount}`);
 
+  reconcileCacheStarts();
   const cached = findCurrentVideo();
   for (const button of elements.cacheMode.querySelectorAll("[data-cache-mode]")) {
     const selected = (button.dataset.cacheMode === "audio") === isAudioMode();
@@ -526,6 +534,16 @@ function renderTaskToggle(status) {
 
 /** 主按钮与下方状态行：空闲 → 缓存；下载中 → 进度 + 速度 + 「暂停」；暂停 / 出错 → 同样的进度样式 + 「继续」；完成 → 结果。 */
 function renderCacheAction(cached) {
+  const request = state.cacheStarts.get(cacheStartSelection().key);
+  if (request) {
+    // pending 与片库数据独立：空列表、旧暂停记录以及启动响应都不能提前恢复粉色按钮。
+    renderTaskToggle("");
+    const bytes = cached ? `${formatBytes(committedBytes(cached))} / ${formatBytes(cached.totalBytes)}` : "";
+    setButtonState(request.error ? "error" : "downloading", t(request.error ? "button.retry" : "button.connecting"), "", cached ? taskProgress(cached) : 0, !request.error, bytes);
+    setHint(request.error || t("hint.starting"), Boolean(request.error));
+    elements.cacheButton.title = "";
+    return;
+  }
   renderTaskToggle(cached?.status);
   if (!cached) {
     if (state.qualitiesLoading) {
@@ -960,18 +978,74 @@ function setHint(message, isError) {
   elements.actionHint.hidden = !message;
 }
 
+/** 捕获请求发起时的选择；音频任务不随隐藏的画质/编码变化而改变身份。 */
+function cacheStartSelection() {
+  const selection = { pageId: state.pageInfo?.id, tabId: state.tab?.id, url: state.tab?.url, mode: state.cacheMode, quality: state.selectedQuality, codec: state.selectedCodec };
+  selection.key = JSON.stringify([selection.tabId, selection.pageId, selection.mode, isAudioMode() ? 0 : selection.quality, isAudioMode() ? "" : selection.codec]);
+  return selection;
+}
+
+/** 与后台 START_CACHE 的任务选择规则一致：页面、模式、请求画质与编码匹配。 */
+function matchesCacheStart(video, selection) {
+  return getVideoPageId(video) === selection.pageId && isAudioOnlyCache(video) === (selection.mode === "audio") &&
+    (selection.mode === "audio" || Number(video.requestedQuality || video.quality) === selection.quality && isVideoCodecSelectionMatch(video, selection.codec));
+}
+
+function cacheStartTaskVersion(video) {
+  return video ? JSON.stringify([video.id, video.status, video.runStartedAt || 0, video.updatedAt || 0, video.error || ""]) : "";
+}
+
+function clearCacheStart(request) {
+  clearTimeout(request.timer);
+  if (state.cacheStarts.get(request.selection.key) === request) state.cacheStarts.delete(request.selection.key);
+}
+
+/** 只有匹配的真实任务能接管启动状态；续传时旧 paused/error 快照不能冒充新一轮结果。 */
+function reconcileCacheStarts() {
+  for (const request of state.cacheStarts.values()) {
+    const video = state.videos.find(item => !state.pendingDeletes.has(item.id) && matchesCacheStart(item, request.selection));
+    if (!video || !["downloading", "complete", "paused", "error"].includes(video.status)) continue;
+    if (video.status === "downloading" || video.status === "complete" || cacheStartTaskVersion(video) !== request.baseline) clearCacheStart(request);
+  }
+}
+
+/** 消息通道或初始化迟迟无结果时先查询任务；查询自身也有上限，避免按钮永久禁用。 */
+async function checkCacheStart(request) {
+  let timer;
+  try {
+    await Promise.race([refreshLibrary(), new Promise(resolve => { timer = setTimeout(resolve, CACHE_START_CHECK_MS); })]);
+  } finally {
+    clearTimeout(timer);
+  }
+  reconcileCacheStarts();
+  if (state.cacheStarts.get(request.selection.key) !== request || request.error) return;
+  request.error = t("hint.startUnconfirmed");
+  if (state.pageInfo) renderCurrent();
+}
+
 async function startCache() {
   if (!state.pageInfo?.supported || !state.tab) return;
   if (!isAudioMode() && !state.selectedQuality) return;
+  const selection = cacheStartSelection();
+  const previous = state.cacheStarts.get(selection.key);
+  // disabled 是反馈，身份检查才是去重边界，键盘/合成事件和右侧继续按钮也走这里。
+  if (previous && !previous.error) return;
   cancelPendingDeleteForSelection();
-  setButtonState("downloading", t("button.connecting"), "", 0, true);
-  setHint(t("hint.starting"), false);
+  const cached = findCurrentVideo();
+  if (previous) clearCacheStart(previous);
+  const request = { selection, baseline: cacheStartTaskVersion(cached), error: "", timer: null };
+  state.cacheStarts.set(selection.key, request);
+  request.timer = setTimeout(() => void checkCacheStart(request), CACHE_START_TIMEOUT_MS);
+  renderCurrent();
   try {
-    await send("START_CACHE", { url: state.tab.url, tabId: state.tab.id, quality: state.selectedQuality, codec: state.selectedCodec, mode: state.cacheMode });
+    await send("START_CACHE", { url: selection.url, tabId: selection.tabId, quality: selection.quality, codec: selection.codec, mode: selection.mode });
     await refreshLibrary();
   } catch (error) {
-    setButtonState("error", t("button.retry"), "", 0, false);
-    setHint(error.message, true);
+    // 真实进度可能先于响应到达；旧请求也可能在超时重试后才失败，不能覆盖新一代状态。
+    if (state.cacheStarts.get(selection.key) !== request || request.error) return;
+    clearTimeout(request.timer);
+    request.error = error.message;
+    if (state.pageInfo) renderCurrent();
   }
 }
 

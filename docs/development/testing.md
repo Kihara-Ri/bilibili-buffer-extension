@@ -10,7 +10,7 @@
 | --- | --- | --- | --- |
 | 语法与版本门禁 | `npm run check` | 否 | 全部 `.js` / `.mjs` 跑 `node --check`；本机 Chrome 主版本必须在 `browser-compat.json` 的已验收列表里 |
 | 单元与 Node 集成 | `npm test` | 否 | `tests/*.test.mjs`，不启动浏览器 |
-| 弹窗与后台链路 | `npm run test:popup` | 否 | 真实 Chromium 加载真实 `popup.html`；同一运行器执行 background / offscreen 消息链路夹具；另跑 `run-review-prompt.mjs`（评价邀请显示条件、节点稳定、持久化、焦点） |
+| 弹窗与后台链路 | `npm run test:popup` | 否 | 真实 Chromium 加载真实 `popup.html`；同一运行器执行 background / offscreen 消息链路夹具；另跑 `run-popup-startup.mjs`（启动 pending、慢响应/延迟登记、重复点击、失败/超时与选择隔离）、`run-review-prompt.mjs`（评价邀请显示条件、节点稳定、持久化、焦点） |
 | 在线网络 | `npm run test:network` | 否 | 受控延迟与需求响应：`run-playback-network.mjs` + `run-playback-demand.mjs` |
 | 在线播放 | `npm run test:playback` | 否 | 真实 AVC/AAC 夹具驱动 MediaSource 双轨播放、拖动、零网络命中 |
 | 生产扩展 | `npm run test:extension` | 否 | 先 `npm run build`，再加载生产包验证注入、命中与热重载（标记 + SHA-256） |
