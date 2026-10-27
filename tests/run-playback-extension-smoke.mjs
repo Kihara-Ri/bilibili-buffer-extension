@@ -26,12 +26,12 @@ try {
   const workers = context.serviceWorkers();
   let worker = workers[0] || await context.waitForEvent('serviceworker');
   const page = await context.newPage();
-  await page.route('https://www.bilibili.com/video/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head></head><body><video></video></body></html>' }));
+  await page.route('https://www.bilibili.com/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head></head><body><video></video></body></html>' }));
   let mediaRequests = 0;
   await page.route('https://cache-test.bilivideo.com/**', route => { mediaRequests++; return route.abort(); });
-  const check = async () => {
-    await page.goto('https://www.bilibili.com/video/BV1fixture/');
-    await page.waitForFunction(() => window.__biliBufferPlaybackAssistInternals?.cfg.mode === 'always' && document.documentElement.dataset.biliBufferAssistBridge);
+  const check = async (pathname = "/video/BV1fixture/") => {
+    await page.goto('https://www.bilibili.com' + pathname);
+    await page.waitForFunction(() => window.__biliBufferPlaybackAssistInternals?.cfg.mode === 'always' && document.documentElement.dataset.biliBufferAssistBridge, null, {timeout: 5000});
     return page.evaluate(async () => {
       const cache = window.__biliBufferCache;
       const url = 'https://cache-test.bilivideo.com/smoke.m4s';
@@ -45,6 +45,8 @@ try {
       return { data, xhrData, hits: cache.stats.hits, reloadProbe: window.__biliCacheReloadProbe || null, main: Boolean(document.documentElement.dataset.biliBufferAssistMain), bridge: Boolean(document.documentElement.dataset.biliBufferAssistBridge) };
     });
   };
+  const localized = [];
+  for (const path of ["/zh-Hans/video/BV1fixture/", "/zh-Hant/video/BV1fixture/", "/en/video/BV1fixture/", "/zh-Hans/list/watchlater?bvid=BV1fixture"]) localized.push({path, ...await check(path)});
   const first = await check();
   const extensionId = new URL(worker.url()).host;
   // MV3 SW 禁止动态 import；从扩展页面写同源 IndexedDB，随后验证全新 SW 的恢复。
@@ -84,7 +86,7 @@ try {
     assert.deepEqual(result.data, [7, 9]); assert.deepEqual(result.xhrData, [7, 9]); assert.equal(result.hits, 2); assert(result.main && result.bridge);
   }
   assert.equal(mediaRequests, 0);
-  console.log(JSON.stringify({ ok: true, extensionInjection: first, afterRuntimeReload: second, bundleSha256: hash(loadedSource), badgeRestoredAfterRestart: true, mediaRequests }));
+  console.log(JSON.stringify({ ok: true, extensionInjection: first, localized, afterRuntimeReload: second, bundleSha256: hash(loadedSource), badgeRestoredAfterRestart: true, mediaRequests }));
 } finally {
   await writeFile(bundlePath, originalBundle);
   await context.close();

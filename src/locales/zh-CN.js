@@ -168,6 +168,7 @@ export default {
   "hint.incomplete": "缓存未完成",
   "button.connecting": "正在连接缓存节点",
   "hint.starting": "正在获取当前视频的可缓存版本…",
+  "hint.startUnconfirmed": "尚未确认缓存任务启动，请重试；若任务稍后启动，会自动显示进度。",
   "button.retry": "重试缓存",
   "audio.unknownSize": "暂时无法估算",
   "audio.extractTip": "该视频只有单文件 MP4：会先下载整段 MP4，再无损提取音轨；保存时保留原始音频格式",

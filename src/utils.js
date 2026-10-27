@@ -266,7 +266,7 @@ export function parseBiliVideoUrl(input) {
 
   const bvidMatch = url.pathname.match(/\/video\/(BV[0-9A-Za-z]+)/i);
   const aidMatch = url.pathname.match(/\/video\/av(\d+)/i);
-  const listBvid = url.pathname.startsWith("/list/")
+  const listBvid = /^\/(?:[a-z]{2}(?:-[A-Za-z]{2,4})?\/)?list\//.test(url.pathname)
     ? url.searchParams.get("bvid")?.match(/^BV[0-9A-Za-z]+$/i)?.[0] || null
     : null;
   if (!bvidMatch && !aidMatch && !listBvid) {

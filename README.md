@@ -51,11 +51,11 @@
 | | |
 | --- | --- |
 | ![缓存当前视频](store/assets/screenshot-1-cache.png) | **存到本机，断网也能看**<br>按当前账号可用的最高画质（AV1 / HEVC / AVC）缓存，音视频在本机合成一个 MP4，不转码。开始后可以关掉视频页，扩展在后台下完，中断了会自己续上。也可以只存音频（Hi-Res 无损优先）。再打开已缓存的视频会自动切到本地播放，弹幕、倍速照常。 |
-| ![播放时提前加载](store/assets/screenshot-2-assist.png) | **边看边提前加载，少转圈**<br>播放时把前方约 90 秒先取回来，拖进度条也不用重新等；提前就绪的部分在进度条上单独着色。节点慢时自动换备用地址，并防止一次慢样本把之后的自动画质拖低。 |
+| ![播放时提前加载](store/assets/screenshot-2-assist.png) | **边看边提前加载，少转圈**<br>播放时把前方约 90 秒先取回来，拖进度条也不用重新等；提前就绪的部分在进度条上单独着色。节点慢时自动换备用地址，并按需尝试校验过的兼容镜像，并防止一次慢样本把之后的自动画质拖低。 |
 | ![片库](store/assets/screenshot-3-library.png) | **片库统一管理**<br>所有缓存任务都在「片库」里：暂停、继续不需要打开原视频；完成的可以导出文件或删除，删错了能撤销。Chrome 升级后若有能力失效，「浏览器自检」会列出具体哪一项。 |
 
 > [!IMPORTANT]
-> **适用范围**：标准 BV / av 投稿、分 P 与稍后再看页；番剧、互动视频等暂不支持。不能绕过大会员、付费或地区限制，一切以当前账号的实际权益为准。
+> **适用范围**：标准 BV / av 投稿、分 P 与稍后再看页（含语言前缀页面）；番剧、互动视频等暂不支持。不能绕过大会员、付费或地区限制，一切以当前账号的实际权益为准。
 
 <details>
 <summary>实现要点（给好奇的人）</summary>
@@ -112,7 +112,7 @@ npm run test:live    # 联网：真实 Chromium 加载扩展，对真实 B 站�
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — 参考项目与许可声明
 - [store/](store/) — Chrome Web Store 提审资料
 
-当前版本 2.15.0。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。问题与建议请提 [Issue](https://github.com/Kihara-Ri/bilibili-buffer-extension/issues)。
+当前版本 2.16.0。版本历史见[开发日志](开发日志.md)与 [Releases](https://github.com/Kihara-Ri/bilibili-buffer-extension/releases)。问题与建议请提 [Issue](https://github.com/Kihara-Ri/bilibili-buffer-extension/issues)。
 
 ### 两个发布渠道
 

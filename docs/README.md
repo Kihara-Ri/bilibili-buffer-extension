@@ -64,6 +64,14 @@
 
 每个版本具体改了什么，见[开发日志](../开发日志.md)。
 
+## 验收研究
+
+- [2026-10-27 缓存启动按钮修复](research/2026-10-27-cache-button-startup.md)：启动状态交接、超时重试与迟到响应隔离。
+
+- [2026-10-27 CDN 续审](research/2026-10-27-cdn-review.md)：缓存身份、清单更新竞态、迟到复用和范围边界修复。
+
+- [2.16.0 CDN 救援验收](research/2026-10-26-cdn-recovery-validation.md)：零速等待复现、修改前后十场景对照、真实 CDN 与播放验收边界。
+
 ## 其他
 
 - [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)：参考项目与许可声明

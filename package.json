@@ -1,6 +1,6 @@
 {
   "name": "haineicunzhi",
-  "version": "2.15.0",
+  "version": "2.16.0",
   "private": true,
   "license": "GPL-3.0-only",
   "type": "module",
@@ -17,7 +17,7 @@
     "site:preview": "node scripts/build-site.mjs --preview",
     "test:site": "node tests/run-site-check.mjs",
     "test": "node scripts/run-tests.mjs",
-    "test:popup": "node tests/run-popup-stability.mjs && node tests/run-review-prompt.mjs && node tests/run-popup-close-delete.mjs",
+    "test:popup": "node tests/run-popup-startup.mjs && node tests/run-quality-reduced-motion.mjs && node tests/run-popup-stability.mjs && node tests/run-review-prompt.mjs && node tests/run-popup-close-delete.mjs",
     "test:network": "node tests/run-playback-network.mjs && node tests/run-playback-demand.mjs",
     "test:playback": "node tests/run-playback-cache-integration.mjs",
     "test:extension": "npm run build && node tests/run-playback-extension-smoke.mjs",
@@ -27,7 +27,9 @@
     "build:github": "node scripts/build-release.mjs --github",
     "update:key": "node scripts/github-update-key.mjs",
     "test:updater": "node tests/run-github-update-check.mjs && node tests/run-github-updater.mjs",
-    "test:content": "python3 -m unittest discover -s server/content/tests -v"
+    "test:content": "python3 -m unittest discover -s server/content/tests -v",
+    "test:cdn": "node tests/run-cdn-recovery-comparison.mjs",
+    "test:live:playback": "node scripts/live-playback-recovery.mjs"
   },
   "devDependencies": {
     "playwright": "1.64.0"

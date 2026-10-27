@@ -92,7 +92,7 @@ const updater = createRuntimeUpdater({
   },
   ping: async () => unwrap(await sendToOffscreen({type:'GET_UPDATE_HEALTH'})),
   async refresh() {
-    const tabs = await chrome.tabs.query({url:['https://www.bilibili.com/video/*','https://www.bilibili.com/list/*']});
+    const tabs = await chrome.tabs.query({url:['https://www.bilibili.com/video/*','https://www.bilibili.com/list/*','https://www.bilibili.com/*/video/*','https://www.bilibili.com/*/list/*']});
     await Promise.allSettled(tabs.map(tab=>chrome.tabs.reload(tab.id)));
   },
   ownerAlive: async id => { try { await chrome.tabs.get(id); return true; } catch { return false; } },
