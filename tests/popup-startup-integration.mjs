@@ -1,6 +1,10 @@
 // 可控的是异步消息和数据库快照；测试不接管 popup 的状态机或渲染。
 const pageId = 'BV1Kg8t6NEmN:456';
-const url = 'https://www.bilibili.com/video/BV1Kg8t6NEmN/';
+const page = Number(new URLSearchParams(location.search).get('p')) || 1;
+const pageCount = page > 1 ? 24 : 1;
+const title = pageCount > 1 ? '【更新至24P】长篇游戏实况流程解说【4K】' : '缓存启动状态测试';
+const partTitle = { 3: '03', 4: '城外探索' }[page] || '';
+const url = `https://www.bilibili.com/video/BV1Kg8t6NEmN/${pageCount > 1 ? `?p=${page}` : ''}`;
 const videos = [], starts = [], storage = {};
 let listener, mode = 'video';
 const test = window.__startupTest = {
@@ -10,7 +14,7 @@ const test = window.__startupTest = {
     const at = Date.now();
     const video = {
       id: audio ? `${pageId}:a` : `${pageId}:q${quality}:cauto`, pageId, bvid: 'BV1Kg8t6NEmN', cid: 456,
-      title: '缓存启动状态测试', url, quality, requestedQuality: quality, codec: 'avc', requestedCodec: 'auto',
+      title, url, quality, requestedQuality: quality, codec: 'avc', requestedCodec: 'auto',
       cacheMode: 'video', mediaKind: 'dash', createdAt: at, runStartedAt: at, updatedAt: at,
       status: 'downloading', totalBytes: 16 * 1024 * 1024, committedBytes: 4 * 1024 * 1024,
       downloadedBytes: 4 * 1024 * 1024, resumeBytes: 4 * 1024 * 1024, progress: .25, speed: 1024,
@@ -40,7 +44,7 @@ globalThis.chrome = {
         case 'GET_ASSIST_STATE': return { ok: true, config: { mode: 'off' }, stats: {} };
         case 'GET_HEALTH': return { ok: true, report: { ok: true, checks: [] } };
         case 'GET_POPUP_SNAPSHOT': return { ok: true, stale: false, snapshot: {
-          pageInfo: { supported: true, id: pageId, bvid: 'BV1Kg8t6NEmN', cid: 456, url, title: '缓存启动状态测试', page: 1, pageCount: 1, duration: 60 },
+          pageInfo: { supported: true, id: pageId, bvid: 'BV1Kg8t6NEmN', cid: 456, url, title, partTitle, page, pageCount, duration: 60 },
           qualities: [{ quality: 80, label: '1080P' }, { quality: 64, label: '720P' }],
           selectedQuality: 80, defaultQuality: 80, auth: {},
           cacheSizeInfo: { duration: 60, video: [], audio: [{ id: 30280, mimeType: 'audio/mp4', codecs: 'mp4a.40.2', bandwidth: 128000, hasSource: true }] }

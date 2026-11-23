@@ -497,7 +497,11 @@ function renderCurrent() {
     return;
   }
 
-  setText(elements.currentHeading, info.partTitle || info.title);
+  // B 站分 P 名可能只是「03」之类的编号，主标题与分 P 名要一起展示。
+  const title = info.title || info.partTitle || t("video.untitled");
+  const heading = info.partTitle && info.partTitle !== title ? `${title} · ${info.partTitle}` : title;
+  setText(elements.currentHeading, heading);
+  setAttr(elements.currentHeading, "title", heading);
   const ownerUrl = normalizeHttpUrl(info.ownerUrl) || makeBiliSpaceUrl(info.ownerId);
   elements.currentOwner.hidden = !info.owner;
   setText(elements.currentOwner, info.owner || "");

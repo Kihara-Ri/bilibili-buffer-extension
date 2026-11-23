@@ -21,11 +21,11 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const browser = await chromium.launch(chromiumLaunchOptions({ headless: true }));
 const results = [], errors = [];
 await mkdir(output, { recursive: true });
-async function fresh(run) {
+async function fresh(run, search = '') {
   const page = await browser.newPage({ viewport: { width: 360, height: 680 }, reducedMotion: 'reduce' });
   page.on('pageerror', error => errors.push(error.message));
   try {
-    await page.goto(`http://127.0.0.1:${server.address().port}/tests/popup-startup-integration.html`);
+    await page.goto(`http://127.0.0.1:${server.address().port}/tests/popup-startup-integration.html${search}`);
     await page.waitForFunction(() => document.querySelector('#cache-button')?.dataset.state === 'idle');
     await page.evaluate(() => {
       const button = document.querySelector('#cache-button');
@@ -47,7 +47,21 @@ async function pending(page, label) {
   assert.match(actual.label, /连接/);
 }
 try {
+  for (const [part, label] of [[3, '03'], [4, '城外探索']]) {
+    await fresh(async page => {
+      const heading = page.locator('#current-heading');
+      const expected = `【更新至24P】长篇游戏实况流程解说【4K】 · ${label}`;
+      assert.equal(await heading.textContent(), expected);
+      assert.equal(await heading.getAttribute('title'), expected);
+      const mark = page.locator('#page-mark');
+      assert(await mark.isVisible());
+      assert.equal(await mark.textContent(), `P${part} / 24`);
+    }, `?p=${part}`);
+  }
+  results.push('数字或有名称的分 P 同时显示主标题和分 P 信息');
   await fresh(async page => {
+    assert.equal(await page.locator('#current-heading').textContent(), '缓存启动状态测试');
+    assert(await page.locator('#page-mark').isHidden());
     await page.locator('#cache-button').click();
     await page.locator('#quality-slider').focus();
     await page.waitForTimeout(1600); // 跨越两次真实 700ms 轮询。
