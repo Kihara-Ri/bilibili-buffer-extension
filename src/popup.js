@@ -3,6 +3,7 @@ import { committedBytes, taskProgress, compareLibraryTasks, newerTask, sampleSpe
 import { getAudioCacheSize, getCacheSize } from "./cache-size.js";
 import {
   CODEC_LABELS,
+  QUALITY_LABELS,
   describeAudioContainer,
   describeAudioTrack,
   formatBytes,
@@ -15,9 +16,10 @@ import {
   makeBiliSpaceUrl,
   normalizeCacheMode,
   normalizeHttpUrl,
+  normalizeQualityId,
   shouldShowInLibrary
 } from "./utils.js";
-import { choosePopupQuality } from "./popup-snapshot.js";
+import { choosePopupCodec } from "./popup-snapshot.js";
 import { connectPendingDeletes } from "./pending-deletes.js";
 import {
   DEFAULT_PREHEAT_COLOR,
@@ -72,6 +74,8 @@ const elements = {
   pageMark: $("#page-mark"),
   formatControls: $("#format-controls"),
   cacheMode: $("#cache-mode"),
+  cacheCodec: $("#cache-codec"),
+  cacheCodecRow: $("#cache-codec-row"),
   qualityRow: $("#quality-row"),
   qualityName: $("#quality-name"),
   qualitySize: $("#quality-size"),
@@ -97,7 +101,6 @@ const elements = {
   assistPanel: $("#assist-panel"),
   assistToggle: $("#assist-toggle"),
   bufferMode: $("#assist-buffer-mode"),
-  quickCache: $("#cache-while-watching"),
   assistDetailsToggle: $("#assist-details-toggle"),
   assistMetricsPanel: $("#assist-metrics-panel"),
   assistMetrics: Object.fromEntries(["speed", "hit", "buffer", "ready", "stalls", "residency", "trouble", "node", "accelerated"].map(key => [key, $(`#assist-${key}`)])),
@@ -146,6 +149,12 @@ const state = {
   tab: null,
   pageInfo: null,
   qualityOptions: [],
+  codecOptionsByQuality: {},
+  playerQuality: 0,
+  playerChoices: null,
+  qualitySync: null,
+  manualSelection: false,
+  checkingPlayer: false,
   selectedQuality: 0,
   cacheSizeInfo: null,
   selectedCodec: "auto",
@@ -171,8 +180,6 @@ const state = {
   assistConfig: null,
   assistStats: null,
   assistReadSequence: 0,
-  fullPhase: "",
-  quickCachePending: false,
   bufferModeDrag: null,
   healthReport: null,
   // 评价邀请的持久状态；读出之前为 null，此时卡片一律不显示。
@@ -200,7 +207,6 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && state.settingsOpen) setSettingsOpen(false);
 });
 elements.cacheButton.addEventListener("click", startCache);
-elements.quickCache.addEventListener("click", cacheWhileWatching);
 elements.pauseButton.addEventListener("click", pauseCurrentTask);
 elements.currentOwner.addEventListener("click", (event) => {
   const url = elements.currentOwner.dataset.url;
@@ -213,6 +219,12 @@ elements.cacheMode.addEventListener("click", (event) => {
   if (button && button.getAttribute("aria-checked") !== "true") void persistCacheMode(button.dataset.cacheMode);
 });
 elements.cacheMode.addEventListener("keydown", navigateCacheModes);
+elements.cacheCodec.addEventListener("change", () => {
+  state.manualSelection = !state.playerChoices;
+  state.selectedCodec = elements.cacheCodec.value;
+  persistQualitySelection();
+  renderCurrent();
+});
 // 拖动 / 方向键时 input 连续触发，只更新界面；松手或按键结束（change）才把选择存回后台。
 elements.qualitySlider.addEventListener("input", selectQualityFromSlider);
 elements.qualitySlider.addEventListener("change", () => { if (!state.qualitySettling) persistQualitySelection(); });
@@ -400,14 +412,34 @@ function applyPopupSnapshot(snapshot) {
   state.pageInfo = snapshot.pageInfo || null;
   state.cacheSizeInfo = snapshot.cacheSizeInfo || null;
   state.qualityOptions = Array.isArray(snapshot.qualities) ? snapshot.qualities : [];
+  state.codecOptionsByQuality = snapshot.codecOptionsByQuality || {};
   state.auth = snapshot.auth || null;
   state.qualityError = "";
   state.qualitiesLoading = false;
-  const active = getCurrentPageVideos().find((video) => video.status === "downloading");
-  const activeQuality = Number(active?.requestedQuality || active?.quality) || 0;
-  state.selectedQuality = choosePopupQuality(state.qualityOptions, activeQuality, snapshot.selectedQuality, snapshot.defaultQuality);
-  state.selectedCodec = "auto";
+  updateDefaultQuality();
   renderCurrent();
+}
+
+function updateDefaultQuality() {
+  const cached = findCurrentVideo();
+  if (state.manualSelection || state.qualitySync || state.checkingPlayer || state.qualityDragPointer !== null || state.qualitySettling ||
+      (!state.playerChoices && (state.cacheStarts.has(cacheStartSelection().key) || (cached?.status === "downloading" && !cached.automatic))) ||
+      state.selectedQuality === state.playerQuality) return false;
+  selectCacheQuality(state.playerQuality);
+  return true;
+}
+
+function selectCacheQuality(quality) {
+  state.selectedQuality = quality;
+  if (quality) state.selectedCodec = choosePopupCodec(state.codecOptionsByQuality[quality], state.selectedCodec) || "auto";
+}
+
+function updatePlayerChoices(choices) {
+  if (!Array.isArray(choices) || state.qualityDragPointer !== null || state.qualitySettling ||
+      choices.join() === state.playerChoices?.join()) return false;
+  state.playerChoices = choices;
+  state.manualSelection = false;
+  return true;
 }
 
 function refreshLibrary() {
@@ -429,7 +461,7 @@ async function readLibrary() {
       for (const video of state.videos) if (!incoming.has(video.id) && !wasDeleted(video)) incoming.set(video.id, video);
     }
     state.videos = [...incoming.values()].sort(compareLibraryTasks);
-    // 打开弹窗时由快照恢复活动画质；此后的轮询不能让迟到的旧任务改掉用户的新选择。
+    // 片库只更新任务状态；画质由已确认的播放器档位和本次手动选择决定。
     renderLibrary();
     if (state.pageInfo) renderCurrent();
   } catch (error) {
@@ -484,6 +516,7 @@ function renderUnsupported(title, detail) {
   setText(elements.currentDetailText, detail);
   elements.pageMark.hidden = true;
   elements.formatControls.hidden = true;
+  elements.cacheCodecRow.hidden = true;
   elements.assistPanel.hidden = true;
   elements.pauseButton.hidden = true;
   setButtonState("disabled", t("button.unsupportedPage"), "", 0, true);
@@ -548,6 +581,18 @@ function renderTaskToggle(status) {
 
 /** 主按钮与下方状态行：空闲 → 缓存；下载中 → 进度 + 速度 + 「暂停」；暂停 / 出错 → 同样的进度样式 + 「继续」；完成 → 结果。 */
 function renderCacheAction(cached) {
+  if (state.qualitySync && !isAudioMode()) {
+    renderTaskToggle("");
+    setButtonState("disabled", t("quality.switching"), "", 0, true);
+    setHint("", false);
+    return;
+  }
+  if (state.checkingPlayer) {
+    renderTaskToggle("");
+    setButtonState("disabled", t("button.connecting"), "", 0, true);
+    setHint("", false);
+    return;
+  }
   const request = state.cacheStarts.get(cacheStartSelection().key);
   if (request) {
     // pending 与片库数据独立：空列表、旧暂停记录以及启动响应都不能提前恢复粉色按钮。
@@ -571,8 +616,9 @@ function renderCacheAction(cached) {
       return;
     }
     if (!isAudioMode() && !state.selectedQuality) {
-      setButtonState("disabled", t("button.noQuality"), "", 0, true);
-      setHint(state.qualityError || t("hint.noQuality"), true);
+      const waiting = state.qualityOptions.length && !state.manualSelection;
+      setButtonState("disabled", t(waiting ? "button.cache" : "button.noQuality"), "", 0, true);
+      setHint(waiting ? "" : state.qualityError || t("hint.noQuality"), !waiting);
       return;
     }
     setButtonState("idle", t("button.cache"), "", 0, false);
@@ -583,6 +629,13 @@ function renderCacheAction(cached) {
 
   const progress = taskProgress(cached);
   const percent = Math.round(progress * 100);
+  if (cached.automatic && ["complete", "downloading"].includes(cached.status)) {
+    setButtonState(cached.status === "complete" ? "idle" : "downloading", t("button.cache"), "", progress, false,
+      cached.status === "complete" ? "" : t("button.caching", { percent }));
+    setHint("", false);
+    elements.cacheButton.title = t("button.keepCache");
+    return;
+  }
   if (cached.status === "downloading") {
     const speedSample = sampleSpeed(state.speedSamples.get(cached.id), cached);
     state.speedSamples.set(cached.id, speedSample);
@@ -623,9 +676,11 @@ function findCurrentVideo() {
   if (!videos.length) return null;
   if (audioMode) return videos.find((video) => video.status === "downloading") || videos.find((video) => video.status === "complete") || videos[0];
   if (state.selectedQuality) {
-    return videos.find((video) => Number(video.requestedQuality || video.quality) === state.selectedQuality && isVideoCodecSelectionMatch(video, state.selectedCodec)) || null;
+    const selection = cacheStartSelection();
+    const matching = videos.filter(video => matchesCacheStart(video, selection));
+    return matching.find(video => !video.automatic) || matching[0] || null;
   }
-  return videos.find((video) => video.status === "downloading") || videos[0];
+  return null;
 }
 
 function getCurrentPageVideos() {
@@ -650,12 +705,26 @@ function renderFormatControls(cached) {
     renderQualitySlider([], cached, t("quality.loading"));
   } else {
     const options = getQualityDisplayOptions(cached);
-    if (!options.some((option) => option.quality === state.selectedQuality)) state.selectedQuality = options[0]?.quality || 0;
     ladder = describeQualityLadder(options);
     renderQualitySlider(options, cached, t("quality.none"));
     elements.qualityTrack.title = ladder.title;
   }
+  renderCodecControl(audioMode, cached);
   renderAuthNote(ladder);
+}
+
+function renderCodecControl(audioMode, cached) {
+  const select = elements.cacheCodec;
+  const options = state.codecOptionsByQuality[state.selectedQuality] || [];
+  elements.cacheCodecRow.hidden = audioMode || !options.some(option => option.codec !== "auto");
+  if (elements.cacheCodecRow.hidden) return;
+  select.disabled = state.checkingPlayer || (cached?.status === "downloading" && !cached.automatic);
+  const signature = options.map(option => option.codec).join(" ");
+  if (select.dataset.options !== signature) {
+    select.dataset.options = signature;
+    select.replaceChildren(...options.map(option => new Option(option.codec === "auto" ? t("codec.cacheAuto") : option.label, option.codec)));
+  }
+  if (select.value !== state.selectedCodec) select.value = state.selectedCodec;
 }
 
 function sizeText(quality, cached) {
@@ -699,10 +768,10 @@ function renderAuthNote(ladder) {
 }
 
 function getQualityDisplayOptions(cached) {
-  const options = [...state.qualityOptions];
-  const cachedQuality = Number(cached?.requestedQuality || cached?.quality) || 0;
-  if (cachedQuality && !options.some((option) => option.quality === cachedQuality)) {
-    options.push({ quality: cachedQuality, label: cached.qualityLabel || t("quality.fallback", { quality: cachedQuality }) });
+  const options = state.qualityOptions.filter(option => !state.playerChoices || state.playerChoices.includes(option.quality));
+  const quality = state.selectedQuality;
+  if (quality && !options.some(option => option.quality === quality)) {
+    options.push({ quality, label: cached?.qualityLabel || QUALITY_LABELS[quality] || t("quality.fallback", { quality }) });
   }
   return options;
 }
@@ -777,13 +846,14 @@ function renderQualitySlider(options, cached, placeholder) {
   }
   const index = Math.max(0, stops.open.findIndex((item) => item.quality === state.selectedQuality));
   const selected = stops.open[index];
-  const size = sizeText(selected.quality, cached);
-  setText(elements.qualityName, selected.label);
+  const size = state.selectedQuality ? sizeText(selected.quality, cached) : "";
+  const label = state.selectedQuality ? selected.label : t("quality.playerWaiting");
+  setText(elements.qualityName, label);
   setText(elements.qualitySize, size);
   const slider = elements.qualitySlider;
   if (slider.value !== String(index)) slider.value = String(index);
-  slider.disabled = cached?.status === "downloading";
-  setAttr(slider, "aria-valuetext", [selected.label, size].filter(Boolean).join(t("sep.comma")));
+  slider.disabled = state.checkingPlayer || (!state.playerChoices && cached?.status === "downloading" && !cached.automatic);
+  setAttr(slider, "aria-valuetext", [label, size].filter(Boolean).join(t("sep.comma")));
   state.qualityRatio = stops.open.length === 1 ? at(count - 1) : at(index);
   // 拖动中拇指跟着指针走，不能被这里写回档位；松手时 endQualityDrag 再落定。
   if (state.qualityDragPointer === null && !state.qualitySettling) elements.qualityTrack.style.setProperty("--q-pos", String(state.qualityRatio));
@@ -954,8 +1024,13 @@ function selectQualityFromSlider() {
 function commitQualityIndex(index) {
   const quality = state.qualityStops.open[index]?.quality || 0;
   if (!quality || quality === state.selectedQuality) return;
-  state.selectedQuality = quality;
-  state.selectedCodec = "auto";
+  state.manualSelection = !state.playerChoices;
+  if (state.playerChoices) {
+    const request = { quality, selectedAt: performance.timeOrigin + performance.now(), previousCodec: state.selectedCodec };
+    state.qualitySync = request;
+    void syncPlayerQuality(request);
+  }
+  selectCacheQuality(quality);
   state.qualityInteractive = true;
   try {
     renderCurrent();
@@ -965,8 +1040,29 @@ function commitQualityIndex(index) {
   if (!elements.qualityRow.classList.contains("is-surging") || elements.qualityRow.dataset.top !== "true") tickQualityKnob();
 }
 
+async function syncPlayerQuality(request) {
+  const { id: tabId, url } = state.tab;
+  ++state.assistReadSequence;
+  let result;
+  try {
+    result = await send("SET_PLAYER_QUALITY", { tabId, url, quality: request.quality, selectedAt: request.selectedAt });
+  } catch { /* 无法确认时恢复到播放器已知状态。 */ }
+  if (state.qualitySync !== request) return;
+  ++state.assistReadSequence;
+  state.qualitySync = null;
+  updatePlayerChoices(result?.playerChoices);
+  state.playerQuality = normalizeQualityId(result?.playerQuality);
+  if (state.playerQuality !== request.quality) {
+    state.selectedCodec = request.previousCodec;
+    showToast(t("quality.switchFailed"));
+  }
+  selectCacheQuality(state.playerQuality);
+  if (state.playerQuality === request.quality) persistQualitySelection();
+  renderCurrent();
+}
+
 function persistQualitySelection() {
-  if (!state.tab?.url || !state.selectedQuality) return;
+  if (state.qualitySync || !state.tab?.url || !state.selectedQuality) return;
   void send("SET_POPUP_SELECTION", { tabId: state.tab.id, url: state.tab.url, quality: state.selectedQuality, codec: state.selectedCodec }).catch(() => {});
 }
 
@@ -989,15 +1085,17 @@ function setHint(message, isError) {
 
 /** 捕获请求发起时的选择；音频任务不随隐藏的画质/编码变化而改变身份。 */
 function cacheStartSelection() {
-  const selection = { pageId: state.pageInfo?.id, tabId: state.tab?.id, url: state.tab?.url, mode: state.cacheMode, quality: state.selectedQuality, codec: state.selectedCodec };
+  const selection = { pageId: state.pageInfo?.id, tabId: state.tab?.id, url: state.tab?.url, mode: state.cacheMode,
+    quality: state.selectedQuality, codec: state.selectedCodec, followPlayer: !state.manualSelection };
   selection.key = JSON.stringify([selection.tabId, selection.pageId, selection.mode, isAudioMode() ? 0 : selection.quality, isAudioMode() ? "" : selection.codec]);
   return selection;
 }
 
 /** 与后台 START_CACHE 的任务选择规则一致：页面、模式、请求画质与编码匹配。 */
 function matchesCacheStart(video, selection) {
+  const quality = selection.followPlayer ? video.quality || video.requestedQuality : video.requestedQuality || video.quality;
   return getVideoPageId(video) === selection.pageId && isAudioOnlyCache(video) === (selection.mode === "audio") &&
-    (selection.mode === "audio" || Number(video.requestedQuality || video.quality) === selection.quality && isVideoCodecSelectionMatch(video, selection.codec));
+    (selection.mode === "audio" || Number(quality) === selection.quality && isVideoCodecSelectionMatch(video, selection.codec));
 }
 
 function cacheStartTaskVersion(video) {
@@ -1012,7 +1110,7 @@ function clearCacheStart(request) {
 /** 只有匹配的真实任务能接管启动状态；续传时旧 paused/error 快照不能冒充新一轮结果。 */
 function reconcileCacheStarts() {
   for (const request of state.cacheStarts.values()) {
-    const video = state.videos.find(item => !state.pendingDeletes.has(item.id) && matchesCacheStart(item, request.selection));
+    const video = state.videos.find(item => !item.automatic && !state.pendingDeletes.has(item.id) && matchesCacheStart(item, request.selection));
     if (!video || !["downloading", "complete", "paused", "error"].includes(video.status)) continue;
     if (video.status === "downloading" || video.status === "complete" || cacheStartTaskVersion(video) !== request.baseline) clearCacheStart(request);
   }
@@ -1033,22 +1131,48 @@ async function checkCacheStart(request) {
 }
 
 async function startCache() {
-  if (!state.pageInfo?.supported || !state.tab) return;
-  if (!isAudioMode() && !state.selectedQuality) return;
+  if (!state.pageInfo?.supported || !state.tab || state.checkingPlayer || (state.qualitySync && !isAudioMode())) return;
+  const pending = state.cacheStarts.get(cacheStartSelection().key);
+  if (pending && !pending.error) return;
+  const followPlayer = !isAudioMode() && !state.manualSelection;
+  const playbackAt = performance.timeOrigin + performance.now();
+  if (followPlayer) {
+    state.checkingPlayer = true;
+    renderCurrent();
+    try {
+      const result = await send("GET_CACHE_PLAYER", { tabId: state.tab.id, url: state.tab.url });
+      // 点击前后的状态轮询可能反序返回。这里只接受刚向播放器核实的档位。
+      ++state.assistReadSequence;
+      state.playerQuality = normalizeQualityId(result.playerQuality);
+      updatePlayerChoices(result.playerChoices);
+      selectCacheQuality(state.playerQuality);
+    } catch {
+      state.playerQuality = state.selectedQuality = 0;
+    } finally {
+      state.checkingPlayer = false;
+      renderCurrent();
+    }
+  }
+  if ((followPlayer && isAudioMode()) || (!isAudioMode() && !state.selectedQuality)) return;
   const selection = cacheStartSelection();
   const previous = state.cacheStarts.get(selection.key);
   // disabled 是反馈，身份检查才是去重边界，键盘/合成事件和右侧继续按钮也走这里。
   if (previous && !previous.error) return;
   cancelPendingDeleteForSelection();
   const cached = findCurrentVideo();
+  if (cached?.status === "complete" && !cached.automatic) return;
   if (previous) clearCacheStart(previous);
   const request = { selection, baseline: cacheStartTaskVersion(cached), error: "", timer: null };
   state.cacheStarts.set(selection.key, request);
   request.timer = setTimeout(() => void checkCacheStart(request), CACHE_START_TIMEOUT_MS);
   renderCurrent();
   try {
-    if (cached) await send("RESUME_CACHE", { ...taskTarget(cached), tabId: selection.tabId });
-    else await send("START_CACHE", { url: selection.url, tabId: selection.tabId, quality: selection.quality, codec: selection.codec, mode: selection.mode });
+    if (cached && !cached.automatic) {
+      await send("RESUME_CACHE", { ...taskTarget(cached), tabId: selection.tabId, url: selection.url, followPlayer, playbackAt });
+    } else {
+      await send("START_CACHE", { url: selection.url, tabId: selection.tabId, quality: selection.quality, codec: selection.codec,
+        mode: selection.mode, followPlayer, playbackAt });
+    }
     await refreshLibrary();
   } catch (error) {
     // 真实进度可能先于响应到达；旧请求也可能在超时重试后才失败，不能覆盖新一代状态。
@@ -1074,26 +1198,6 @@ async function pauseCurrentTask() {
 }
 
 // ---- 提前加载 ----------------------------------------------------------------
-
-async function cacheWhileWatching() {
-  if (!state.tab?.id || elements.quickCache.hidden || state.quickCachePending) return;
-  state.quickCachePending = true;
-  elements.quickCache.disabled = true;
-  try {
-    const result = await chrome.tabs.sendMessage(state.tab.id, {
-      type: "BILI_BUFFER_CACHE_WHILE_WATCHING", url: state.tab.url
-    }, { frameId: 0 });
-    if (!result?.ok) throw new Error(t("buffering.startFailed"));
-    // 作废点击前读取的空状态，避免轮询把已启动的入口重新露出来。
-    ++state.assistReadSequence;
-    state.fullPhase = result.fullPhase;
-  } catch {
-    showToast(t("buffering.startFailed"));
-  } finally {
-    state.quickCachePending = false;
-    renderAssist();
-  }
-}
 
 async function persistProgressAppearance(patch) {
   const previous = state.assistConfig;
@@ -1122,20 +1226,23 @@ async function refreshAssistState() {
   if (!state.tab?.id) return;
   const revision = state.appearanceRevision;
   const readSequence = ++state.assistReadSequence;
+  let choicesChanged = false;
   try {
-    const result = await send("GET_ASSIST_STATE", { tabId: state.tab.id });
+    const result = await send("GET_ASSIST_STATE", { tabId: state.tab.id, url: state.tab.url });
     if (readSequence !== state.assistReadSequence) return;
     if (!state.appearancePending && revision === state.appearanceRevision) {
       state.assistConfig = result.config || state.assistConfig;
       state.confirmedAssistConfig = state.assistConfig;
     }
     state.assistStats = result.stats || null;
-    state.fullPhase = result.fullPhase || "";
+    state.playerQuality = normalizeQualityId(result.playerQuality);
+    choicesChanged = !state.qualitySync && updatePlayerChoices(result.playerChoices);
   } catch {
     if (readSequence !== state.assistReadSequence) return;
     state.assistStats = null;
   }
-  renderAssist();
+  if (state.pageInfo?.supported && (updateDefaultQuality() || choicesChanged)) renderCurrent();
+  else renderAssist();
 }
 
 function renderAssist() {
@@ -1146,9 +1253,6 @@ function renderAssist() {
   if (elements.assistPanel.hidden) return;
   const stats = state.assistStats;
   const enabled = config.mode !== "off";
-  elements.quickCache.hidden = !enabled || isAudioMode() || normalizeBufferMode(config.bufferMode) !== "adaptive" ||
-    Boolean(state.fullPhase && state.fullPhase !== "error");
-  elements.quickCache.disabled = state.quickCachePending;
   const live = enabled && stats && Date.now() - stats.at < 5000;
   const finite = (value) => Math.max(0, Number(value) || 0);
   const metrics = {
@@ -1607,11 +1711,10 @@ function deleteWithUndo(video) {
  * 先取消计时并让原记录参加选择，再由当前视频的按钮继续它。其他画质保留原来的删除安排。
  */
 function cancelPendingDeleteForSelection() {
-  const audioMode = isAudioMode();
+  const selection = cacheStartSelection();
   for (const [videoId, pending] of state.pendingDeletes) {
     const video = state.videos.find((item) => item.id === videoId);
-    if (!video || getVideoPageId(video) !== state.pageInfo?.id || isAudioOnlyCache(video) !== audioMode) continue;
-    if (!audioMode && (Number(video.requestedQuality || video.quality) !== state.selectedQuality || !isVideoCodecSelectionMatch(video, state.selectedCodec))) continue;
+    if (!video || !matchesCacheStart(video, selection)) continue;
     clearTimeout(pending.timer);
     state.pendingDeletes.delete(videoId);
     state.pendingDeleteChannel?.release(videoId);

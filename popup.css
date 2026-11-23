@@ -358,7 +358,6 @@ svg { flex: none; }
   color: var(--ink-strong);
   box-shadow: 0 1px 2px rgba(20, 26, 36, 0.14), inset 0 0 0 1px var(--line);
 }
-
 /* 画质滑杆（像 ChatGPT 的推理强度控件）：上方居中是档位名与体积，下方一根粗杆，左低右高。
    几何与 src/popup.js 的 renderQualitySlider 一致：N 个档位等距排在 [拇指半径, 宽 - 拇指半径]，
    第 i 档在 --at = i / (N - 1)。原生 range 只铺在可选段（宽 = 拇指 + (总宽 - 拇指) × --q-reach），
@@ -717,10 +716,9 @@ svg { flex: none; }
 /* ---- 提前加载 --------------------------------------------------------------- */
 
 .preload { display: grid; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
-.preload-head { display: flex; align-items: center; gap: 8px; }
+.preload-head { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .preload-head h3 { font-size: 12.5px; font-weight: 640; letter-spacing: 0.04em; white-space: nowrap; }
 .preload-head > #assist-details-toggle { margin-inline-start: auto; }
-.preload-head > .quick-cache { color: var(--ink); font-weight: 600; white-space: nowrap; }
 
 .switch, .switch-input {
   position: relative;
@@ -1002,6 +1000,16 @@ svg { flex: none; }
 .appearance[data-highlight="false"] .preview-preheat { background: var(--surface-soft); }
 
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; font-size: 13px; }
+.cache-codec {
+  min-height: 26px;
+  padding: 2px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: 12px;
+}
+.cache-codec:not(:disabled) { cursor: pointer; }
 .color-input { width: 32px; height: 22px; padding: 2px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-raised); cursor: pointer; }
 
 .preheat-controls { min-width: 0; margin: 0; padding: 0; border: 0; }

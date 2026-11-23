@@ -21,12 +21,12 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const browser = await chromium.launch(chromiumLaunchOptions({ headless: true }));
 const results = [], errors = [];
 await mkdir(output, { recursive: true });
-async function fresh(run, search = '') {
+async function fresh(run, search = '', readyState = 'idle') {
   const page = await browser.newPage({ viewport: { width: 360, height: 680 }, reducedMotion: 'reduce' });
   page.on('pageerror', error => errors.push(error.message));
   try {
     await page.goto(`http://127.0.0.1:${server.address().port}/tests/popup-startup-integration.html${search}`);
-    await page.waitForFunction(() => document.querySelector('#cache-button')?.dataset.state === 'idle');
+    await page.waitForFunction(state => document.querySelector('#cache-button')?.dataset.state === state, readyState);
     await page.evaluate(() => {
       const button = document.querySelector('#cache-button');
       window.__buttonNode = button;
@@ -47,6 +47,52 @@ async function pending(page, label) {
   assert.match(actual.label, /连接/);
 }
 try {
+  await fresh(async page => {
+    assert.equal(await page.locator('#quality-name').textContent(), '720P', '默认应显示播放器实际画质');
+    assert.equal(await page.locator('#cache-while-watching').count(), 0, '只保留一个缓存入口');
+    await page.evaluate(() => { window.__startupTest.playerQuality = 80; });
+    await page.locator('#cache-button').click();
+    const sent = await page.evaluate(() => window.__startupTest.starts[0]?.message);
+    assert.equal(sent.quality, 80, '点击时应读取播放器的新画质');
+    assert.equal(sent.followPlayer, true);
+    results.push('默认跟随播放器，点击时复查画质');
+  }, '?player=64');
+  await fresh(async page => {
+    assert.equal(await page.locator('#quality-name').textContent(), '等待播放器画质');
+    assert(await page.locator('#cache-button').isDisabled(), '画质未知时不按最高画质缓存');
+    await page.locator('#quality-slider').press('End');
+    await page.locator('#cache-button').click();
+    const sent = await page.evaluate(() => window.__startupTest.starts[0]?.message);
+    assert.equal(sent.quality, 80);
+    assert.equal(sent.followPlayer, false, '未知画质不阻止手动选择');
+    results.push('播放器画质未知时等待，仍可手动选档');
+  }, '?player=0', 'disabled');
+  await fresh(async page => {
+    assert(await page.locator('#cache-codec').isHidden(), '主界面不显示编码选择');
+    await page.locator('#settings-button').click();
+    const codec = page.getByLabel('缓存编码');
+    await codec.selectOption('hevc');
+    await page.locator('#settings-back').click();
+    assert(await codec.isHidden(), '从设置返回后隐藏编码选择');
+    await page.evaluate(() => { window.__startupTest.playerQuality = 80; });
+    await page.locator('#cache-button').click();
+    const sent = await page.evaluate(() => window.__startupTest.starts[0]?.message);
+    assert.deepEqual({ quality: sent.quality, codec: sent.codec, followPlayer: sent.followPlayer },
+      { quality: 64, codec: 'hevc', followPlayer: false });
+    results.push('只手动选编码也会保留这次选择');
+  }, '?player=64');
+  await fresh(async page => {
+    await page.locator('#quality-slider').press('End');
+    await page.locator('#settings-button').click();
+    await page.locator('#cache-codec').selectOption('hevc');
+    await page.locator('#settings-back').click();
+    await page.locator('#cache-button').click();
+    const sent = await page.evaluate(() => window.__startupTest.starts[0]?.message);
+    assert.equal(sent.quality, 80);
+    assert.equal(sent.codec, 'hevc');
+    assert.equal(sent.followPlayer, false, '手动选档或编码后按弹窗请求');
+    results.push('手动画质、编码覆盖播放器');
+  }, '?player=64');
   for (const [part, label] of [[3, '03'], [4, '城外探索']]) {
     await fresh(async page => {
       const heading = page.locator('#current-heading');

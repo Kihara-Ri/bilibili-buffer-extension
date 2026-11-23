@@ -182,11 +182,12 @@ globalThis.chrome = {
         return { ok: true, videos: snapshot };
       }
       if (message.type === "SAVE_VIDEO") { await delay(350); return window.__popupTest.failSave ? { ok: false, error: "模拟保存失败" } : { ok: true }; }
+      if (message.type === "GET_CACHE_PLAYER") return { ok: true, playerQuality: 80 };
       if (message.type === "DELETE_VIDEO") { window.__popupTest.deletedIds.push(message.videoId); await delay(120); const index = libraryVideos.findIndex(video => video.id === message.videoId); if (index >= 0) libraryVideos.splice(index, 1); return { ok: true }; }
       if (message.type === "GET_ASSIST_STATE") {
         const scripted = window.__popupTest.assistReadQueue?.shift();
         if (scripted) {
-          const response = { ok: true, config: assistConfig, stats: { at: Date.now(), activeTracks: 2, networkHost: scripted.host } };
+          const response = { ok: true, config: assistConfig, playerQuality: 80, stats: { at: Date.now(), activeTracks: 2, networkHost: scripted.host } };
           await delay(scripted.delay);
           return response;
         }
@@ -194,6 +195,7 @@ globalThis.chrome = {
         return {
           ok: true,
           config: assistConfig,
+          playerQuality: 80,
           stats: {
             at: Date.now(),
             networkSpeed: 12345678, cacheHitMB: 1234, prefetchAheadSec: 12.5,

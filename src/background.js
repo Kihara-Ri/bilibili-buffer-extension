@@ -223,7 +223,12 @@ async function handleMessage(message, sender) {
     case "SET_POPUP_SELECTION":
       return { saved: await savePopupSelection(message.tabId, message.url, message.quality, message.codec) };
     case "GET_ASSIST_STATE":
-      return getAssistState(message.tabId);
+      return getAssistState(message.tabId, message.url);
+    case "GET_CACHE_PLAYER":
+      return getCachePlayer(message.tabId, message.url);
+    case "SET_PLAYER_QUALITY":
+      if (sender.url !== chrome.runtime.getURL("popup.html")) return {};
+      return getCachePlayer(message.tabId, message.url, { quality: message.quality, selectedAt: message.selectedAt });
     case "GET_HEALTH":
       return { report: await readHealthReport({ refresh: message.refresh === true }) };
     case "GET_CACHE_MODE":
@@ -255,7 +260,14 @@ async function handleMessage(message, sender) {
       const pageInfo = await getPageInfo(message.url);
       // MCP 清单可能在排队时发生重排。对照规划时的 CID，避免下载错 P。
       if (message.expectedPageId && pageInfo.id !== message.expectedPageId) return { pageChanged: true };
-      return startCacheForPage(pageInfo, message);
+      const canStart = message.followPlayer === true ? async () => {
+        const player = await getCachePlayer(message.tabId, message.url, { includeSources: true });
+        return player.playerQuality && player.playerQuality === normalizeQualityId(message.quality) ? player : null;
+      } : undefined;
+      const result = await startCacheForPage(pageInfo, { ...message, canStart });
+      if (result.skipped && canStart) throw new Error(t("err.cachePlayerChanged"));
+      trackManualCache(message, result.video);
+      return result;
     }
     case "START_AUTO_CACHE":
       return startAutomaticCache(message, sender);
@@ -286,8 +298,11 @@ async function handleMessage(message, sender) {
       void syncDownloadWatchdog();
       return result;
     }
-    case "RESUME_CACHE":
-      return resumeCache(message.videoId, { createdAt: message.createdAt, tabId: message.tabId });
+    case "RESUME_CACHE": {
+      const result = await resumeCache(message.videoId, { createdAt: message.createdAt, tabId: message.tabId });
+      trackManualCache(message, result.video);
+      return result;
+    }
     case "CACHE_PROGRESS":
       await handleCacheEvent(message);
       return { received: true };
@@ -463,33 +478,32 @@ async function readCommittedSource(message, sender) {
 async function startAutomaticCache(message, sender) {
   const tabId = sender.tab?.id;
   const quality = normalizeQualityId(message.quality);
-  const onDemand = message.onDemand === true;
   // 自动任务只接收播放器确认的档位。缺少画质时不沿用手动缓存的最高档默认值。
   if (!quality || sender.frameId !== 0 || !Number.isInteger(tabId) ||
       sourceRangeScope({ id: sender.id, url: sender.url }, { runtimeId: chrome.runtime.id }) !== "reader" ||
       !sameVideoPage(message.url, sender.url)) return { skipped: true };
-  const enabled = config => config.mode === "always" && config.bufferMode === (onDemand ? "adaptive" : "full-speed");
+  const enabled = config => config.mode === "always" && config.bufferMode === "full-speed";
   if (!enabled(await getAssistConfig())) return { skipped: true };
   await updater.assertUnlocked();
   const pageInfo = await getPageInfo(sender.url);
   const result = await startCacheForPage(pageInfo, {
-    tabId, quality, automatic: true, cacheOrigin: onDemand ? "manual" : "full-speed",
+    tabId, quality, automatic: true,
     // 取 CID 和查库期间可能切分 P、换画质或关闭自动缓冲。交给 Offscreen 前复核发起文档。
     canStart: async () => {
       const [tab, config, player] = await Promise.all([
         chrome.tabs.get(tabId).catch(() => null),
         getAssistConfig(),
-        chrome.tabs.sendMessage(tabId, { type: "BILI_BUFFER_CONFIRM_CACHE_QUALITY", url: message.url, quality, onDemand },
+        chrome.tabs.sendMessage(tabId, { type: "BILI_BUFFER_CONFIRM_CACHE_QUALITY", url: message.url, quality },
           sender.documentId ? { documentId: sender.documentId } : { frameId: 0 }).catch(() => null)
       ]);
       return tab?.active && sameVideoPage(tab.url, sender.url) && enabled(config) && player?.confirmed === true ? player : null;
     }
   });
-  if (!onDemand && !result.skipped) void syncTemporaryCaches();
+  if (!result.skipped) void syncTemporaryCaches();
   return result;
 }
 
-async function startCacheForPage(pageInfo, { tabId, quality, codec, mode, automatic = false, cacheOrigin = "manual", canStart }) {
+async function startCacheForPage(pageInfo, { tabId, quality, codec, mode, automatic = false, canStart }) {
   if (!pageInfo.supported) throw new Error(pageInfo.message);
   const selectedQuality = normalizeQualityId(quality);
   const requestedQuality = selectedQuality || AUTO_QUALITY;
@@ -498,7 +512,7 @@ async function startCacheForPage(pageInfo, { tabId, quality, codec, mode, automa
   const pageId = pageInfo.id;
   const matchingCache = (await listVideos()).find(video => {
     if (getVideoPageId(video) !== pageId || getCacheMode(video) !== cacheMode) return false;
-    const matchQuality = automatic ? (video.quality || video.requestedQuality) : (video.requestedQuality || video.quality);
+    const matchQuality = canStart ? (video.quality || video.requestedQuality) : (video.requestedQuality || video.quality);
     return cacheMode === CACHE_MODES.AUDIO ||
       (Number(matchQuality) === requestedQuality && isVideoCodecSelectionMatch(video, requestedCodec));
   });
@@ -506,7 +520,8 @@ async function startCacheForPage(pageInfo, { tabId, quality, codec, mode, automa
     ? makeAudioCacheVideoId(pageId)
     : makeQualityVideoId(pageId, requestedQuality, requestedCodec));
   const video = {
-    ...pageInfo, id, pageId, tabId, requestedQuality, requestedCodec, cacheMode, automatic, cacheOrigin,
+    ...pageInfo, id, pageId, tabId, requestedQuality, requestedCodec, cacheMode, automatic,
+    cacheOrigin: automatic && canStart ? "full-speed" : "manual",
     requestedQualityExplicit: selectedQuality > 0
   };
   if (canStart) {
@@ -525,15 +540,45 @@ async function startCacheForPage(pageInfo, { tabId, quality, codec, mode, automa
   return { pageInfo: video, ...result };
 }
 
-async function getAssistState(tabId) {
+/** 弹窗与原视频主文档交换画质状态。内容脚本负责确认页面和切换结果。 */
+async function getCachePlayer(tabId, url, { includeSources = false, quality, selectedAt } = {}) {
+  const unavailable = { playerQuality: 0, playerChoices: null };
+  if (!Number.isInteger(tabId) || !parseBiliVideoUrl(url).supported) return unavailable;
+  const switching = quality !== undefined;
+  const message = switching ? { type: "BILI_BUFFER_SET_PLAYER_QUALITY", url, quality: normalizeQualityId(quality), selectedAt }
+    : { type: "BILI_BUFFER_GET_CACHE_PLAYER", url, includeSources };
+  let timer;
+  try {
+    const response = await Promise.race([
+      chrome.tabs.sendMessage(tabId, message, { frameId: 0 }),
+      new Promise(resolve => { timer = setTimeout(resolve, switching ? 8500 : 800); })
+    ]);
+    return { playerQuality: normalizeQualityId(response?.playerQuality), playerChoices: response?.playerChoices || null,
+      sourcePaths: response?.sourcePaths };
+  } catch { return unavailable; }
+  finally { clearTimeout(timer); }
+}
+
+function trackManualCache(message, video) {
+  if (!video || getCacheMode(video) === CACHE_MODES.AUDIO || !message.url || !Number.isFinite(message.playbackAt) ||
+      !Number.isInteger(message.tabId)) return;
+  // 弹窗主动保存的任务即使与已存在的更高画质并存，也按本次提交的任务切换本地播放。
+  chrome.tabs.sendMessage(message.tabId, {
+    type: "BILI_BUFFER_TRACK_MANUAL_CACHE", url: message.url, playbackAt: message.playbackAt,
+    videoId: video.id, createdAt: video.createdAt, quality: video.quality || video.requestedQuality,
+    followPlayer: message.followPlayer === true
+  }, { frameId: 0 }).catch(() => {});
+}
+
+async function getAssistState(tabId, url) {
   const config = await getAssistConfig();
   if (!Number.isInteger(tabId)) return { config, stats: null };
-  try {
-    const state = await chrome.tabs.sendMessage(tabId, { type: "BILI_BUFFER_GET_ASSIST_STATE" });
-    return { config, stats: state?.stats || null, fullPhase: state?.fullPhase || "" };
-  } catch {
-    return { config, stats: null };
-  }
+  const [state, target] = await Promise.all([
+    chrome.tabs.sendMessage(tabId, { type: "BILI_BUFFER_GET_ASSIST_STATE" }).catch(() => null),
+    getCachePlayer(tabId, url)
+  ]);
+  return { config, stats: state?.stats || null, fullPhase: state?.fullPhase || "",
+    playerQuality: target.playerQuality, playerChoices: target.playerChoices };
 }
 
 async function setAssistConfig(patch) {

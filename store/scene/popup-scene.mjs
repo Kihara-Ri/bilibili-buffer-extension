@@ -189,6 +189,8 @@ const SCENE_AUTH = SCENE_AUTH_MODE === "limited"
 // ?auth=signedout 模拟未登录：B 站只返回公开档位，需要登录 / 大会员的更高档位在滑杆杆尾显示为锁定段。
 const SCENE_QUALITIES = SCENE_AUTH_MODE === "signedout" ? QUALITIES.filter((quality) => !quality.requiresLogin) : QUALITIES;
 const SCENE_DEFAULT_QUALITY = SCENE_QUALITIES[0].quality;
+const SCENE_PLAYER_QUALITY = SCENE_QUALITIES.find(option =>
+  option.quality === Number(new URLSearchParams(location.search).get("player")))?.quality || SCENE_DEFAULT_QUALITY;
 // ?lang=en 截英文界面；默认与 Chrome 的界面语言无关，固定中文，商店中文截图才稳定。
 const SCENE_LANG = new URLSearchParams(location.search).get("lang") || "zh-CN";
 let library = structuredClone(LIBRARY);
@@ -220,6 +222,8 @@ globalThis.chrome = {
               pageInfo: CURRENT_VIDEO,
               qualities: SCENE_QUALITIES,
               cacheSizeInfo: CACHE_SIZE_INFO,
+              codecOptionsByQuality: Object.fromEntries(SCENE_QUALITIES.map(({ quality }) =>
+                [quality, buildMediaCodecOptions({ dash: { video: CACHE_SIZE_INFO.video } }, quality)])),
               defaultQuality: SCENE_DEFAULT_QUALITY,
               selectedQuality: SCENE_DEFAULT_QUALITY,
               defaultCodec: "auto",
@@ -231,7 +235,9 @@ globalThis.chrome = {
         case "LIST_VIDEOS":
           return { ok: true, videos: structuredClone(library) };
         case "GET_ASSIST_STATE":
-          return { ok: true, config: assistConfig, stats: { ...ASSIST_STATS, at: Date.now() } };
+          return { ok: true, config: assistConfig, playerQuality: SCENE_PLAYER_QUALITY, stats: { ...ASSIST_STATS, at: Date.now() } };
+        case "GET_CACHE_PLAYER":
+          return { ok: true, playerQuality: SCENE_PLAYER_QUALITY };
         case "SET_ASSIST_CONFIG":
           assistConfig = { ...assistConfig, ...message.patch };
           return { ok: true, config: assistConfig };
@@ -265,6 +271,7 @@ globalThis.chrome = {
 };
 
 // 与真实扩展一样，先把 popup.html 的节点搬进文档，再执行 popup.js。
+const { buildMediaCodecOptions } = await import("../../src/utils.js");
 const response = await fetch("../../popup.html");
 const parsed = new DOMParser().parseFromString(await response.text(), "text/html");
 for (const node of [...parsed.body.children]) {

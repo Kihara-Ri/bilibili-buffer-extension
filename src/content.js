@@ -4,6 +4,7 @@
   const QUALITY_MENU = ".bpx-player-ctrl-quality";
   const QUALITY_OPTION = ".bpx-player-ctrl-quality-menu-item[data-value]";
   const QUALITY_LABEL = ".bpx-player-ctrl-quality-result";
+  const QUALITY_TEXT = ".bpx-player-ctrl-quality-text";
   let bufferMode = null;
   let configRevision = 0;
   let session;
@@ -22,19 +23,30 @@
   document.addEventListener("bili-buffer-site-quality", onPlayerQualityChanged);
   document.addEventListener("click", event => {
     const current = session;
-    if (!current || !isFull(current) || !isCurrent(current)) return;
+    if (!current || !isCurrent(current)) return;
     const item = event.target?.closest?.(QUALITY_OPTION);
     const menu = item?.closest(QUALITY_MENU);
     const quality = Number(item?.dataset.value);
-    if (!menu || menu !== document.querySelector(QUALITY_MENU) || !validPlayerQuality(quality, 0)) return;
-    if (!current.qualitySwitch && quality === siteQuality(current)) return;
+    if (!menu || menu !== playerQualityMenu(current) || !validPlayerQuality(quality, 0) || !isSelectableQuality(item)) return;
+    if (selectedPlayerQuality(menu) === quality && !current.qualitySwitch && (!quality || siteQuality(current) === quality)) return;
     // 菜单由站点确认。点击到确认之间，旧下载即使恰好完成，也先不接管播放器。
+    current.qualityChangedAt = current.popupQualitySelectedAt ?? performance.timeOrigin + performance.now();
+    current.popupQualitySelectedAt = undefined;
     current.qualitySwitch = { quality, confirmed: false, expiresAt: Date.now() + QUALITY_WAIT_MS };
     current.nativeSizeWait = null;
+    if (current.manualTask?.quality !== quality) current.manualTask = null;
+    observeQualityMenu();
     queueCacheLookup(current);
   }, true);
   for (const type of ["resize", "loadeddata"]) document.addEventListener(type, event => {
     if (session?.nativeSizeWait && event.target === document.querySelector("video")) queueCacheLookup(session);
+  }, true);
+  document.addEventListener("loadedmetadata", event => {
+    if (event.target !== document.querySelector("video")) return;
+    syncPage();
+    if (!session?.watchLaterId) return;
+    session.watchLaterMetadata = event.target;
+    onPlayerQualityChanged();
   }, true);
   window.addEventListener("online", () => queueCacheLookup(session));
   window.navigation?.addEventListener("currententrychange", syncPage);
@@ -64,36 +76,34 @@
       queueCacheLookup(session);
       return false;
     }
-    if (message?.type === "BILI_BUFFER_CACHE_WHILE_WATCHING") {
+    if (["BILI_BUFFER_GET_CACHE_PLAYER", "BILI_BUFFER_SET_PLAYER_QUALITY", "BILI_BUFFER_TRACK_MANUAL_CACHE"].includes(message?.type)) {
       syncPage();
       const current = session;
-      if (sender.id !== chrome.runtime.id || current?.mode !== "adaptive" ||
+      if (sender.id !== chrome.runtime.id || !current ||
           typeof message.url !== "string" || pageKey(message.url) !== current.key) {
-        sendResponse({ ok: false });
+        sendResponse({});
         return false;
       }
-      // 只改变本次视频会话。导航到下一 P 时跟随进页默认，已登记的任务仍由 Offscreen 管理。
-      if (!current.cacheWhileWatching || current.autoFailed) {
-        current.cacheWhileWatching = true;
-        current.autoFailed = false;
-        observeQualityMenu();
-        paintFull(current, current.ready ? "ready" : "caching");
+      if (message.type === "BILI_BUFFER_GET_CACHE_PLAYER") {
+        sendResponse(readPlayerQuality(current, message.includeSources));
+      } else if (message.type === "BILI_BUFFER_SET_PLAYER_QUALITY") {
+        changePlayerQuality(current, message.quality, message.selectedAt).then(sendResponse, () => sendResponse({}));
+        return true;
+      } else if (message.playbackAt >= (current.qualityChangedAt || 0) &&
+          (!current.manualTask || message.playbackAt >= current.manualTask.playbackAt)) {
+        // 晚返回的旧画质启动请求不能替换本页最后一次手动保存。
+        current.manualTask = { id: message.videoId, createdAt: message.createdAt, quality: Number(message.quality),
+          followPlayer: message.followPlayer === true, playbackAt: message.playbackAt };
         queueCacheLookup(current);
       }
-      sendResponse({ ok: true, fullPhase: document.documentElement?.dataset.biliBufferFull });
+      if (message.type === "BILI_BUFFER_TRACK_MANUAL_CACHE") sendResponse({});
       return false;
     }
     if (message?.type === "BILI_BUFFER_CONFIRM_CACHE_QUALITY") {
       // 后台查完 CID 后再次确认页面和画质，拒绝切换分 P 或清晰度前发出的请求。
       const confirmed = Boolean(session && isCurrent(session) && isFull(session) && !document.hidden &&
-        (session.mode === "adaptive") === message.onDemand &&
         pageKey(message.url) === session.key && siteQuality(session) === message.quality);
-      if (!confirmed) sendResponse({ confirmed });
-      else {
-        document.dispatchEvent(new Event("bili-buffer-request-source-selection"));
-        const data = document.documentElement?.dataset;
-        sendResponse({ confirmed, sourcePaths: { video: data?.biliBufferSourceVideo, audio: data?.biliBufferSourceAudio } });
-      }
+      sendResponse({ confirmed, sourcePaths: confirmed ? readPlayerSourcePaths() : undefined });
       return false;
     }
     if (message?.type === "BILI_BUFFER_FETCH_PLAYURL") {
@@ -104,6 +114,12 @@
     }
     return false;
   });
+
+  function readPlayerSourcePaths() {
+    document.dispatchEvent(new Event("bili-buffer-request-source-selection"));
+    const data = document.documentElement?.dataset;
+    return { video: data?.biliBufferSourceVideo, audio: data?.biliBufferSourceAudio };
+  }
 
   async function fetchPlayurlFromPage(request) {
     const bvid = String(request?.bvid || "");
@@ -152,14 +168,22 @@
 
   function pageKey(input = location.href) {
     const url = new URL(input);
-    return [url.pathname.replace(/\/+$/, ""), url.searchParams.get("bvid"), url.searchParams.get("p") || "1"].join("\n");
+    return [url.pathname.replace(/\/+$/, ""), url.searchParams.get("bvid") || watchLaterVideoId(url),
+      url.searchParams.get("p") || "1"].join("\n");
+  }
+
+  function watchLaterVideoId(url) {
+    if (!/\/list\/watchlater\/?$/.test(url.pathname)) return null;
+    return url.searchParams.get("bvid") || (url.searchParams.has("oid") ? "av" + url.searchParams.get("oid") : null);
   }
 
   function syncPage() {
     const key = pageKey();
     if (session?.key === key) return;
+    const previousWatchLaterPlayer = session?.watchLaterPlayer;
     endSession();
-    session = { key, url: location.href, mode: bufferMode, controller: new AbortController(), failed: new Map() };
+    session = { key, url: location.href, mode: bufferMode, controller: new AbortController(), failed: new Map(),
+      watchLaterId: watchLaterVideoId(new URL(location.href)), previousWatchLaterPlayer };
     observeQualityMenu();
     if (isFull(session)) paintFull(session, "caching");
     if (bufferMode !== null) queueCacheLookup(session);
@@ -188,7 +212,6 @@
     const current = session;
     if (!current) return;
     current.mode = bufferMode;
-    if (next === "off") current.cacheWhileWatching = false;
     observeQualityMenu();
     if (isFull(current)) {
       if (current.playback && ownsSource(current.playback)) { current.ready = true; paintFull(current, "ready"); }
@@ -201,11 +224,11 @@
   }
 
   function isFull(current) {
-    return current.mode === "full-speed" || (current.mode === "adaptive" && current.cacheWhileWatching === true);
+    return current.mode === "full-speed";
   }
 
   function observeQualityMenu() {
-    const menu = session && isFull(session) ? document.querySelector(QUALITY_MENU) : null;
+    const menu = session && (isFull(session) || session.qualitySwitch) ? document.querySelector(QUALITY_MENU) : null;
     if (menu === qualityMenu) return;
     qualityObserver.disconnect();
     qualityMenu = menu;
@@ -216,12 +239,12 @@
 
   function onPlayerQualityChanged() {
     const current = session;
-    if (!current || !isFull(current) || !isCurrent(current)) return;
-    reflectLocalQuality(current);
+    if (!current || (!current.watchLaterId && !tracksSelectedQuality(current)) || !isCurrent(current)) return;
+    if (isFull(current)) reflectLocalQuality(current);
     const quality = siteQuality(current);
     if (quality !== (current.observedQuality || 0)) {
       current.observedQuality = quality;
-      queueCacheLookup(current);
+      if (tracksSelectedQuality(current)) queueCacheLookup(current);
     }
   }
 
@@ -254,7 +277,7 @@
   }
 
   function paintFull(current, phase) {
-    if (!isFull(current) || !isCurrent(current) || !document.documentElement) return;
+    if ((!isFull(current) && !current.manualTask) || !isCurrent(current) || !document.documentElement) return;
     const { dataset } = document.documentElement;
     if (dataset.biliBufferFull !== phase) dataset.biliBufferFull = phase;
     // 弹窗仍需要当前阶段，进度由工具栏徽标提供。页面只在异常或需要一次播放手势时显示提示。
@@ -331,14 +354,16 @@
   async function checkForCachedVideo(current) {
     const { signal } = current.controller;
     const full = isFull(current);
-    const quality = full ? siteQuality(current) : 0;
-    if (full && !quality && (navigator.onLine || current.qualitySwitch?.confirmed === false)) {
+    const manual = full ? null : current.manualTask;
+    const quality = tracksSelectedQuality(current) ? siteQuality(current) : 0;
+    if (manual?.followPlayer && quality !== manual.quality && (quality || navigator.onLine)) return;
+    if (!quality && (current.qualitySwitch?.confirmed === false || (full && navigator.onLine))) {
       current.waitingForQuality = true;
       paintFull(current, "waiting-quality");
       return;
     }
     current.waitingForQuality = false;
-    if (quality && current.selectedQuality !== quality) {
+    if (full && quality && current.selectedQuality !== quality) {
       // 暂停或错误只属于原档位。旧任务继续由片库管理，页面跟踪新选择的任务与就绪状态。
       current.selectedQuality = quality;
       current.autoTask = null;
@@ -347,7 +372,7 @@
       current.nativeSizeWait = null;
       current.ready = false;
     }
-    if (current.nativeSizeWait && full && navigator.onLine &&
+    if (current.nativeSizeWait && navigator.onLine &&
         !matchesVideoSize(document.querySelector("video"), current.nativeSizeWait)) return;
     current.nativeSizeWait = null;
     const attachment = current.playback;
@@ -356,11 +381,13 @@
     let cache;
     let leaseId;
     try {
-      if (full && current.autoTask) {
-        const response = await requestBackground("GET_VIDEO", { videoId: current.autoTask.id }, signal);
+      const task = full ? current.autoTask : manual;
+      if (task) {
+        const response = await requestBackground("GET_VIDEO", { videoId: task.id }, signal);
         if (!isCurrent(current) || !qualityStillSelected(current, quality)) return;
         const video = response?.video;
-        if (!response?.ok || !video || video.createdAt !== current.autoTask.createdAt || ["paused", "error"].includes(video.status)) {
+        if (manual && video?.status === "paused") return;
+        if (!response?.ok || !video || video.createdAt !== task.createdAt || ["paused", "error"].includes(video.status)) {
           failFull(current);
           return;
         }
@@ -376,14 +403,18 @@
         else if (isFull(current) && !current.autoFailed && !document.hidden && navigator.onLine && quality) cache = await startFull(current, quality);
         else if (isFull(current) && !navigator.onLine) failFull(current);
       }
-      if (!cache || !isCurrent(current)) return;
+      if (!cache || !isCurrent(current) || !cacheStillSelected(current, cache)) return;
       if (quality && Number(cache.quality) !== quality) { failFull(current); return; }
       const version = cacheVersion(cache);
       if (current.failed.get(cache.id) === version) return;
       const video = await waitForVideoElement(signal);
       if (!isCurrent(current) || !qualityStillSelected(current, quality)) return;
       if (!video) throw new Error("未找到当前播放页的播放器");
-      if (current.playback?.videoId === cache.id && current.playback.version === version && ownsSource(current.playback)) return;
+      if (current.playback?.videoId === cache.id && current.playback.version === version && ownsSource(current.playback)) {
+        current.ready = true;
+        paintFull(current, "ready");
+        return;
+      }
       paintFull(current, "preparing");
       const media = await requestBackground("GET_PLAYBACK_URL", { videoId: cache.id }, signal,
         late => releaseCacheUse(late?.leaseId));
@@ -410,9 +441,86 @@
     return Number(menu?.querySelector(`${QUALITY_OPTION}.bpx-state-active`)?.dataset.value);
   }
 
+  function isSelectableQuality(option) {
+    return !option.matches(".bpx-state-disabled, [disabled], [aria-disabled='true']") &&
+      !option.querySelector(".bpx-player-ctrl-quality-badge-needlogin");
+  }
+
+  function autoPlayerQuality(menu) {
+    // 未登录时清单也可能声明 480P，而播放器的「自动(360P 流畅)」才是当前使用的档位。
+    const options = [...menu.querySelectorAll(QUALITY_OPTION)];
+    const autoText = options.find(option => Number(option.dataset.value) === 0)?.querySelector(QUALITY_TEXT)?.textContent;
+    const label = autoText?.match(/[(（]([^）)]+)[)）]/)?.[1].trim();
+    if (!label) return 0;
+    const active = options.find(option => option.querySelector(QUALITY_TEXT)?.textContent.trim() === label);
+    const quality = Number(active?.dataset.value);
+    return validPlayerQuality(quality) ? quality : 0;
+  }
+
+  function playerQualityOptions(current) {
+    return [...(playerQualityMenu(current)?.querySelectorAll(QUALITY_OPTION) || [])];
+  }
+
+  function playerQualityMenu(current) {
+    const menu = document.querySelector(QUALITY_MENU);
+    if (!menu || pagePlayurlQuality(current)) return menu;
+    if (!current.watchLaterId) return null;
+    // 「稍后再看」可由播放器内部取得清单，document-start 拦截未必见到画质。
+    // 等标题链接与标签 URL 一致且同一播放器有媒体元数据，换稿时还要排除上一条的媒体源。
+    const titlePath = document.querySelector("h1.video-title a[href]")?.pathname;
+    const titleId = titlePath?.match(/\/video\/([a-zA-Z0-9]+)\/?$/)?.[1];
+    if (titleId !== current.watchLaterId) return null;
+    const video = menu.closest(".bpx-player-container")?.querySelector("video");
+    if (!video?.currentSrc || video.readyState < 1) return null;
+    const previous = current.previousWatchLaterPlayer;
+    if (previous?.video === video && previous.source === video.currentSrc && current.watchLaterMetadata !== video) return null;
+    current.watchLaterPlayer = { video, source: video.currentSrc };
+    return menu;
+  }
+
+  function readPlayerQuality(current, includeSources) {
+    const playerQuality = siteQuality(current);
+    const options = playerQualityOptions(current).filter(option => validPlayerQuality(Number(option.dataset.value)));
+    const choices = options
+      .filter(isSelectableQuality)
+      .map(option => Number(option.dataset.value));
+    return { playerQuality, playerChoices: options.length ? [...new Set(choices)].sort((a, b) => a - b) : null,
+      sourcePaths: playerQuality && includeSources ? readPlayerSourcePaths() : undefined };
+  }
+
+  async function changePlayerQuality(current, quality, selectedAt) {
+    const read = () => isCurrent(current) ? readPlayerQuality(current) : {};
+    if (!validPlayerQuality(quality) || !Number.isFinite(selectedAt) || selectedAt < (current.qualityChangedAt || 0)) return read();
+    const option = playerQualityOptions(current).find(item => Number(item.dataset.value) === quality && isSelectableQuality(item));
+    if (!option || siteQuality(current) === quality) return read();
+    // 复用 B 站自身的选档事件与换轨。仅菜单确认同档才返回成功，避免把点击当作切换完成。
+    // 保留操作发生的顺序。较早请求如果在消息通道里晚到，不能覆盖较新的选择。
+    current.popupQualitySelectedAt = selectedAt;
+    try { option.click(); }
+    finally { current.popupQualitySelectedAt = undefined; }
+    const revision = current.qualityChangedAt;
+    const deadline = Date.now() + QUALITY_WAIT_MS;
+    while (isCurrent(current) && current.qualityChangedAt === revision && Date.now() < deadline) {
+      const selected = siteQuality(current);
+      if (selected) return read();
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return read();
+  }
+
+  function pagePlayurlQuality(current) {
+    const data = document.documentElement?.dataset;
+    const url = data?.biliBufferQualityUrl;
+    const quality = Number(data?.biliBufferQuality);
+    if (!url || !validPlayerQuality(quality)) return 0;
+    try { return pageKey(url) === current.key ? quality : 0; }
+    catch { return 0; }
+  }
+
   function siteQuality(current) {
     // B 站可用同一份 DASH 清单切换表示。正数选中项是播放器已确认的手动档，优先于旧清单。
-    const selected = selectedPlayerQuality(document.querySelector(QUALITY_MENU));
+    const menu = playerQualityMenu(current);
+    const selected = selectedPlayerQuality(menu);
     const switching = current.qualitySwitch;
     if (switching && !switching.confirmed) {
       if (selected === switching.quality) switching.confirmed = true;
@@ -423,26 +531,29 @@
     const attachment = current.playback;
     if (attachment?.quality && attachment.video === document.querySelector("video") && ownsSource(attachment) &&
         (!current.qualitySwitch || current.qualitySwitch.quality === attachment.quality)) return attachment.quality;
-    const data = document.documentElement?.dataset;
-    const url = data?.biliBufferQualityUrl;
-    const quality = Number(data?.biliBufferQuality);
-    if (!url || !validPlayerQuality(quality)) return 0;
-    // 先用清单确认菜单属于当前视频，避免 SPA 切分 P 时残留的控件为新页面建任务。
-    try {
-      if (pageKey(url) !== current.key) return 0;
-    } catch { return 0; }
-    // 控件收起或重建时保留本页已确认的选项。选回「自动」时重新使用清单信号。
-    if (validPlayerQuality(selected, 0)) current.menuQuality = selected;
+    const quality = pagePlayurlQuality(current);
+    if (!quality && !menu && !current.watchLaterPlayer) return 0;
+    // 控件收起或重建时保留本页已确认的选项。自动档优先使用菜单所显示的实际档位。
+    if (validPlayerQuality(selected, 0)) current.menuQuality = selected || autoPlayerQuality(menu);
     return current.menuQuality || quality;
   }
 
+  function tracksSelectedQuality(current) {
+    return isFull(current) || current.qualitySwitch || current.manualTask?.followPlayer;
+  }
+
   function qualityStillSelected(current, quality) {
-    if (!isFull(current)) return true;
+    if (!tracksSelectedQuality(current)) return true;
     const selected = siteQuality(current);
     if (current.qualitySwitch?.confirmed === false) return false;
     if (selected === quality || (!selected && !navigator.onLine)) return true;
     current.recheck = true;
     return false;
+  }
+
+  function cacheStillSelected(current, cache) {
+    if (!isFull(current) && current.manualTask && current.manualTask.id !== cache.id) return false;
+    return qualityStillSelected(current, Number(cache.quality));
   }
 
   async function startFull(current, quality) {
@@ -452,7 +563,7 @@
     if (!video) { failFull(current); return null; }
     const mode = current.mode;
     paintFull(current, "caching");
-    const result = await requestBackground("START_AUTO_CACHE", { url: location.href, quality, onDemand: mode === "adaptive" }, signal);
+    const result = await requestBackground("START_AUTO_CACHE", { url: location.href, quality }, signal);
     if (!isCurrent(current) || current.mode !== mode || !isFull(current) || !qualityStillSelected(current, quality)) return null;
     if (!result?.ok || (!result.skipped && !result.video) ||
         ["paused", "error"].includes(result.video?.status)) {
@@ -469,7 +580,7 @@
   }
 
   function failFull(current) {
-    if (!isFull(current)) return;
+    if (!isFull(current) && !current.manualTask) return;
     current.autoFailed = true;
     current.ready = false;
     paintFull(current, "error");
@@ -505,7 +616,7 @@
       const quality = Number(cache.quality);
       if (!isCurrent(current) || !qualityStillSelected(current, quality)) return;
       // 菜单先改变，MSE 的音视频轨之后才完成切换。提前移除原生源会让 B 站回滚菜单和档位。
-      if (isFull(current) && navigator.onLine && current.qualitySwitch?.quality === quality &&
+      if (navigator.onLine && current.qualitySwitch?.quality === quality &&
           video.dataset.biliCachePlayback !== "local" && size.width && size.height && !matchesVideoSize(video, size)) {
         current.nativeSizeWait = size;
         return;
@@ -592,7 +703,7 @@
 
   async function mountPlayback(current, video, cache, url, leaseId, setup) {
     const quality = Number(cache.quality);
-    if (!isCurrent(current) || video !== document.querySelector("video") || !qualityStillSelected(current, quality)) return;
+    if (!isCurrent(current) || video !== document.querySelector("video") || !cacheStillSelected(current, cache)) return;
     const menu = document.querySelector(QUALITY_MENU);
     const menuLabel = selectedPlayerQuality(menu) === quality ? qualityLabelNode(menu)?.textContent : "";
     const nativeSource = current.playback?.video === video && ownsSource(current.playback)
@@ -612,7 +723,7 @@
     try {
       await Promise.all([metadata, setup?.(signal)]);
       if (!isCurrent(current)) return;
-      if (!qualityStillSelected(current, quality)) {
+      if (!cacheStillSelected(current, cache)) {
         releasePlayback(current, "restore");
         return;
       }
@@ -621,10 +732,10 @@
         delete document.documentElement.dataset.biliBufferPlayback;
         return;
       }
-      if (isFull(current) && !wholeTimelineAvailable(video)) {
+      if ((isFull(current) || current.manualTask) && !wholeTimelineAvailable(video)) {
         if (video.readyState < 2) await waitForEvent(video, "loadeddata", signal, "本地视频无法出画");
         if (!isCurrent(current) || !ownsSource(attachment)) return;
-        if (!qualityStillSelected(current, attachment.quality)) {
+        if (!cacheStillSelected(current, cache)) {
           releasePlayback(current, "restore");
           return;
         }

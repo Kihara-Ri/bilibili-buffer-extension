@@ -9,6 +9,7 @@ const videos = [], starts = [], storage = {};
 let listener, mode = 'video';
 const test = window.__startupTest = {
   videos, starts, lists: 0, holdLists: false,
+  playerQuality: Number(new URLSearchParams(location.search).get('player') ?? 80),
   publish(patch = {}, emit = true) {
     const quality = patch.quality || 80, audio = patch.cacheMode === 'audio';
     const at = Date.now();
@@ -41,12 +42,17 @@ globalThis.chrome = {
         case 'GET_CACHE_MODE': return { ok: true, mode };
         case 'SET_CACHE_MODE': mode = message.mode; return { ok: true, mode };
         case 'SET_POPUP_SELECTION': return { ok: true, saved: true };
-        case 'GET_ASSIST_STATE': return { ok: true, config: { mode: 'off' }, stats: {} };
+        case 'GET_ASSIST_STATE': return { ok: true, config: { mode: 'off' }, stats: {}, playerQuality: test.playerQuality };
+        case 'GET_CACHE_PLAYER': return { ok: true, playerQuality: test.playerQuality };
         case 'GET_HEALTH': return { ok: true, report: { ok: true, checks: [] } };
         case 'GET_POPUP_SNAPSHOT': return { ok: true, stale: false, snapshot: {
           pageInfo: { supported: true, id: pageId, bvid: 'BV1Kg8t6NEmN', cid: 456, url, title, partTitle, page, pageCount, duration: 60 },
           qualities: [{ quality: 80, label: '1080P' }, { quality: 64, label: '720P' }],
           selectedQuality: 80, defaultQuality: 80, auth: {},
+          codecOptionsByQuality: {
+            64: [{ codec: 'auto' }, { codec: 'avc', label: 'AVC' }, { codec: 'hevc', label: 'HEVC' }],
+            80: [{ codec: 'auto' }, { codec: 'avc', label: 'AVC' }, { codec: 'hevc', label: 'HEVC' }]
+          },
           cacheSizeInfo: { duration: 60, video: [], audio: [{ id: 30280, mimeType: 'audio/mp4', codecs: 'mp4a.40.2', bandwidth: 128000, hasSource: true }] }
         } };
         case 'LIST_VIDEOS': {

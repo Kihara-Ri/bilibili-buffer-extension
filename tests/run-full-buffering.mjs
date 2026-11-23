@@ -45,10 +45,12 @@ try {
     args: ["--disable-extensions-except=" + extension, "--load-extension=" + extension]
   }));
   const base = "https://www.bilibili.com/video/";
-  const qualitySwitchControls = `<div class="bpx-player-ctrl-quality">
+  const qualitySwitchControls = (highest, label) => `<div class="bpx-player-ctrl-quality">
     <div class="bpx-player-ctrl-quality-result"><span class="bpx-player-ctrl-quality-result-name">480P</span></div>
-    <ul><li class="bpx-player-ctrl-quality-menu-item bpx-state-active" data-value="32">480P</li>
-    <li class="bpx-player-ctrl-quality-menu-item" data-value="120">4K</li></ul>
+    <ul><li class="bpx-player-ctrl-quality-menu-item${highest === 120 ? " bpx-state-active" : ""}" data-value="32"><span class="bpx-player-ctrl-quality-text">480P</span></li>
+    <li class="bpx-player-ctrl-quality-menu-item" data-value="${highest}">${label}</li>
+    ${highest === 80 ? `<li class="bpx-player-ctrl-quality-menu-item bpx-state-active" data-value="0"><span class="bpx-player-ctrl-quality-text">自动(480P)</span></li>
+      <li class="bpx-player-ctrl-quality-menu-item" data-value="112"><span class="bpx-player-ctrl-quality-badge-needlogin">登录即享</span></li>` : ""}</ul>
   </div><script>
     const items = [...document.querySelectorAll('.bpx-player-ctrl-quality-menu-item')];
     const video = document.querySelector('video');
@@ -57,31 +59,40 @@ try {
     for (const item of items) item.onclick = () => { window.pendingChoice = item.dataset.value; };
     window.confirmMenuChoice = () => {
       for (const item of items) item.classList.toggle('bpx-state-active', item.dataset.value === window.pendingChoice);
-      document.querySelector('.bpx-player-ctrl-quality-result-name').textContent = window.pendingChoice === '120' ? '4K' : '480P';
-      if (window.pendingChoice === '120' && !video.dataset.biliCachePlayback) {
+      document.querySelector('.bpx-player-ctrl-quality-result-name').textContent = window.pendingChoice === '${highest}' ? '${label}' : '480P';
+      if (window.pendingChoice === '${highest}' && !video.dataset.biliCachePlayback) {
         loadNative('data:video/mp4;base64,${dashVideo.toString("base64")}');
       }
     };
     window.finishNative480 = () => loadNative(originalSource);
   </script>`;
-  await context.route("https://www.bilibili.com/**", route => route.fulfill({
-    contentType: "text/html",
-    body: `<!doctype html><html><head><script>
-      const videoId = location.pathname.split("/")[2];
-      if (videoId !== "BVwhile" && videoId !== "BVdash") window.__playinfo__ = { data: { quality: videoId === "BVswitch" ? 32 : 16 } };
+  await context.route("https://www.bilibili.com/**", route => {
+    const address = new URL(route.request().url());
+    const videoId = address.searchParams.get("bvid") || address.pathname.split("/")[2];
+    return route.fulfill({
+      contentType: "text/html",
+      body: `<!doctype html><html><head><script>
+      const videoId = ${JSON.stringify(videoId)};
+      if (!["BVwhile", "BVdash", "BVchoice"].includes(videoId)) window.__playinfo__ = { data: { quality: videoId === "BVswitch" ? 32 : 16 } };
       window.confirmPlayerQuality = quality => fetch("https://api.bilibili.com/x/player/playurl?bvid=" + videoId + "&qn=" + quality).then(response => response.json());
       window.playedBeforeLocal = false;
       document.addEventListener("playing", event => {
         if (event.target instanceof HTMLVideoElement && event.target.dataset.biliCachePlayback !== "local") window.playedBeforeLocal = true;
       }, true);
-    </script></head><body><video controls autoplay muted src="data:video/mp4;base64,${fixture.toString("base64")}"></video>${route.request().url().includes("/BVswitch/") ? qualitySwitchControls : ""}</body></html>`
-  }));
-  const selectedQuality = bvid => bvid === "BVdash" ? 120 : bvid === "BVwhile" ? 32 : 16;
+    </script></head><body><h1 class="video-title"><a href="/video/${videoId}">${videoId}</a></h1>
+    <div class="bpx-player-container"><video controls autoplay muted src="data:video/mp4;base64,${fixture.toString("base64")}"></video>${
+      videoId === "BVswitch" ? qualitySwitchControls(120, "4K") :
+        videoId === "BVchoice" ? qualitySwitchControls(80, "1080P") : ""
+    }</div></body></html>`
+    });
+  });
+  const selectedQuality = bvid => bvid === "BVdash" ? 120 : ["BVwhile", "BVchoice"].includes(bvid) ? 32 : 16;
+  const dashQualities = { BVdash: [125, 120], BVchoice: [112, 80, 64, 32] };
   const playurl = (bvid, quality = selectedQuality(bvid)) => ({
-    code: 0, data: bvid === "BVdash" ? {
-      quality: selectedQuality(bvid), accept_quality: [125, 120], dash: {
+    code: 0, data: dashQualities[bvid] ? {
+      quality: selectedQuality(bvid), accept_quality: dashQualities[bvid], dash: {
         duration: 10,
-        video: [125, 120].map(id => ({ id, codecid: 7, mimeType: "video/mp4", codecs: "avc1.64001F", bandwidth: 200000, baseUrl: mediaRoot + bvid + "-video.mp4" })),
+        video: dashQualities[bvid].map(id => ({ id, codecid: 7, mimeType: "video/mp4", codecs: "avc1.64001F", bandwidth: 200000, baseUrl: mediaRoot + bvid + "-video.mp4" })),
         audio: [{ id: 30280, mimeType: "audio/mp4", codecs: "mp4a.40.2", bandwidth: 154889, baseUrl: mediaRoot + bvid + "-audio.mp4" }]
       }
     } : {
@@ -120,16 +131,23 @@ try {
         bvid, title: bvid, pages: [{ cid: 11, page: 1, duration: 19 }]
       } }));
     };
-  }, Object.fromEntries(["BVadaptive", "BVnext", "BVwhile", "BVlegacy", "BVdash", "BVrace", "BVswitch"].map(bvid => [bvid, playurl(bvid)])));
+  }, Object.fromEntries(["BVadaptive", "BVnext", "BVwhile", "BVlegacy", "BVdash", "BVrace", "BVswitch", "BVchoice"].map(bvid => [bvid, playurl(bvid)])));
 
   const panel = await context.newPage();
   await panel.goto("chrome-extension://" + new URL(worker.url()).hostname + "/popup.html");
-  const open = async bvid => {
+  const open = async (bvid, url = base + bvid + "/") => {
     const page = await context.newPage();
-    await page.goto(base + bvid + "/");
+    await page.goto(url);
     await page.bringToFront();
     await page.waitForFunction(() => document.documentElement.dataset.biliBufferContentReady);
     return page;
+  };
+  const openPopupForActiveVideo = async () => {
+    const popupPage = context.waitForEvent("page");
+    await worker.evaluate(() => chrome.tabs.create({ url: chrome.runtime.getURL("popup.html"), active: false }));
+    const popup = await popupPage;
+    await popup.waitForFunction(() => document.querySelector("#cache-button")?.dataset.state === "idle");
+    return popup;
   };
   const getTask = bvid => panel.evaluate(async bvid => {
     const result = await chrome.runtime.sendMessage({ target: "background", type: "LIST_VIDEOS" });
@@ -151,27 +169,85 @@ try {
   assert.equal(await getTask("BVadaptive"), undefined, "默认播放不应自动创建整片任务");
   gate.set("BVadaptive", deferred());
   // 打开不抢走视频焦点的弹窗页面，沿生产的当前视频按钮、内容脚本和 Offscreen 链路验证。
-  const quickPopupPage = context.waitForEvent("page");
-  await worker.evaluate(() => chrome.tabs.create({ url: chrome.runtime.getURL("popup.html"), active: false }));
-  const quickPopup = await quickPopupPage;
-  const quickCache = quickPopup.getByRole("button", { name: /边播边缓存|Cache while watching/ });
-  await quickCache.waitFor({ state: "visible" });
-  await quickCache.evaluate(button => button.click());
+  const adaptivePopup = await openPopupForActiveVideo();
+  const cacheButton = adaptivePopup.locator("#cache-button");
+  assert.equal(await adaptivePopup.locator("#cache-while-watching").count(), 0);
+  await cacheButton.evaluate(button => button.click());
   const quickTask = await until(() => getTask("BVadaptive"), "自适应下的一键缓存没有创建整片任务");
   assert.equal(quickTask.requestedQuality, 16, "一键缓存必须跟随播放器档位");
   assert.equal(quickTask.status, "downloading");
-  await quickCache.waitFor({ state: "hidden" });
-  assert.equal(await quickPopup.evaluate(async () => {
+  assert.equal(quickTask.automatic, false, "用户点的边播边缓存属于手动片库");
+  await adaptivePopup.waitForFunction(() => document.querySelector("#cache-button").dataset.state === "downloading");
+  assert.equal(await adaptivePopup.evaluate(async () => {
     const state = await chrome.runtime.sendMessage({ target: "background", type: "GET_ASSIST_STATE" });
     return state.config.bufferMode;
   }), "adaptive", "一键缓存不应修改进页默认");
   gate.get("BVadaptive").resolve();
   await expectWholeLocal(adaptive);
-  await quickPopup.close();
+  await adaptivePopup.close();
   await adaptive.goto(base + "BVnext/");
   await adaptive.waitForFunction(() => document.querySelector("video").currentTime > 0.15);
   assert.equal(await getTask("BVnext"), undefined, "切到下一条视频应恢复进页默认");
   await adaptive.close();
+
+  const choicePage = await open("BVchoice", "https://www.bilibili.com/list/watchlater?bvid=BVchoice");
+  await choicePage.waitForFunction(() => document.querySelector("video")?.videoWidth > 0);
+  assert.equal(await choicePage.locator("html").getAttribute("data-bili-buffer-quality"), null,
+    "稍后再看测试必须保留只有播放器菜单的场景");
+  const choicePopup = await openPopupForActiveVideo();
+  assert.equal(await choicePopup.locator("#quality-slider").getAttribute("max"), "1", "弹窗仅提供播放器可选且可缓存的档位");
+  assert.equal(await choicePopup.locator("#quality-name").textContent(), "480P", "自动模式优先采用菜单显示的实际档位");
+  assert.equal(await choicePopup.locator("#quality-slider").inputValue(), "0", "480P 正在播放时应默认选中低档");
+  const changeNativeQuality = async (quality, label) => {
+    await choicePage.locator(`[data-value="${quality}"]`).click();
+    await choicePage.evaluate(() => window.confirmMenuChoice());
+    await choicePopup.waitForFunction(label => document.querySelector("#quality-name").textContent === label, label);
+  };
+  await changeNativeQuality(80, "1080P");
+  await changeNativeQuality(32, "480P");
+  const slider = choicePopup.locator("#quality-slider");
+  await slider.press("End");
+  await choicePage.waitForFunction(() => window.pendingChoice === "80");
+  await slider.press("Home");
+  await choicePage.waitForFunction(() => window.pendingChoice === "32");
+  await choicePage.evaluate(() => window.confirmMenuChoice());
+  await choicePopup.waitForFunction(() => !document.querySelector("#cache-button").disabled &&
+    document.querySelector("#quality-name").textContent === "480P");
+
+  await slider.press("End");
+  await choicePage.waitForFunction(() => window.pendingChoice === "80");
+  assert.equal(await choicePopup.locator("#cache-button").isDisabled(), true, "网页未确认前应暂停提交缓存");
+  await choicePage.evaluate(() => window.confirmMenuChoice());
+  await choicePopup.waitForFunction(() => !document.querySelector("#cache-button").disabled);
+  await choicePopup.locator("#settings-button").evaluate(button => button.click());
+  await choicePopup.locator("#cache-codec").selectOption("avc");
+  await choicePopup.locator("#settings-back").evaluate(button => button.click());
+  await choicePopup.locator("#cache-button").evaluate(button => button.click());
+  await expectWholeLocal(choicePage);
+  const chosen = await getTask("BVchoice");
+  assert(chosen.requestedQuality === 80 && chosen.quality === 80 && chosen.requestedCodec === "avc" && !chosen.automatic,
+    "手动选择的画质和编码必须贯穿弹窗、下载和本地播放");
+  await choicePopup.locator("#mode-audio").evaluate(button => button.click());
+  await choicePopup.waitForFunction(() => document.querySelector("#audio-row").hidden === false && !document.querySelector("#cache-button").disabled);
+  await choicePopup.locator("#cache-button").evaluate(button => button.click());
+  await choicePopup.waitForFunction(() => document.querySelector("#cache-button").dataset.state === "complete");
+  const audioChoice = await panel.evaluate(async () => {
+    const { videos } = await chrome.runtime.sendMessage({ target: "background", type: "LIST_VIDEOS" });
+    return videos.find(video => video.bvid === "BVchoice" && video.cacheMode === "audio");
+  });
+  assert(audioChoice?.status === "complete" && audioChoice.mediaKind === "audio", "同一个按钮必须能完成仅音频任务");
+  await choicePopup.locator("#mode-video").evaluate(button => button.click());
+  await choicePopup.close();
+  await choicePage.evaluate(() => {
+    history.pushState(null, "", "/list/watchlater?bvid=BVnext");
+    document.querySelector("h1.video-title a").href = "/video/BVnext";
+  });
+  const nextPlayer = await panel.evaluate(async url => {
+    const [tab] = await chrome.tabs.query({ url });
+    return chrome.runtime.sendMessage({ target: "background", type: "GET_CACHE_PLAYER", tabId: tab.id, url });
+  }, choicePage.url());
+  assert.equal(nextPlayer.playerQuality, 0, "稍后再看切下一条时，标题已换但上一条的播放器还在，不能沿用旧菜单");
+  await choicePage.close();
 
   // 从弹窗实际选择档位，进页后验证自动任务使用保存的策略。
   await configure("full-speed");
@@ -225,7 +301,6 @@ try {
   assert.equal((await getTask("BVwhile")).createdAt, whileTask.createdAt);
   assert.equal(mediaRequests.get("BVwhile"), whileRequests, "重开已有整片的页面应直接复用");
   await whilePlaying.close();
-
   await until(async () => (await getTask("BVwhile"))?.cacheExpiresAt, "完整视频离开后未登记期限");
   const alarmName = "bili-buffer-temporary-cache-expiry-v1";
   await until(() => panel.evaluate(async name => Boolean(await chrome.alarms.get(name)), alarmName), "未为临时缓存注册 Chrome 闹钟");
@@ -321,6 +396,16 @@ try {
   gate.get("BVlegacy").resolve();
   await expectWholeLocal(legacy);
   assert.equal(await legacy.locator("video").evaluate(video => video.paused), true, "切到本地后保留用户暂停状态");
+  const automatic = await getTask("BVlegacy");
+  const requestsBeforeKeep = mediaRequests.get("BVlegacy");
+  const keepPopup = await openPopupForActiveVideo();
+  await keepPopup.locator("#cache-button").evaluate(button => button.click());
+  await keepPopup.waitForFunction(() => document.querySelector("#cache-button").dataset.state === "complete");
+  const kept = await getTask("BVlegacy");
+  assert.equal(kept.cacheOrigin, "manual", "同一个缓存按钮可把全速缓冲的临时文件保留到片库");
+  assert.equal(kept.createdAt, automatic.createdAt, "保留时复用已经完成的缓存");
+  assert.equal(mediaRequests.get("BVlegacy"), requestsBeforeKeep, "保留到片库不应重新下载");
+  await keepPopup.close();
 
   const dash = await open("BVdash");
   await dash.evaluate(() => window.confirmPlayerQuality(120));
@@ -347,9 +432,10 @@ try {
     `本地拖动延迟超出受控线路阈值 ${JSON.stringify({ localLatency, nativeLatency })}`);
   console.log(JSON.stringify({
     ok: true, adaptiveDefault: true, autoStart: true, waitedForQuality: true, latestQualityAtStart: true, cachedSelected4k: true,
-    inPageQualitySwitch: true, ignoredLateCompletions: true,
-    reuseOnReload: true, quickCache: true, playingBeforeComplete: true, migratedLegacyMode: true, progressInToolbarOnly: true,
+    inPageQualitySwitch: true, popupQualitySync: true, ignoredLateCompletions: true,
+    reuseOnReload: true, unifiedCache: { playerQuality: true, explicitQualityAndCodec: true, audioOnly: true, keepTemporary: true },
     temporaryCache: { multiTab: true, reopened: true, expiredByAlarm: true },
+    playingBeforeComplete: true, migratedLegacyMode: true, progressInToolbarOnly: true,
     offlineSeek: { progressive: localLatency, mergedDash: dashLatency, native: nativeLatency, mediaNetworkRequests: 0 }
   }));
 } finally {

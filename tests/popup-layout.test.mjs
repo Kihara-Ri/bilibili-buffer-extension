@@ -45,7 +45,7 @@ test("当前视频：内容二选一、画质是一根滑杆（无下拉）、�
   const quality = between('id="quality-row"', 'id="auth-note"');
   assert.match(quality, /<input[^>]*id="quality-slider"[^>]*type="range"/);
   assert.match(quality, /id="quality-slider"[^>]*aria-labelledby="quality-label"/);
-  assert.doesNotMatch(between('id="current-view"', 'id="library-view"'), /quality-options|aria-haspopup|popovertarget|\bpopover\b|<select/);
+  assert.doesNotMatch(between('id="current-view"', 'id="library-view"'), /quality-options|aria-haspopup|popovertarget|\bpopover\b/);
   // 看得见的拇指与登顶水花是装饰层，放在 range 之后（CSS 用相邻选择器把悬停 / 焦点状态传给拇指）。
   assert.match(quality, /id="quality-slider"[^>]*>\s*(?:<!--[\s\S]*?-->\s*)?<span class="quality-knob" aria-hidden="true"><\/span>\s*<span class="quality-splash" aria-hidden="true"><\/span>/);
   assert.match(quality, /<span class="quality-fill" aria-hidden="true"><span class="quality-surge"><\/span><\/span>/);
@@ -57,6 +57,7 @@ test("当前视频：内容二选一、画质是一根滑杆（无下拉）、�
   assert.match(modeRow, /id="cache-mode"/);
   assert.match(modeRow, /id="account-chip"[^>]*hidden/);
   assert.doesNotMatch(modeRow, /id="auth-note"/);
+  assert.doesNotMatch(between('id="current-view"', 'id="library-view"'), /id="cache-codec"/);
   // 账号说明紧跟在画质滑杆之后，未登录时带「去登录」。
   assert.match(between('id="auth-note"', "</p>"), /id="auth-action"[^>]*hidden/);
   // 暂停是主按钮所在容器里的图标按钮，不再占一行文字链接。
@@ -74,7 +75,7 @@ test("提前加载并入当前视频：开关、三个概览数字，其余诊�
   for (const id of ["assist-speed", "assist-ready", "assist-hit"]) assert.match(summary, new RegExp(`<dd id="${id}"[^>]*>—</dd>`), `概览缺少 ${id}`);
   for (const id of ["assist-buffer", "assist-stalls", "assist-node"]) assert.doesNotMatch(summary, new RegExp(`id="${id}"`), `诊断 ${id} 不应出现在概览`);
   assert.match(preload, /id="assist-details-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="assist-metrics-panel"/);
-  assert.match(preload, /id="cache-while-watching"[^>]*hidden/);
+  assert.doesNotMatch(html, /id="cache-while-watching"/);
   const diagnostics = between('id="assist-metrics-panel"', "</dl>");
   assert.match(diagnostics, /^[^>]*hidden/, "详细数据默认折叠");
   for (const id of ["assist-buffer", "assist-stalls", "assist-residency", "assist-accelerated", "assist-trouble", "assist-node"]) {
@@ -92,6 +93,7 @@ test("设置：两档缓冲切换、进度条外观（唯一一条预览）、�
   assert.match(buffering, /id="assist-buffer-mode"[^>]*role="radiogroup"[^>]*aria-labelledby="buffer-mode-label"/);
   assert.deepEqual([...buffering.matchAll(/type="radio" name="buffer-mode" value="([^"]+)"/g)].map(match => match[1]),
     ["adaptive", "full-speed"]);
+  assert.match(buffering, /<label id="cache-codec-row"[^>]*for="cache-codec"[^>]*hidden>\s*<span[^>]*>缓存编码<\/span>\s*<select id="cache-codec"/);
   assert.equal((settings.match(/class="timeline-preview"/g) || []).length, 1);
   for (const id of ["assist-progress-color", "assist-show-highlight", "assist-colors", "assist-custom-color", "assist-appearance-reset", "browser-health-refresh", "browser-health-status", "about-version"]) {
     assert.match(settings, new RegExp(`id="${id}"`), `设置缺少 ${id}`);

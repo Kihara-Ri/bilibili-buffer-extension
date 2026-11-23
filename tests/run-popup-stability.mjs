@@ -205,6 +205,7 @@ try {
   const headBox = await preloadHead.boundingBox();
   const switchBox = await preloadSwitch.boundingBox();
   assert(headBox && switchBox && Math.abs(headBox.x + headBox.width - switchBox.x - switchBox.width) < 1, '开关靠标题行右边缘对齐');
+  assert.equal(await page.locator('#cache-while-watching').count(), 0, '提前加载区域只保留状态和配置控件');
   await page.locator('#assist-details-toggle').click();
   const statsStable = await page.evaluate(async () => {
     const nodes = [...document.querySelectorAll('.assist-metrics dd')];
