@@ -21,6 +21,10 @@
     "test:network": "node tests/run-playback-network.mjs && node tests/run-playback-demand.mjs",
     "test:playback": "node tests/run-playback-cache-integration.mjs",
     "test:extension": "npm run build && node tests/run-playback-extension-smoke.mjs && node tests/run-local-playback.mjs && node tests/run-full-buffering.mjs && node tests/run-committed-playback.mjs",
+    "mcp": "node scripts/bilibili-mcp.mjs",
+    "mcp:setup": "node scripts/setup-bilibili-mcp.mjs",
+    "test:mcp": "node tests/run-bilibili-mcp.mjs",
+    "test:mcp:native": "node tests/run-bilibili-mcp-native.mjs",
     "live:browser": "node scripts/live-browser.mjs",
     "test:live": "node scripts/live-cache.mjs",
     "test:chrome": "node scripts/test-chrome.mjs",
@@ -33,6 +37,9 @@
     "test:live:playback": "node scripts/live-playback-recovery.mjs"
   },
   "devDependencies": {
-    "playwright": "1.64.0"
+    "@modelcontextprotocol/server": "2.4.0",
+    "playwright": "1.64.0",
+    "proper-lockfile": "4.1.2",
+    "zod": "4.6.7"
   }
 }

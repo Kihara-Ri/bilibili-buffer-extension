@@ -17,7 +17,7 @@ await mkdir(path.join(root,'.tmp'),{recursive:true});
 const base=await mkdtemp(path.join(root,'.tmp/update-check-'));
 const profile=path.join(base,'profile');
 const fixture=path.join(base,'extension');await mkdir(fixture);
-for(const file of ['src','_locales','assets','rules','manifest.json','popup.html','popup.css','offscreen.html','privacy.html','update.html','update.css','update-public-key.json']) {
+for(const file of ['src','_locales','assets','rules','manifest.json','popup.html','popup.css','offscreen.html','privacy.html','mcp.html','mcp.css','update.html','update.css','update-public-key.json']) {
  await cp(path.join(extension,file),path.join(fixture,file),{recursive:true});
 }
 // 无头浏览器无法操作原生授权弹框；仅测试副本把已声明的可选域名预授权为必需域名。

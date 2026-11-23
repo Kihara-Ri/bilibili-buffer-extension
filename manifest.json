@@ -24,6 +24,7 @@
     "https://*.hdslb.com/*",
     "https://*.akamaized.net/*"
   ],
+  "optional_permissions": ["nativeMessaging"],
   "optional_host_permissions": [
     "https://api.github.com/*",
     "https://github.com/*",

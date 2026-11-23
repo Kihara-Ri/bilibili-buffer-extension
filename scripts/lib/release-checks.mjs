@@ -147,6 +147,10 @@ export function checkHostPermissions(manifest) {
       failures.push(`出现了未经评审说明的新权限：${permission}`);
     }
   }
+  // 用户连接本机 MCP 时才授予权限，日常播放和缓存无需运行本机程序。
+  for (const permission of manifest.optional_permissions || []) {
+    if (permission !== "nativeMessaging") failures.push(`出现了未经评审说明的可选权限：${permission}`);
+  }
   for (const host of manifest.host_permissions || []) {
     if (!host.startsWith("https://")) failures.push(`host_permissions 只允许 https：${host}`);
     // "https://*/*" 与 "*://*/*" 都是“所有站点”，审查时按越权处理，直接拒绝。

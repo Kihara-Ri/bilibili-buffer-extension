@@ -103,6 +103,7 @@ const referenced = [
   "offscreen.html",
   "popup.css",
   "privacy.html",
+  "mcp.html", "mcp.css",
   "LICENSE"
 ].filter(Boolean);
 for (const entry of new Set(referenced)) {

@@ -27,7 +27,7 @@ await mkdir(unpacked, { recursive: true });
 // 这样即使离线也能看到完整的隐私政策，不必依赖外部网址。
 // LICENSE 同样随包：GPL-3.0 要求分发（商店 zip 即分发）时附带许可证全文。
 // _locales 提供清单里 __MSG_extName__ 等占位符的中英文，缺了 Chrome 会拒绝加载。
-for (const entry of ["LICENSE", "THIRD_PARTY_NOTICES.md", "_locales", "assets", "rules", "src", "manifest.json", "offscreen.html", "popup.css", "popup.html", "privacy.html", ...(github ? ["update.html", "update.css", "update-public-key.json"] : [])]) {
+for (const entry of ["LICENSE", "THIRD_PARTY_NOTICES.md", "_locales", "assets", "rules", "src", "manifest.json", "offscreen.html", "popup.css", "popup.html", "privacy.html", "mcp.html", "mcp.css", ...(github ? ["update.html", "update.css", "update-public-key.json"] : [])]) {
   await cp(path.join(root, entry), path.join(unpacked, entry), { recursive: true });
 }
 
@@ -71,7 +71,7 @@ const referenced = [
   ...(manifest.declarative_net_request?.rule_resources || []).map((entry) => entry.path),
   "offscreen.html",
   "popup.css",
-  "privacy.html"
+  "privacy.html", "mcp.html", "mcp.css"
 ].filter(Boolean);
 for (const entry of new Set(referenced)) {
   await stat(path.join(unpacked, entry));

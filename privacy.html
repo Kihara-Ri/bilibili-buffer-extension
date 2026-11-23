@@ -186,6 +186,9 @@
       <h2>GitHub 版更新</h2>
       <p>仅 GitHub 解压版在用户主动检查更新并授权后连接 api.github.com、github.com、release-assets.githubusercontent.com 和 objects.githubusercontent.com 获取发布版本及签名更新包；不携带 B 站 cookie，不上传缓存、账号或目录内容。GitHub 作为服务提供方会接收正常网络请求信息。商店版只提供下载链接，仍通过 Chrome 商店更新。</p>
       <p>安装目录授权和旧文件恢复快照仅保存在本机独立 IndexedDB。每次需要写权限时由 Chrome 请求确认，可通过页面权限撤销目录访问；恢复快照在更新验证成功或恢复完成后清理。选择的安装目录只用于更新扩展文件。</p>
+
+      <h2>AI 下载</h2>
+      <p>你在当前 Chrome 资料开启 AI 下载后，扩展使用 Chrome 本机消息接口与同设备的连接器交换查询结果、任务状态和导出路径。B 站会话继续由 Chrome 管理，连接器收到的是站点确认的登录状态。你为之启用 MCP 的 AI 客户端会接收工具结果；可在扩展设置中断开连接。</p>
       <hr>
       <h2 lang="en">Privacy Policy (English)</h2>
       <p lang="en">
@@ -208,6 +211,7 @@
       </p>
       <p lang="en"><strong>GitHub edition updates:</strong> after an explicit update check and optional permission grant, the unpacked edition contacts api.github.com, github.com, release-assets.githubusercontent.com and objects.githubusercontent.com for release metadata and signed packages. Requests omit Bilibili cookies and never upload cached media, account data or folder contents. GitHub receives normal request metadata. The store edition only links to downloads and updates through Chrome Web Store.</p>
       <p lang="en">The selected installation folder handle and recovery snapshots stay in a separate local IndexedDB. Chrome may request write access again; it can be revoked through page permissions. Snapshots are removed after verified success or completed recovery. Folder access is used only to update extension files.</p>
+      <p lang="en"><strong>AI downloads:</strong> when enabled, Chrome Native Messaging connects the current profile to a local connector for query results, job status, and output paths. Chrome manages the Bilibili session and the connector receives the site's sign-in status. The MCP client you configure receives the tool results. You can disconnect in the extension settings.</p>
       <footer>
         本页面可离线打开；扩展包内的 <code>privacy.html</code> 与线上版本内容一致。
       </footer>

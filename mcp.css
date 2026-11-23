@@ -1,0 +1,9 @@
+:root { color-scheme: light dark; font: 15px/1.6 system-ui, sans-serif; }
+body { margin: 0; background: Canvas; color: CanvasText; }
+main { margin: 8vh auto; max-width: 29rem; padding: 1.5rem; }
+h1 { margin: 0; font-size: 1.6rem; line-height: 1.3; }
+pre { background: color-mix(in srgb, CanvasText 7%, Canvas); border-radius: .6rem; padding: .75rem 1rem; overflow: auto; }
+.actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+button { border: 1px solid ButtonBorder; border-radius: .5rem; padding: .45rem .75rem; font: inherit; cursor: pointer; }
+#connect { background: #006d91; color: white; border-color: transparent; }
+button:disabled { opacity: .6; cursor: default; }

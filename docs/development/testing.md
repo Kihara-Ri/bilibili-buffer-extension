@@ -14,6 +14,8 @@
 | 在线网络 | `npm run test:network` | 否 | 受控延迟与需求响应：`run-playback-network.mjs` + `run-playback-demand.mjs` |
 | 在线播放 | `npm run test:playback` | 否 | 真实 AVC/AAC 夹具驱动 MediaSource 双轨播放、拖动、零网络命中 |
 | 生产扩展 | `npm run test:extension` | 否 | 加载生产包验证注入、命中、热重载（标记和 SHA-256）、离线片库播放与拖动、分 P 竞态及坏档回退。用本机 HTTP Range 检查 Offscreen 让行、完全缓冲进页启动与本地换源 |
+| AI 下载工具 | `npm run test:mcp` | 否 | 通过真实 MCP 管道和 Chromium 验证 P3–P7 的原轨音频、原字幕与预算，重连续传、暂停、取消、仅重试失败的分 P |
+| AI 下载连接器 | `npm run test:mcp:native` | 否 | 在临时 Chrome 资料中启动原生连接器。由本机 HTTPS 夹具核对浏览器附上的会话，覆盖已有登录、确认登出、网络故障、恢复登录、重启、断开与导出 |
 | 同版浏览器 | `npm run test:chrome` | 下载浏览器 | 取与本机 Chrome 同构建的 Chrome for Testing，重跑 `browser-compat.json` 列出的套件 |
 | 官网 | `npm run test:site` | 否 | 375 / 1280 宽度、演示加载、深色、减少动态 |
 | 真实站点 | `npm run test:live [-- <视频地址>]` | **是** | 真实 B 站视频走完整缓存再播放，画质取决于测试 Chrome 的账号权限 |
@@ -24,6 +26,7 @@
 
 - 需要 Playwright：`npm install` 会装上 `devDependencies` 里的 `playwright`，首次还需 `npx playwright install chromium`。也可以用 `PLAYWRIGHT_MODULE=/绝对路径/playwright/index.mjs` 复用已有安装。
 - 受控浏览器套件使用独立临时资料目录。真实 B 站测试可复用专用测试 Chrome 保存的登录状态。
+- AI 下载连接器的临时资料测试在 macOS 和 Linux 运行，用 `openssl` 为本机 HTTPS 夹具生成临时证书。
 - 品牌版 Chrome 137+ 忽略 `--load-extension`，所以套件使用 Playwright 的 Chromium / Chrome for Testing；`scripts/lib/browser-launch.mjs` 支持用 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定可执行文件（`test:chrome` 就是这样换浏览器的）。
 - Chromium 会向未打包扩展目录写入 `_metadata/`，测试结束后清理，才能与生产 zip 逐文件一致。
 

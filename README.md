@@ -83,6 +83,10 @@ flowchart LR
 
 </details>
 
+## AI 下载工具
+
+源码提供本地 MCP。连接平时使用的 Chrome 后，AI 可沿用该资料里的 B 站登录和扩展片库，查询分 P、画质与体积，按预算批量下载音视频及字幕。任务和导出路径可跨会话查询。 [接入与调用说明](docs/development/bilibili-mcp.md)
+
 ## 隐私
 
 Chrome 扩展本身没有服务器或遥测，登录态只在本机使用，Cookie 原文从不展示或保存。下述独立内容服务是用户自行启用的另一条运行路径，会在用户自己的服务器保存 B 站登录态和内容数据，具体边界见[内容服务架构](server/content/ARCHITECTURE.md)。详见[隐私说明](privacy.html)。

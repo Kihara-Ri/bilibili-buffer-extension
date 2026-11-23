@@ -82,6 +82,10 @@ The full design is in [技术文档.md](技术文档.md) (Chinese).
 
 </details>
 
+## AI download tools
+
+The source checkout includes a local MCP server that connects to Kindred Afar in your regular Chrome profile and uses its existing Bilibili session and cache. AI clients can inspect parts and download sizes, batch-download video, audio, and subtitles, and resume jobs across sessions. [Setup and tool contract](docs/development/bilibili-mcp.md)
+
 ## Privacy
 
 The Chrome extension has no server or telemetry. Its sign-in state is only used locally, and cookie values are never shown or stored. The separately enabled content service stores Bilibili credentials and content on the user’s own server; see its [architecture and data boundaries](server/content/ARCHITECTURE.md). See the [privacy policy](privacy.html) (English version at the end).

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-i18n="mcp.title">AI 下载</title>
+  <link rel="stylesheet" href="mcp.css">
+</head>
+<body>
+  <main>
+    <h1 data-i18n="mcp.title">AI 下载</h1>
+    <p data-i18n="mcp.setup">安装本机连接器后，在你平时使用的 Chrome 资料中连接。AI 下载会沿用这里的 B 站登录。</p>
+    <pre><code>npm run mcp:setup</code></pre>
+    <p id="state" role="status" data-i18n="mcp.checking">正在查看连接状态…</p>
+    <div class="actions">
+      <button id="connect" data-i18n="mcp.connect" type="button">连接此 Chrome</button>
+      <button id="disconnect" data-i18n="mcp.disconnect" type="button" hidden>断开连接</button>
+    </div>
+  </main>
+  <script type="module" src="src/mcp-settings.js"></script>
+</body>
+</html>

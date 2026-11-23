@@ -43,6 +43,7 @@ import {
 import { ASSIST_DEFAULTS, sanitizeAssistConfig } from "./assist-config.js";
 import { createSourceRepository, createSourceService, sourceRangeScope } from "./source-range-store.js";
 import { collectHealthChecks } from "./health-check.js";
+import { createMcpNativeBridge } from "./mcp-native-bridge.js";
 
 // 离线已下载的源范围镜像：只接收逐字节校验过的 CDN 范围，供播放侧按「路径 + 总长」复用。
 const sourceRanges = createSourceService({
@@ -160,6 +161,8 @@ const pendingDeletes = createPendingDeleteRegistry({
 });
 chrome.runtime.onConnect.addListener((port) => { pendingDeletes.attach(port); });
 
+const mcpBridge = createMcpNativeBridge(chrome, handleMessage, (id, operation) => updater.withSave(() => withCacheExport(id, operation)));
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.target && message.target !== "background") return false;
 
@@ -173,6 +176,12 @@ async function handleMessage(message, sender) {
   if (String(message?.type || "").startsWith("UPDATER_")) return updater.handle(message,sender);
   if (["START_CACHE","RESUME_CACHE","DELETE_VIDEO","PAUSE_CACHE","GET_PLAYBACK_URL"].includes(message?.type)) await updater.assertUnlocked();
   switch (message?.type) {
+    case "MCP_BRIDGE_STATUS":
+    case "MCP_BRIDGE_SET": {
+      if (sender?.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("mcp.html")) throw new Error("MCP setup requires the extension page");
+      const bridge = message.type === "MCP_BRIDGE_SET" ? await mcpBridge.set(message.enabled) : mcpBridge.status();
+      return { bridge };
+    }
     case "SOURCE_RANGE": {
       const request = message.request;
       if (!request || typeof request !== "object") return {};
@@ -210,7 +219,7 @@ async function handleMessage(message, sender) {
     case "SET_ASSIST_CONFIG":
       return { config: await setAssistConfig(message.patch) };
     case "GET_PAGE_INFO":
-      return { pageInfo: await getPageInfo(message.url) };
+      return { pageInfo: await getPageInfo(message.url, { includeParts: message.includeParts === true }) };
     case "GET_QUALITY_OPTIONS": {
       const pageInfo = await getPageInfo(message.url);
       if (!pageInfo.supported) throw new Error(pageInfo.message);
@@ -230,6 +239,8 @@ async function handleMessage(message, sender) {
     }
     case "START_CACHE": {
       const pageInfo = await getPageInfo(message.url);
+      // MCP 清单可能在排队时发生重排。对照规划时的 CID，避免下载错 P。
+      if (message.expectedPageId && pageInfo.id !== message.expectedPageId) return { pageChanged: true };
       return startCacheForPage(pageInfo, message);
     }
     case "START_AUTO_CACHE":
@@ -247,7 +258,8 @@ async function handleMessage(message, sender) {
     case "OPEN_CACHED_VIDEO":
       return openCachedVideo(message.videoId);
     case "SAVE_VIDEO":
-      return updater.withSave(() => saveCachedVideo(message.videoId, true));
+      return updater.withSave(() => saveCachedVideo(message.videoId,
+        message.saveAs !== false || sender.url !== chrome.runtime.getURL("privacy.html")));
     case "GET_CACHED_FOR_URL":
       return lookupCachedPage(message.url, getPageInfo, normalizeQualityId(message.quality));
     case "DELETE_VIDEO":
@@ -774,7 +786,7 @@ async function requestVideoView(parsed) {
   throw lastError;
 }
 
-async function getPageInfo(inputUrl) {
+async function getPageInfo(inputUrl, { includeParts = false } = {}) {
   const parsed = parseBiliVideoUrl(inputUrl);
   if (!parsed.supported) {
     const messages = {
@@ -795,6 +807,7 @@ async function getPageInfo(inputUrl) {
   const page = pages[pageNumber - 1];
   const bvid = data.bvid || parsed.bvid;
   const ownerId = Number(data.owner?.mid) || 0;
+  const pageUrl = number => `https://www.bilibili.com/video/${bvid}/${pages.length > 1 ? `?p=${number}` : ""}`;
   return {
     supported: true,
     id: makeVideoId(bvid, page.cid),
@@ -810,7 +823,11 @@ async function getPageInfo(inputUrl) {
     ownerUrl: makeBiliSpaceUrl(ownerId),
     cover: data.pic || "",
     duration: page.duration || data.duration || 0,
-    url: `https://www.bilibili.com/video/${bvid}/${pages.length > 1 ? `?p=${pageNumber}` : ""}`,
+    url: pageUrl(pageNumber),
+    // MCP 按清单选集。弹窗默认只取当前 P，避免把完整清单写入快照。
+    ...(includeParts ? { parts: pages.map((item, index) => ({
+      page: index + 1, cid: item.cid, title: item.part || "", durationSeconds: item.duration || 0, url: pageUrl(index + 1)
+    })) } : {}),
     updatedAt: Date.now()
   };
 }

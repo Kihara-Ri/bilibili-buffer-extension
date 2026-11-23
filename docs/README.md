@@ -45,6 +45,7 @@
 | [热更新、构建与发布](development/build-and-release.md) | `npm run dev` 的重载链路、发布包剥离、扩展 ID 与 DNR、权限白名单、图标、隐私、官网 |
 | [GitHub 更新维护](development/github-updates.md) | 两渠道构建、签名密钥、内部目录更新与恢复边界 |
 | [测试与验收](development/testing.md) | 测试分层、浏览器套件前提、现有 Chrome 探针、测试原则 |
+| [AI 下载工具](development/bilibili-mcp.md) | 本地 MCP 接入、分 P 批量下载、字幕、体积预算与跨会话任务 |
 | [浏览器版本兼容与自检](development/browser-compat.md) | Chrome 版本门禁、同版验收、运行期能力自检 |
 | [商店提审流程](../store/README.md) | 素材生成、首次提交、每版发布步骤、常见驳回 |
 | [测试夹具来源](../tests/fixtures/README.md) | 真实 B 站 DASH 分片夹具的来源与用途 |

@@ -2,7 +2,7 @@
 export const UPDATE_LIMITS = Object.freeze({ envelope: 64 * 1024 * 1024, total: 32 * 1024 * 1024, file: 8 * 1024 * 1024, count: 1024 });
 const text = new TextDecoder('utf-8', { fatal: true });
 const bytes = new TextEncoder();
-const TOP_FILES = new Set(['manifest.json', 'popup.html', 'popup.css', 'offscreen.html', 'privacy.html', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'update.html', 'update.css', 'update-public-key.json']);
+const TOP_FILES = new Set(['manifest.json', 'popup.html', 'popup.css', 'offscreen.html', 'privacy.html', 'mcp.html', 'mcp.css', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'update.html', 'update.css', 'update-public-key.json']);
 
 /** @param {string} input @returns {number[]} */
 function versionParts(input) {

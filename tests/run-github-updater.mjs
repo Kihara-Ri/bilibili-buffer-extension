@@ -12,7 +12,7 @@ const base=await mkdtemp(path.join(root,'.tmp/updater-acceptance-'));
 await mkdir(path.join(root,'.tmp/github-updater-work'),{recursive:true});
 await writeFile(path.join(root,'.tmp/github-updater-work/updater-latest.json'),JSON.stringify({base}));
 const fixture=path.join(base,'source');await mkdir(fixture);
-for(const file of ['scripts','src','_locales','assets','rules','LICENSE','THIRD_PARTY_NOTICES.md','manifest.json','package.json','popup.html','popup.css','offscreen.html','privacy.html','update.html','update.css']) await cp(path.join(root,file),path.join(fixture,file),{recursive:true});
+for(const file of ['scripts','src','_locales','assets','rules','LICENSE','THIRD_PARTY_NOTICES.md','manifest.json','package.json','popup.html','popup.css','offscreen.html','privacy.html','mcp.html','mcp.css','update.html','update.css']) await cp(path.join(root,file),path.join(fixture,file),{recursive:true});
 const pair=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
 await writeFile(path.join(fixture,'update-public-key.json'),JSON.stringify({schema:1,publicKey:pair.publicKey.export({format:'jwk'})}));
 const privatePath=path.join(base,'test-key.pem');await writeFile(privatePath,pair.privateKey.export({format:'pem',type:'pkcs8'}),{mode:0o600});
