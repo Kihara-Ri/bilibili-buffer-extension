@@ -34,6 +34,16 @@ test('容量回收、资源长度变化与导航清理都不能返回陈旧数�
   cache.clear(); assert.equal(cache.stats.bytes, 0);
   assert.equal(cache.match(url, 'bytes=0-1'), null);
 });
+test('悬停只使用页内剩余额度，不淘汰已经驻留的分段', () => {
+  const cache = loadCache();
+  cache.setLimit(5);
+  cache.put(url, 0, Uint8Array.of(1, 2, 3, 4), 20);
+  assert.equal(cache.freeBytes(), 1);
+  assert.equal(cache.put(url, 8, Uint8Array.of(8, 9), 20, { allowEviction: false }), false);
+  assert.equal(cache.put(url, 8, Uint8Array.of(8), 20, { allowEviction: false }), true);
+  assert.deepEqual([...cache.match(url, 'bytes=0-3').body], [1, 2, 3, 4]);
+  assert.equal(cache.stats.evictions, 0);
+});
 test('SIDX v0/v1 精确映射非等码率段，只标记完整且初始化就绪的区间', () => {
   for (const version of [0, 1]) {
     const cache = loadCache(); const index = sidx({ version });

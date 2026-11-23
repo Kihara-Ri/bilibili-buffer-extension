@@ -2,6 +2,7 @@ import { createRuntimeUpdater } from "./update-runtime.js";
 import { newerTask, taskBadge } from "./task-presentation.js";
 import { t } from "./i18n.js";
 import { buildCacheSizeInfo } from "./cache-size.js";
+import { lookupCachedPage } from "./cache-catalog.js";
 import {
   AUTO_QUALITY,
   CACHE_MODES,
@@ -9,10 +10,7 @@ import {
   buildMediaCodecOptions,
   buildMediaQualityOptions,
   getCacheMode,
-  getCodecFamily,
   getVideoPageId,
-  hasCompleteByteCount,
-  isAudioOnlyCache,
   isVideoCodecSelectionMatch,
   makeAudioCacheVideoId,
   makeBiliSpaceUrl,
@@ -24,7 +22,8 @@ import {
   parseBiliVideoUrl,
   toPublicError
 } from "./utils.js";
-import { listVideos, putVideo } from "./db.js";
+import { listVideos, listVideosForBvid } from "./db.js";
+import { committedSources, validCommittedRead } from "./committed-source.js";
 import { createPendingDeleteRegistry } from "./pending-deletes.js";
 import { startDevReloadBackground } from "./dev-reload.js";
 import {
@@ -37,8 +36,9 @@ import {
 } from "./popup-snapshot.js";
 import {
   DOWNLOAD_WATCHDOG_ALARM,
-  isDownloadRetryDue,
-  makeDownloadWatchdogSchedule
+  DOWNLOAD_WATCHDOG_MINUTES,
+  makeDownloadWatchdogSchedule,
+  needsDownloadRecovery
 } from "./download-retry.js";
 import { ASSIST_DEFAULTS, sanitizeAssistConfig } from "./assist-config.js";
 import { createSourceRepository, createSourceService, sourceRangeScope } from "./source-range-store.js";
@@ -51,17 +51,23 @@ const sourceRanges = createSourceService({
 });
 
 /** 用 SESSDATA 的不可逆摘要做账户分区；原始 cookie 值不落盘、不进消息、不进日志。
+ * @param {boolean} [verified] 部分缓存要求明确的账户归属
  * @returns {Promise<string>}
  */
-async function biliAccountFingerprint() {
+async function biliAccountFingerprint(verified = false) {
   try {
     const cookie = await chrome.cookies.get({ url: "https://www.bilibili.com/", name: "SESSDATA" });
-    if (!cookie?.value || !globalThis.crypto?.subtle) return "anonymous";
+    if (!cookie?.value) return "anonymous";
+    if (!globalThis.crypto?.subtle) return verified ? "" : "anonymous";
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(cookie.value));
     return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 32);
-  } catch { return "anonymous"; }
+  } catch { return verified ? "" : "anonymous"; }
 }
 const OFFSCREEN_PATH = "offscreen.html";
+const BILI_PLAYBACK_TABS = [
+  "https://www.bilibili.com/video/*", "https://www.bilibili.com/list/*",
+  "https://www.bilibili.com/*/video/*", "https://www.bilibili.com/*/list/*"
+];
 const POPUP_SNAPSHOTS_KEY = "popupPageSnapshotsV1";
 const ASSIST_CONFIG_KEY = "playbackAssistConfigV1";
 const CACHE_MODE_KEY = "cacheModeV1";
@@ -69,6 +75,7 @@ const HEALTH_REPORT_KEY = "browserHealthV1";
 const HEALTH_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 let creatingOffscreen;
 let restoringDownloads;
+let watchdogQueue = Promise.resolve();
 let popupSnapshotQueue = Promise.resolve();
 let badgeQueue = Promise.resolve();
 const popupSnapshotMemory = new Map();
@@ -86,13 +93,13 @@ const updater = createRuntimeUpdater({
   async thaw(ids) {
     await sendToOffscreen({type:'UNLOCK_FOR_UPDATE'});
     return Promise.all(ids.map(async id => {
-      try { const video = (await listVideos()).find(value => value.id === id); if (video?.status === 'paused' || video?.status === 'downloading') await resumeCache(id); return {id,resumed:true}; }
+      try { await resumeCache(id, { afterUpdate: true }); return {id,resumed:true}; }
       catch (error) { return {id,resumed:false,error:toPublicError(error)}; }
     }));
   },
   ping: async () => unwrap(await sendToOffscreen({type:'GET_UPDATE_HEALTH'})),
   async refresh() {
-    const tabs = await chrome.tabs.query({url:['https://www.bilibili.com/video/*','https://www.bilibili.com/list/*','https://www.bilibili.com/*/video/*','https://www.bilibili.com/*/list/*']});
+    const tabs = await chrome.tabs.query({ url: BILI_PLAYBACK_TABS });
     await Promise.allSettled(tabs.map(tab=>chrome.tabs.reload(tab.id)));
   },
   ownerAlive: async id => { try { await chrome.tabs.get(id); return true; } catch { return false; } },
@@ -140,10 +147,15 @@ chrome.cookies.onChanged.addListener((changeInfo) => {
     void invalidatePopupSnapshots();
   }
 });
+// 监听器在 SW 启动时同步注册。Offscreen 保存使用者，唤醒后的首个关闭或下载事件即可释放。
+chrome.tabs?.onRemoved?.addListener(tabId => { void updateCachePlaybackUse("closeTab", { tabId }); });
+chrome.downloads?.onChanged?.addListener(({ id, state }) => {
+  if (["complete", "interrupted"].includes(state?.current)) void updateCachePlaybackUse("endDownload", { downloadId: id });
+});
 
 // 弹窗关闭时提交它撤销期内的删除。监听必须在 SW 顶层同步注册，休眠唤醒后的首个 connect 才不会漏掉。
 const pendingDeletes = createPendingDeleteRegistry({
-  commit: (videoId) => deleteCachedVideo(videoId),
+  commit: (videoId, createdAt) => deleteCachedVideo(videoId, createdAt),
   onError: (error, videoId) => console.warn("[海内存知] 弹窗关闭后提交删除失败：", videoId, toPublicError(error))
 });
 chrome.runtime.onConnect.addListener((port) => { pendingDeletes.attach(port); });
@@ -172,6 +184,13 @@ async function handleMessage(message, sender) {
       if (!scope || (request.op === "write" || request.op === "partition") !== (scope === "writer")) return {};
       return sourceRanges.handle(request, scope);
     }
+    case "GET_COMMITTED_PARTITION":
+      return sourceRangeScope(sender, { runtimeId: chrome.runtime.id, offscreenUrl: chrome.runtime.getURL(OFFSCREEN_PATH) }) === "writer"
+        ? { partition: await biliAccountFingerprint(true) } : {};
+    case "GET_COMMITTED_SOURCES":
+      return getCommittedSources(message, sender);
+    case "READ_COMMITTED_SOURCE":
+      return readCommittedSource(message, sender);
     case "GET_POPUP_SNAPSHOT": {
       const snapshot = await readPopupSnapshot(message.tabId, message.url);
       return { snapshot, stale: snapshot ? !isPopupSnapshotFresh(snapshot) : true };
@@ -211,81 +230,42 @@ async function handleMessage(message, sender) {
     }
     case "START_CACHE": {
       const pageInfo = await getPageInfo(message.url);
-      if (!pageInfo.supported) throw new Error(pageInfo.message);
-      pageInfo.tabId = message.tabId;
-      pageInfo.requestedQuality = normalizeQualityId(message.quality, AUTO_QUALITY);
-      pageInfo.requestedQualityExplicit = normalizeQualityId(message.quality) > 0;
-      pageInfo.requestedCodec = normalizeCodecPreference(message.codec);
-      pageInfo.cacheMode = normalizeCacheMode(message.mode);
-      const pageId = pageInfo.id;
-      const matchingCache = (await listVideos()).find((video) => {
-        if (getVideoPageId(video) !== pageId) return false;
-        if (pageInfo.cacheMode === CACHE_MODES.AUDIO) return getCacheMode(video) === CACHE_MODES.AUDIO;
-        return getCacheMode(video) === CACHE_MODES.VIDEO &&
-          Number(video.requestedQuality || video.quality) === pageInfo.requestedQuality &&
-          isVideoCodecSelectionMatch(video, pageInfo.requestedCodec);
-      });
-      pageInfo.pageId = pageId;
-      pageInfo.id = matchingCache?.id || (pageInfo.cacheMode === CACHE_MODES.AUDIO
-        ? makeAudioCacheVideoId(pageId)
-        : makeQualityVideoId(pageId, pageInfo.requestedQuality, pageInfo.requestedCodec));
-      const auth = await getBiliSessionState();
-      const playurl = await requestPlayurl(pageInfo, pageInfo.requestedQuality, message.tabId, auth);
-      pageInfo.auth = playurl.auth;
-      pageInfo.playurlData = playurl.data;
-      const result = await sendToOffscreen({ type: "START_DOWNLOAD", video: pageInfo });
-      if (!result.ok) throw new Error(result.error);
-      await ensureDownloadWatchdog();
-      const { auth: _auth, playurlData: _playurlData, ...publicPageInfo } = pageInfo;
-      return { pageInfo: publicPageInfo, ...result };
+      return startCacheForPage(pageInfo, message);
     }
+    case "START_AUTO_CACHE":
+      return startAutomaticCache(message, sender);
     case "LIST_VIDEOS":
       return { videos: await listVideos() };
     case "GET_VIDEO":
       return unwrap(await sendToOffscreen({ type: "GET_VIDEO", videoId: message.videoId }));
     case "GET_PLAYBACK_URL":
-      return unwrap(await sendToOffscreen({ type: "GET_PLAYBACK_URL", videoId: message.videoId }));
+      return getCachedPlaybackForPage(message.videoId,
+        sourceRangeScope(sender, { runtimeId: chrome.runtime.id }) === "reader" ? sender.tab?.id : undefined);
+    case "RELEASE_CACHE_PLAYBACK":
+      if (Number.isInteger(sender.tab?.id)) await updateCachePlaybackUse("release", { leaseId: message.leaseId, tabId: sender.tab.id });
+      return {};
+    case "OPEN_CACHED_VIDEO":
+      return openCachedVideo(message.videoId);
     case "SAVE_VIDEO":
-      return updater.withSave(() => saveCachedVideo(message.videoId));
-    case "GET_CACHED_FOR_URL": {
-      const pageInfo = await getPageInfo(message.url);
-      if (!pageInfo.supported) return { pageInfo, video: null };
-      const cached = (await listVideos())
-        .filter((video) => (
-          getVideoPageId(video) === pageInfo.id &&
-          video.status === "complete" &&
-          hasCompleteByteCount(video) &&
-          // 仅音频缓存不能顶替网页播放器，否则会变成没有画面的本地播放。
-          !isAudioOnlyCache(video)
-        ))
-        .sort((left, right) => (
-          (Number(right.quality) || 0) - (Number(left.quality) || 0) ||
-          (Number(right.completedAt) || 0) - (Number(left.completedAt) || 0)
-        ))[0] || null;
-      return { pageInfo, video: cached };
-    }
+      return updater.withSave(() => saveCachedVideo(message.videoId, true));
+    case "GET_CACHED_FOR_URL":
+      return lookupCachedPage(message.url, getPageInfo, normalizeQualityId(message.quality));
     case "DELETE_VIDEO":
-      return deleteCachedVideo(message.videoId);
+      return deleteCachedVideo(message.videoId, message.createdAt);
     case "PAUSE_CACHE": {
-      const result = unwrap(await sendToOffscreen({ type: "PAUSE_DOWNLOAD", videoId: message.videoId }));
+      const result = unwrap(await sendToOffscreen({ type: "PAUSE_DOWNLOAD", videoId: message.videoId, createdAt: message.createdAt }));
       void syncDownloadWatchdog();
       return result;
     }
     case "RESUME_CACHE":
-      return { video: await resumeCache(message.videoId) };
+      return resumeCache(message.videoId, { createdAt: message.createdAt, tabId: message.tabId });
     case "CACHE_PROGRESS":
       await handleCacheEvent(message);
       return { received: true };
     case "CACHE_RETRY":
-      await ensureDownloadWatchdog(message.video?.nextRetryAt);
-      await handleCacheEvent(message);
-      return { received: true };
     case "CACHE_COMPLETE":
     case "CACHE_ERROR":
     case "CACHE_PAUSED":
-      await handleCacheEvent(message);
-      void syncDownloadWatchdog();
-      return { received: true };
     case "CACHE_DELETED":
       await handleCacheEvent(message);
       void syncDownloadWatchdog();
@@ -418,12 +398,108 @@ async function getAssistConfig() {
   }
 }
 
+function sameVideoPage(leftUrl, rightUrl) {
+  const left = parseBiliVideoUrl(leftUrl), right = parseBiliVideoUrl(rightUrl);
+  return left.supported && right.supported && left.bvid === right.bvid && left.aid === right.aid && left.page === right.page;
+}
+
+function committedPage(sender, url) {
+  if (sender.frameId !== 0 || !Number.isInteger(sender.tab?.id) || !sameVideoPage(sender.url, url) ||
+      sourceRangeScope(sender, { runtimeId: chrome.runtime.id }) !== "reader") return null;
+  return parseBiliVideoUrl(sender.url);
+}
+
+async function getCommittedSources(message, sender) {
+  const page = committedPage(sender, message.pageUrl);
+  if (!page) return { sources: [] };
+  const [partition, rows] = await Promise.all([
+    biliAccountFingerprint(true), page.bvid ? listVideosForBvid(page.bvid) : listVideos()
+  ]);
+  return { sources: rows.flatMap(row => committedSources(row, page, partition)).slice(0, 80) };
+}
+
+async function readCommittedSource(message, sender) {
+  const page = committedPage(sender, message.pageUrl);
+  if (!page || !validCommittedRead(message.request)) return {};
+  const partition = await biliAccountFingerprint(true);
+  if (!partition) return {};
+  const reply = await sendToOffscreen({ type: "READ_COMMITTED_SOURCE", request: message.request, page, partition });
+  if (reply?.url && partition !== await biliAccountFingerprint(true)) {
+    void chrome.runtime.sendMessage({ target: "offscreen", type: "RELEASE_COMMITTED_SOURCE", url: reply.url }).catch(() => {});
+    return {};
+  }
+  return { range: reply?.url ? { url: reply.url, total: reply.total, contentType: reply.contentType } : null };
+}
+
+async function startAutomaticCache(message, sender) {
+  const tabId = sender.tab?.id;
+  const quality = normalizeQualityId(message.quality);
+  const onDemand = message.onDemand === true;
+  // 自动任务只接收播放器确认的档位。缺少画质时不沿用手动缓存的最高档默认值。
+  if (!quality || sender.frameId !== 0 || !Number.isInteger(tabId) ||
+      sourceRangeScope({ id: sender.id, url: sender.url }, { runtimeId: chrome.runtime.id }) !== "reader" ||
+      !sameVideoPage(message.url, sender.url)) return { skipped: true };
+  const enabled = config => config.mode === "always" && config.bufferMode === (onDemand ? "adaptive" : "full-speed");
+  if (!enabled(await getAssistConfig())) return { skipped: true };
+  await updater.assertUnlocked();
+  const pageInfo = await getPageInfo(sender.url);
+  return startCacheForPage(pageInfo, {
+    tabId, quality, automatic: true,
+    // 取 CID 和查库期间可能切分 P、换画质或关闭自动缓冲。交给 Offscreen 前复核发起文档。
+    canStart: async () => {
+      const [tab, config, player] = await Promise.all([
+        chrome.tabs.get(tabId).catch(() => null),
+        getAssistConfig(),
+        chrome.tabs.sendMessage(tabId, { type: "BILI_BUFFER_CONFIRM_CACHE_QUALITY", url: message.url, quality, onDemand },
+          sender.documentId ? { documentId: sender.documentId } : { frameId: 0 }).catch(() => null)
+      ]);
+      return tab?.active && sameVideoPage(tab.url, sender.url) && enabled(config) && player?.confirmed === true ? player : null;
+    }
+  });
+}
+
+async function startCacheForPage(pageInfo, { tabId, quality, codec, mode, automatic = false, canStart }) {
+  if (!pageInfo.supported) throw new Error(pageInfo.message);
+  const selectedQuality = normalizeQualityId(quality);
+  const requestedQuality = selectedQuality || AUTO_QUALITY;
+  const requestedCodec = normalizeCodecPreference(codec);
+  const cacheMode = normalizeCacheMode(mode);
+  const pageId = pageInfo.id;
+  const matchingCache = (await listVideos()).find(video => {
+    if (getVideoPageId(video) !== pageId || getCacheMode(video) !== cacheMode) return false;
+    const matchQuality = automatic ? (video.quality || video.requestedQuality) : (video.requestedQuality || video.quality);
+    return cacheMode === CACHE_MODES.AUDIO ||
+      (Number(matchQuality) === requestedQuality && isVideoCodecSelectionMatch(video, requestedCodec));
+  });
+  const id = matchingCache?.id || (cacheMode === CACHE_MODES.AUDIO
+    ? makeAudioCacheVideoId(pageId)
+    : makeQualityVideoId(pageId, requestedQuality, requestedCodec));
+  const video = {
+    ...pageInfo, id, pageId, tabId, requestedQuality, requestedCodec, cacheMode, automatic,
+    requestedQualityExplicit: selectedQuality > 0
+  };
+  if (canStart) {
+    const confirmation = await canStart();
+    if (!confirmation) return { skipped: true };
+    // 路径只作为合法播放清单内的选轨提示，包含签名的 CDN URL 不从页面透传给下载任务。
+    const sourcePaths = {};
+    for (const role of ["video", "audio"]) {
+      const path = confirmation.sourcePaths?.[role];
+      if (typeof path === "string" && path.startsWith("/") && path.length <= 512) sourcePaths[role] = path;
+    }
+    if (Object.keys(sourcePaths).length) video.sourcePaths = sourcePaths;
+  }
+  const result = unwrap(await sendToOffscreen({ type: "START_DOWNLOAD", video }));
+  void syncDownloadWatchdog();
+  return { pageInfo: video, ...result };
+}
+
 async function getAssistState(tabId) {
   const config = await getAssistConfig();
   if (!Number.isInteger(tabId)) return { config, stats: null };
   try {
     const state = await chrome.tabs.sendMessage(tabId, { type: "BILI_BUFFER_GET_ASSIST_STATE" });
-    return { config, stats: state?.stats || null };
+    return { config, stats: state?.stats || null, fullPhase: state?.fullPhase || "" };
   } catch {
     return { config, stats: null };
   }
@@ -494,27 +570,44 @@ function enqueuePopupSnapshotUpdate(operation) {
 }
 
 async function ensureOffscreenDocument() {
+  if (creatingOffscreen) return creatingOffscreen;
   const offscreenUrl = chrome.runtime.getURL(OFFSCREEN_PATH);
   const contexts = await chrome.runtime.getContexts({
     contextTypes: ["OFFSCREEN_DOCUMENT"],
     documentUrls: [offscreenUrl]
   });
-  if (contexts.length > 0) return;
   if (creatingOffscreen) return creatingOffscreen;
+  if (contexts.length > 0) return;
 
   creatingOffscreen = chrome.offscreen.createDocument({
     url: OFFSCREEN_PATH,
     reasons: ["BLOBS"],
     justification: t("err.offscreenReason")
-  }).finally(() => {
+  }).then(syncPlaybackPressure).finally(() => {
     creatingOffscreen = null;
   });
   return creatingOffscreen;
 }
 
+async function syncPlaybackPressure() {
+  // 新 Offscreen 启动时让已播放的标签页立即直接上报，无需等到下次心跳才让行。
+  const query = (async () => {
+    const tabs = await chrome.tabs.query({ url: BILI_PLAYBACK_TABS });
+    await Promise.allSettled(tabs.map(tab => chrome.tabs.sendMessage(tab.id, { type: "BILI_BUFFER_SYNC_PLAYBACK_PRESSURE" }, { frameId: 0 })));
+  })();
+  let timer;
+  try {
+    await Promise.race([query.catch(() => {}), new Promise(resolve => { timer = setTimeout(resolve, 400); })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function sendToOffscreen(message) {
   await ensureOffscreenDocument();
-  if (["START_DOWNLOAD","GET_PLAYBACK_URL","DELETE_VIDEO","PAUSE_DOWNLOAD"].includes(message.type)) await updater.assertUnlocked();
+  if (["START_DOWNLOAD", "RESUME_DOWNLOAD", "RECOVER_DOWNLOADS", "GET_PLAYBACK_URL", "DELETE_VIDEO", "PAUSE_DOWNLOAD"].includes(message.type)) {
+    await updater.assertUnlocked();
+  }
   return chrome.runtime.sendMessage({ ...message, target: "offscreen" });
 }
 
@@ -522,70 +615,44 @@ async function refreshDownloadSource(video) {
   if (!video?.bvid || !video?.cid) throw new Error(t("err.taskNoIdentity"));
   const auth = await getBiliSessionState();
   const requestedQuality = normalizeQualityId(video.requestedQuality ?? video.quality, AUTO_QUALITY);
-  const fnval = video.mediaKind === "dash" || video.mediaKind === "audio" ? "4048" : "1";
+  const fnval = video.mediaKind === "progressive" ? "1" : "4048";
   const playurl = await requestPlayurl(video, requestedQuality, video.tabId, auth, fnval);
   return { auth: playurl.auth, playurlData: playurl.data };
 }
 
-/**
- * 用任务记录本身重新拉起下载，不需要原视频页：先按记录里的 bvid/cid/画质向 B 站重新取播放地址，
- * 取不到时退回记录里保存的旧地址（签名可能仍有效）。看门狗恢复与片库里的「继续」共用这一条路径。
- * @returns {Promise<{ok: boolean, error?: string}>}
- */
-async function restartDownload(video, auth) {
-  try {
-    const requestedQuality = normalizeQualityId(video.requestedQuality ?? video.quality, AUTO_QUALITY);
-    const persistedCodec = getCodecFamily(video.tracks?.video?.codecs);
-    const fnval = video.mediaKind === "dash" || video.mediaKind === "audio" ? "4048" : "1";
-    const playurl = await requestPlayurl(video, requestedQuality, video.tabId, auth, fnval);
-    return await sendToOffscreen({
-      type: "START_DOWNLOAD",
-      video: {
-        ...video,
-        requestedCodec: normalizeCodecPreference(video.requestedCodec, persistedCodec === "other" ? "auto" : persistedCodec),
-        auth: playurl.auth,
-        playurlData: playurl.data
-      }
-    });
-  } catch (error) {
-    return sendToOffscreen({ type: "START_DOWNLOAD", video }).catch((fallbackError) => ({
-      ok: false,
-      error: toPublicError(fallbackError) || toPublicError(error)
-    }));
-  }
-}
-
-/** 片库里的「继续」：暂停或出错的任务清掉等待状态后重新拉起，不要求打开原视频页。 */
-async function resumeCache(videoId) {
-  const video = (await listVideos()).find((item) => item.id === videoId);
-  if (!video) throw new Error(t("err.taskGone"));
-  if (video.status === "complete") return video;
-  const resumed = { ...video, status: "downloading", error: "", nextRetryAt: 0, retryDelayMs: 0, autoRetryCount: 0, updatedAt: Date.now() };
-  await putVideo(resumed);
-  await ensureDownloadWatchdog();
-  const result = await restartDownload(resumed, await getBiliSessionState());
-  if (!result?.ok) throw new Error(result?.error || t("err.cannotContinue"));
-  return resumed;
+/** 继续由 Offscreen 核对目标记录、登记运行世代并取源。 */
+async function resumeCache(videoId, { createdAt, tabId, afterUpdate = false } = {}) {
+  const result = unwrap(await sendToOffscreen({ type: "RESUME_DOWNLOAD", videoId, createdAt, tabId, afterUpdate }));
+  void syncDownloadWatchdog();
+  return result;
 }
 
 /** 弹窗的 DELETE_VIDEO 与弹窗关闭后的补提交共用；更新锁期间同样拒绝，避免改动正在被替换的数据。 */
-async function deleteCachedVideo(videoId) {
+async function deleteCachedVideo(videoId, createdAt) {
   await updater.assertUnlocked();
-  return unwrap(await sendToOffscreen({ type: "DELETE_VIDEO", videoId }));
+  return unwrap(await sendToOffscreen({ type: "DELETE_VIDEO", videoId, createdAt }));
 }
 
-async function ensureDownloadWatchdog(nextRetryAt = 0) {
-  await chrome.alarms.create(DOWNLOAD_WATCHDOG_ALARM, makeDownloadWatchdogSchedule(nextRetryAt));
-}
-
-async function syncDownloadWatchdog() {
-  const active = (await listVideos()).filter((video) => video.status === "downloading");
-  const nextRetryAt = active.reduce((earliest, video) => {
-    const retryAt = Number(video.nextRetryAt) || 0;
-    return retryAt > Date.now() && (!earliest || retryAt < earliest) ? retryAt : earliest;
-  }, 0);
-  if (active.length) await ensureDownloadWatchdog(nextRetryAt);
-  else await chrome.alarms.clear(DOWNLOAD_WATCHDOG_ALARM);
+function syncDownloadWatchdog() {
+  // 多条任务事件并发到达时，以串行的只读快照调整闹钟，后到的退避不能推迟较早的唤醒。
+  watchdogQueue = watchdogQueue.then(async () => {
+    const pending = (await listVideos()).filter(needsDownloadRecovery);
+    if (!pending.length) {
+      await chrome.alarms.clear(DOWNLOAD_WATCHDOG_ALARM);
+      return;
+    }
+    const now = Date.now();
+    const interval = DOWNLOAD_WATCHDOG_MINUTES * 60_000;
+    const when = pending.reduce((earliest, video) => {
+      const retryAt = Number(video.nextRetryAt) || 0;
+      return Math.min(earliest, retryAt > now ? retryAt : now + interval);
+    }, Infinity);
+    const current = await chrome.alarms.get(DOWNLOAD_WATCHDOG_ALARM);
+    if (!current || current.scheduledTime > when) {
+      await chrome.alarms.create(DOWNLOAD_WATCHDOG_ALARM, makeDownloadWatchdogSchedule(when, now));
+    }
+  }).catch(error => console.warn("[海内存知] 无法同步下载看门狗", toPublicError(error)));
+  return watchdogQueue;
 }
 
 function unwrap(result) {
@@ -620,6 +687,7 @@ function makePlayurlEndpoint(video, requestedQuality, fnval) {
 
 async function requestPlayurl(video, requestedQuality, tabId, session, fnval = "4048") {
   let payload;
+  let viaPageSession = false;
   if (Number.isInteger(tabId)) {
     try {
       const pageResult = await chrome.tabs.sendMessage(tabId, {
@@ -631,7 +699,10 @@ async function requestPlayurl(video, requestedQuality, tabId, session, fnval = "
           fnval
         }
       });
-      if (pageResult?.ok && pageResult.payload) payload = pageResult.payload;
+      if (pageResult?.ok && pageResult.payload) {
+        payload = pageResult.payload;
+        viaPageSession = true;
+      }
     } catch {
       // 页面可能已关闭或内容脚本尚未注入；下面回退到扩展源请求。
     }
@@ -658,7 +729,8 @@ async function requestPlayurl(video, requestedQuality, tabId, session, fnval = "
     data: payload.data,
     auth: {
       ...session,
-      viaPageSession: Boolean(payload.__fromBiliPage),
+      // 只记录播放清单来自哪条取源路径。两条路径都使用 credentials: include。
+      viaPageSession,
       vipActive: Number(payload.data.vip_status) === 1 || Number(payload.data.vip_type) > 0
     }
   };
@@ -771,6 +843,7 @@ async function handleCacheEvent(message) {
   const tabId = video?.tabId ?? message.tabId;
   try {
     if (Number.isInteger(tabId)) {
+      chrome.tabs.sendMessage(tabId, { type: "BILI_BUFFER_COMMITTED_CHANGED" }).catch(() => {});
       await updateTaskBadge(tabId, video);
       if (message.type === 'CACHE_COMPLETE') chrome.tabs.sendMessage(tabId, { type: 'CACHE_READY', videoId: video.id }).catch(() => {});
     }
@@ -779,19 +852,73 @@ async function handleCacheEvent(message) {
   } finally { broadcastToPopup(message); }
 }
 
-async function saveCachedVideo(videoId) {
-  const cached = unwrap(await sendToOffscreen({ type: "GET_PLAYBACK_URL", videoId }));
-  const plan = buildCachedDownloadPlan(cached);
-  const downloadIds = [];
-  for (const item of plan.items) {
-    downloadIds.push(await chrome.downloads.download({
-      url: item.url,
-      filename: item.filename,
-      conflictAction: "uniquify",
-      saveAs: true
-    }));
+function updateCachePlaybackUse(action, fields) {
+  // 浏览器的关闭/下载事件也会在 Offscreen 已销毁时抵达，无需因此新建文档。
+  return chrome.runtime.sendMessage({ target: "offscreen", type: "UPDATE_CACHE_PLAYBACK_USE", action, ...fields }).catch(() => {});
+}
+
+async function getCachedPlaybackForPage(videoId, tabId) {
+  if (!Number.isInteger(tabId)) return unwrap(await sendToOffscreen({ type: "GET_PLAYBACK_URL", videoId }));
+  const leaseId = crypto.randomUUID();
+  try {
+    const cached = unwrap(await sendToOffscreen({ type: "GET_PLAYBACK_URL", videoId, leaseId, tabId }));
+    await chrome.tabs.get(tabId);
+    return { ...cached, leaseId };
+  } catch (error) {
+    await updateCachePlaybackUse("release", { leaseId });
+    throw error;
   }
-  return { downloadIds, splitTracks: plan.splitTracks };
+}
+
+/** 导出在选择路径和启动第二条轨道时继续持有保护，之后由各下载的终态释放。 */
+async function withCacheExport(videoId, operation) {
+  const leaseId = crypto.randomUUID();
+  try {
+    const cached = unwrap(await sendToOffscreen({ type: "GET_PLAYBACK_URL", videoId, leaseId }));
+    return await operation(buildCachedDownloadPlan(cached), async options => {
+      const id = await chrome.downloads.download(options);
+      await updateCachePlaybackUse("addDownload", { leaseId, downloadId: id });
+      // 小文件可能在 download() 返回或登记之前完成。登记后再查，可覆盖事件与 Promise 任何先后顺序。
+      const items = await chrome.downloads.search({ id }).catch(() => null);
+      if (items && items[0]?.state !== "in_progress") await updateCachePlaybackUse("endDownload", { downloadId: id });
+      return id;
+    });
+  } finally {
+    await updateCachePlaybackUse("finish", { leaseId });
+  }
+}
+
+function saveCachedVideo(videoId, saveAs) {
+  return withCacheExport(videoId, async (plan, download) => {
+    const downloadIds = [];
+    try {
+      for (const item of plan.items) downloadIds.push(await download({
+        url: item.url, filename: item.filename, conflictAction: "uniquify", saveAs
+      }));
+      return { downloadIds, filenames: plan.items.map(item => item.filename), splitTracks: plan.splitTracks };
+    } catch (error) {
+      if (!saveAs) await Promise.allSettled(downloadIds.map(id => chrome.downloads.cancel(id)));
+      throw error;
+    }
+  });
+}
+
+/** 从片库打开浏览器的原生媒体页；文件保留同源 Blob 读取及拖动能力。 */
+async function openCachedVideo(videoId) {
+  const leaseId = crypto.randomUUID();
+  try {
+    const cached = unwrap(await sendToOffscreen({ type: "GET_PLAYBACK_URL", videoId, leaseId }));
+    const tracks = cached.playback?.tracks || [];
+    const url = cached.playbackUrl || (tracks.length === 1 ? tracks[0].url : "");
+    if (!url) throw new Error(t("err.localPlaybackSplit"));
+    const tab = await chrome.tabs.create({ url });
+    await updateCachePlaybackUse("bindTab", { leaseId, tabId: tab.id });
+    await chrome.tabs.get(tab.id);
+    return { tabId: tab.id };
+  } catch (error) {
+    await updateCachePlaybackUse("release", { leaseId });
+    throw error;
+  }
 }
 
 function broadcastToPopup(message) {
@@ -809,41 +936,10 @@ async function restoreActiveDownloads() {
 async function restoreActiveDownloadsNow() {
   try {
     if (await updater.isLocked()) return;
-    const interrupted = [];
-    for (const video of await listVideos()) {
-      if (video.status === "complete" && !hasCompleteByteCount(video)) {
-        const repaired = {
-          ...video,
-          status: "downloading",
-          progress: video.totalBytes ? Math.min(video.downloadedBytes / video.totalBytes, 0.999) : 0,
-          completedAt: null,
-          error: "",
-          updatedAt: Date.now()
-        };
-        await putVideo(repaired);
-        interrupted.push(repaired);
-      } else if (video.status === "downloading") {
-        interrupted.push(video);
-      }
-    }
-    if (!interrupted.length) {
-      await chrome.alarms.clear(DOWNLOAD_WATCHDOG_ALARM);
-      return;
-    }
-    const nextRetryAt = interrupted.reduce((earliest, video) => {
-      const retryAt = Number(video.nextRetryAt) || 0;
-      return retryAt > Date.now() && (!earliest || retryAt < earliest) ? retryAt : earliest;
-    }, 0);
-    await ensureDownloadWatchdog(nextRetryAt);
-    const activeResult = await sendToOffscreen({ type: "GET_ACTIVE_DOWNLOADS" }).catch(() => ({ videoIds: [] }));
-    const activeIds = new Set(activeResult?.videoIds || []);
-    const auth = interrupted.length ? await getBiliSessionState() : null;
-    for (const video of interrupted) {
-      if (activeIds.has(video.id) || !isDownloadRetryDue(video)) continue;
-      const result = await restartDownload(video, auth);
-      if (!result?.ok) console.warn("[海内存知] 无法恢复上次的缓存任务：", result?.error);
-    }
     await syncDownloadWatchdog();
+    if ((await listVideos()).some(needsDownloadRecovery)) {
+      unwrap(await sendToOffscreen({ type: "RECOVER_DOWNLOADS" }));
+    }
   } catch (error) {
     console.warn("[海内存知] 无法恢复上次的缓存任务：", error);
   }

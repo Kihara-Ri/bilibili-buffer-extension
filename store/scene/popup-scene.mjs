@@ -179,14 +179,13 @@ const ASSIST_STATS = {
 let listener = () => {};
 // 「关于」里的版本号读真实 manifest，避免商店截图停在写死的旧版本。
 const MANIFEST = await fetch(new URL("../../manifest.json", import.meta.url)).then((response) => response.json());
-// ?auth=limited 模拟「检测到登录 Cookie 但读不到页面登录态」：账号说明是一整句长警告，
-// 测试用它检查长说明不会把整列撑出右侧边距。默认是商店截图用的大会员状态。
+// limited 模拟后台成功返回已有画质、未确认会员状态。background-vip 模拟已确认的大会员回退路径。
 const SCENE_AUTH_MODE = new URLSearchParams(location.search).get("auth");
 const SCENE_AUTH = SCENE_AUTH_MODE === "limited"
-  ? { viaPageSession: false, hasSessionCookie: true }
+  ? { viaPageSession: false, cookieAccess: true, hasSessionCookie: true, vipActive: false }
   : SCENE_AUTH_MODE === "signedout"
-    ? { viaPageSession: false, hasSessionCookie: false }
-    : { viaPageSession: true, vipActive: true };
+    ? { viaPageSession: true, cookieAccess: true, hasSessionCookie: false, vipActive: false }
+    : { viaPageSession: SCENE_AUTH_MODE !== "background-vip", cookieAccess: true, hasSessionCookie: true, vipActive: true };
 // ?auth=signedout 模拟未登录：B 站只返回公开档位，需要登录 / 大会员的更高档位在滑杆杆尾显示为锁定段。
 const SCENE_QUALITIES = SCENE_AUTH_MODE === "signedout" ? QUALITIES.filter((quality) => !quality.requiresLogin) : QUALITIES;
 const SCENE_DEFAULT_QUALITY = SCENE_QUALITIES[0].quality;

@@ -191,12 +191,13 @@
    * @param {string} url @param {number} start @param {Uint8Array} bytes @param {number} total
    * owned：调用方把这段内存的所有权交给缓存（之后不再读写它），缓存直接保存而不复制。
    * 网络分片都是新分配且无人修改的，属于这种情况；借来的视图（如播放器响应）必须复制。
-   * @param {{prefetched?: boolean, contentType?: string, owned?: boolean}} options @returns {boolean}
+   * @param {{prefetched?: boolean, contentType?: string, owned?: boolean, allowEviction?: boolean}} options @returns {boolean}
    */
-  function put(url, start, bytes, total, { prefetched = true, contentType = "application/octet-stream", owned = false } = {}) {
+  function put(url, start, bytes, total, { prefetched = true, contentType = "application/octet-stream", owned = false, allowEviction = true } = {}) {
     if (!mediaUrl(url) || !safe(start) || !safe(total) || !bytes?.byteLength || start + bytes.byteLength > total) return false;
     if (bytes.byteLength > limit) return false;
     let entry = resources.get(url);
+    if (!allowEviction && (!entry || entry.total !== total)) return false;
     if (entry && entry.total !== total) { discard(url); entry = null; }
     if (!entry) {
       while (resources.size >= 32) {
@@ -208,12 +209,14 @@
       resources.set(url, entry);
     }
     if (!pieces(entry, start, start + bytes.byteLength, prefetched)) {
+      // 用户悬停的猜测只用剩余额度，不能驱逐当前播放窗口。
+      if (!allowEviction && stats.bytes + bytes.byteLength > limit) return false;
       // 先把借来的候选加入回收决策，再复制真正留下的块；避免复制后才腾空间的驻留峰值。
       const block = { start, bytes, prefetched, order: ++sequence };
       const at = entry.blocks.findIndex(other => other.start > start);
       entry.blocks.splice(at < 0 ? entry.blocks.length : at, 0, block);
       stats.bytes += bytes.byteLength; entry.times = null; revision++;
-      trim();
+      if (allowEviction) trim();
       if (!entry.blocks.includes(block)) return false;
       if (!owned) { const copy = new Uint8Array(bytes.byteLength); copy.set(bytes); block.bytes = copy; }
     }
@@ -226,7 +229,7 @@
       if (end) entry.index = parseIndex(join(pieces(entry, 0, end), end), total);
       if (entry.index) { entry.times = null; revision++; }
     }
-    trim();
+    if (allowEviction) trim();
     return Boolean(pieces(entry, start, start + bytes.byteLength));
   }
   /** 把完整驻留的 [start,end) 直接复制进 target[offset...]，省去先拼接再复制的一次分配。
@@ -359,6 +362,15 @@
     };
     const NativeXhr = window.XMLHttpRequest;
     if (!NativeXhr) return;
+    // 缓存命中仍隔一个浏览器任务再发布 XHR 事件。连续读小分片时，嵌套的零毫秒定时器会被钳到至少 4ms。
+    const deliveryQueue = [];
+    const deliveryChannel = typeof MessageChannel === "function" ? new MessageChannel() : null;
+    if (deliveryChannel) deliveryChannel.port1.onmessage = () => deliveryQueue.shift()();
+    const queueCacheHit = (callback) => {
+      if (!deliveryChannel) { setTimeout(callback, 0); return; }
+      deliveryQueue.push(callback);
+      deliveryChannel.port2.postMessage(null);
+    };
     // 原生 EventTarget/属性事件处理器保持不变，仅异步 GET arraybuffer 的完整命中使用本地状态机。
     class CachedXhr extends NativeXhr {
       constructor() {
@@ -428,7 +440,7 @@
           event("load", result.body.length, result.body.length);
           if (alive()) event("loadend", result.body.length, result.body.length);
         };
-        if (hit) { setTimeout(() => deliver(hit, true), 0); return; }
+        if (hit) { queueCacheHit(() => deliver(hit, true)); return; }
         this._networkController = new AbortController();
         const signal = this._networkController.signal;
         // XHR 的 timeout 从 send 开始；不能等多路下载结束后再启动原生计时。
@@ -489,6 +501,7 @@
   }
   window.__biliBufferCache = {
     put, match, copy, timeRanges, install, stats,
+    freeBytes: () => Math.max(0, limit - stats.bytes),
     /** @returns {number} 驻留修订号：任何写入、回收、索引解析或清空都会递增。 */
     revision: () => revision,
     /** @param {string} url @returns {number[][]} 驻留字节区间（半开区间），用于调度缺口。 */

@@ -44,7 +44,10 @@ function loadChain({ account = async () => 'account-a', database = new Map() } =
   };
   bridgeWindow.window = bridgeWindow;
   const bridge = vm.createContext({
-    window: bridgeWindow, document: { documentElement: { dataset: {} } }, URL, Promise, Date, Error, setTimeout, clearTimeout, console, JSON, Number, Object, Array, String,
+    window: bridgeWindow,
+    location: pageWindow.location,
+    document: { documentElement: { dataset: {} }, addEventListener() {}, querySelectorAll: () => [] },
+    URL, Promise, Date, Error, setTimeout, clearTimeout, setInterval: () => 0, console, JSON, Number, Object, Array, String,
     chrome: {
       runtime: {
         id: 'extension-id',

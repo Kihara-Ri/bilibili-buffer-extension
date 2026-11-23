@@ -99,7 +99,8 @@
       "js": [
         "src/content.js"
       ],
-      "run_at": "document_idle"
+      "css": ["src/full-buffer.css"],
+      "run_at": "document_start"
     }
   ]
 }

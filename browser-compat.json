@@ -30,6 +30,18 @@
       "build": "156.0.8078.47",
       "verifiedAt": "2026-10-24",
       "evidence": "本机 Chrome 156.0.8078.47（macOS arm64），由 npm run test:chrome 自动获取同构建 Chrome for Testing 并重跑：test:playback / test:network / test:popup / test:extension 全部通过（扩展版本 2.12.2）。"
+    },
+    {
+      "major": 157,
+      "build": "157.0.8103.78",
+      "verifiedAt": "2026-11-22",
+      "evidence": "本机 Chrome 157.0.8103.79（macOS arm64），使用同主版本 Chrome for Testing 157.0.8103.78。npm run test:chrome 的四套验收通过，覆盖进页完全缓冲、两种开播时机、断网目标帧、坏档回退与合并恢复。"
+    },
+    {
+      "major": 158,
+      "build": "158.0.8127.36",
+      "verifiedAt": "2026-11-22",
+      "evidence": "本机 Chrome 158.0.8127.37（macOS arm64），使用同主版本 Chrome for Testing 158.0.8127.36。npm run test:chrome 的四套验收通过，覆盖未下载完时双轨落盘读出、切画质与删除后的进度标记，以及整片就绪后的断网拖动。"
     }
   ]
 }

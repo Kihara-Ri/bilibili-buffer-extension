@@ -114,6 +114,12 @@ try {
   await fresh(async page => {
     await page.evaluate(() => window.__startupTest.publish({ status: 'paused', runStartedAt: 1, updatedAt: 1 }));
     await page.locator('#cache-button').click();
+    const request = await page.evaluate(() => {
+      const { message } = window.__startupTest.starts[0];
+      const { id, createdAt } = window.__startupTest.videos[0];
+      return { type: message.type, matches: message.videoId === id && message.createdAt === createdAt, tabId: message.tabId };
+    });
+    assert.deepEqual(request, { type: 'RESUME_CACHE', matches: true, tabId: 7 }, '继续只能作用于点击时的缓存记录，并保留当前播放页');
     await page.evaluate(() => window.__startupTest.reply(0, { ok: true, started: true, video: window.__startupTest.videos[0] }));
     await page.waitForTimeout(800);
     await pending(page, '旧暂停记录不能结束续传启动');

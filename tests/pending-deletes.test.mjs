@@ -38,9 +38,12 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function setup() {
   const committed = [];
-  const registry = createPendingDeleteRegistry({ commit: async (videoId) => { committed.push(videoId); } });
+  const generations = new Map();
+  const registry = createPendingDeleteRegistry({
+    async commit(videoId, createdAt) { committed.push(videoId); generations.set(videoId, createdAt); }
+  });
   const pairs = [];
-  const pending = new Set();
+  const pending = new Map();
   const connect = ({ name }) => {
     const pair = makePortPair(name);
     pairs.push(pair);
@@ -48,12 +51,12 @@ function setup() {
     return pair.popup;
   };
   const channel = connectPendingDeletes({ connect, getPending: () => pending });
-  return { committed, pairs, pending, channel };
+  return { committed, generations, pairs, pending, channel };
 }
 
 test("弹窗关闭时，后台提交仍在撤销期内的删除", async () => {
   const { committed, pairs, pending, channel } = setup();
-  for (const id of ["a", "b"]) { pending.add(id); channel.schedule(id); }
+  for (const id of ["a", "b"]) { pending.set(id, 10); channel.schedule(id, 10); }
   // 弹窗被销毁：断开由浏览器通知后台一侧。
   pairs[0].popup.disconnect();
   await flush();
@@ -62,7 +65,7 @@ test("弹窗关闭时，后台提交仍在撤销期内的删除", async () => {
 
 test("已撤销或弹窗已自行提交的删除，关闭时不再提交", async () => {
   const { committed, pairs, pending, channel } = setup();
-  for (const id of ["undone", "kept", "done"]) { pending.add(id); channel.schedule(id); }
+  for (const id of ["undone", "kept", "done"]) { pending.set(id, 10); channel.schedule(id, 10); }
   pending.delete("undone"); channel.release("undone");
   pending.delete("done"); channel.release("done");
   pairs[0].popup.disconnect();
@@ -71,17 +74,19 @@ test("已撤销或弹窗已自行提交的删除，关闭时不再提交", async
 });
 
 test("SW 重启断开 port 时不提交，弹窗重连后重报待删，最终由新连接在关闭时提交", async () => {
-  const { committed, pairs, pending, channel } = setup();
-  pending.add("x"); channel.schedule("x");
+  const { committed, generations, pairs, pending, channel } = setup();
+  pending.set("x", 100); channel.schedule("x", 100);
   // SW 被回收：弹窗一侧收到断开（后台旧登记随 SW 一起消失，不会也不该替用户提交）。
   pairs[0].background.disconnect();
   await flush();
   assert.equal(pairs.length, 2, "弹窗应立即重连");
   assert.deepEqual(committed, [], "SW 重启不能在撤销期内替用户提交删除");
-  pending.add("y"); channel.schedule("y");
+  pending.set("y", 200); channel.schedule("y", 200);
   pairs[1].popup.disconnect();
   await flush();
   assert.deepEqual(committed.sort(), ["x", "y"]);
+  assert.equal(generations.get("x"), 100, "重连时仍要提交原记录的创建世代");
+  assert.equal(generations.get("y"), 200);
 });
 
 test("别的 port 名与畸形消息被忽略；单条提交失败不影响其余", async () => {

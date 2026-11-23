@@ -231,7 +231,10 @@ globalThis.chrome = {
       }
       if (message.type === "PAUSE_CACHE" || message.type === "RESUME_CACHE") {
         const video = libraryVideos.find((item) => item.id === message.videoId);
-        if (video) Object.assign(video, { status: message.type === "PAUSE_CACHE" ? "paused" : "downloading", updatedAt: Date.now() });
+        if (video) {
+          const run = Math.max(Date.now(), (Number(video.runStartedAt) || 0) + 1, (Number(video.updatedAt) || 0) + 1);
+          Object.assign(video, { status: message.type === "PAUSE_CACHE" ? "paused" : "downloading", runStartedAt: run, updatedAt: run });
+        }
         return { ok: true, paused: message.type === "PAUSE_CACHE", video: structuredClone(video) };
       }
       if (message.type === "GET_CACHE_MODE") return { ok: true, mode: cacheMode };

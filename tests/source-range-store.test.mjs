@@ -112,7 +112,7 @@ test('镜像入口只连到源范围下载，不接触合并与抽音轨写入',
   ]);
   assert.match(downloader, /options\.onVerifiedRange\?\.\(/);
   const callSites = offscreen.split('downloadByteRanges({').length - 1;
-  const hooks = offscreen.split('onVerifiedRange: mirror.onVerifiedRange').length - 1;
-  assert.equal(hooks, callSites, '每个源范围下载都必须镜像，且不得新增未接线的下载入口');
+  const hooks = [...offscreen.matchAll(/onVerifiedRange: [^\n]+mirror\.onVerifiedRange/g)].length;
+  assert.equal(hooks, callSites, '源范围下载保留镜像回退，已提交分块可直读时跳过重复写盘');
   assert.equal(/onVerifiedRange[\s\S]{0,400}(MERGED_TRACK|"merged")/.test(offscreen), false);
 });

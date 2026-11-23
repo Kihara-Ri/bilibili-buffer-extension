@@ -509,6 +509,22 @@ export function hasCompleteByteCount(video) {
   return totalBytes > 0 && downloadedBytes === totalBytes;
 }
 
+/**
+ * 旧版可能已经发布了重封装产物，但任务尚未切到完成。选择应复核的本地轨道。
+ * @param {object|null} video 缓存记录
+ * @returns {{name: string, track: object, sourceTracks: string[]}|null}
+ */
+export function getPublishedCacheAsset(video) {
+  if (!hasCompleteByteCount(video)) return null;
+  if (video.mergeStage === "done" && video.merged?.totalBytes > 0) {
+    return { name: "merged", track: video.merged, sourceTracks: ["video", "audio"] };
+  }
+  if (video.extractedFrom && video.mediaKind === "audio" && hasCompleteByteCount(video.tracks?.audio)) {
+    return { name: "audio", track: video.tracks.audio, sourceTracks: ["media"] };
+  }
+  return null;
+}
+
 export function toPublicError(error) {
   if (error instanceof Error && error.message) return error.message;
   return String(error || t("err.unknown"));

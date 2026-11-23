@@ -127,6 +127,26 @@ test('镜像写入器按任务配额跳过超额范围，且不阻塞调用方',
   assert.deepEqual(requests.map((request) => request.start).sort((a, b) => a - b), [0, SOURCE_MIRROR_RANGE]);
 });
 
+test('镜像只借用空闲正文额度，写入失败也会归还', async () => {
+  let finish, reserved = 0;
+  const writing = new Promise(resolve => { finish = resolve; });
+  const mirror = createSourceMirror({
+    reserve(size) {
+      if (reserved) return null;
+      reserved += size;
+      return () => { reserved -= size; };
+    },
+    send: async () => { await writing; return { ok: false }; }
+  });
+  mirror.onVerifiedRange(entry(0, 64));
+  mirror.onVerifiedRange(entry(64, 64));
+  assert.equal(reserved, 64);
+  assert.equal(mirror.skipped, 1);
+  finish();
+  await mirror.drain();
+  assert.equal(reserved, 0);
+});
+
 test('镜像写入器直接交出原始 Blob，不做 base64 编码；默认配额不超过镜像库上限', async () => {
   // 2.14.0 每块都在下载文档主线程上做 base64 + 2.7 MB 消息：后台降优先级（Windows 效率模式等）时
   // CPU 被它吃光，前 96 MiB 的下载速度塌到 1~2 MB/s。写入器拿到的必须是原始字节。
@@ -218,7 +238,10 @@ function loadBridge({ sendMessage, pageWindow }) {
   };
   bridgeWindow.window = bridgeWindow;
   const context = vm.createContext({
-    window: bridgeWindow, document: { documentElement: { dataset: {} } }, URL, Promise, Date, Error, setTimeout, clearTimeout, console, JSON, Number, Object, Array, String,
+    window: bridgeWindow,
+    location: { href: "https://www.bilibili.com/video/BVfixture/" },
+    document: { documentElement: { dataset: {} }, addEventListener() {}, querySelectorAll: () => [] },
+    URL, Promise, Date, Error, setTimeout, clearTimeout, setInterval: () => 0, console, JSON, Number, Object, Array, String,
     chrome: {
       runtime: { id: 'extension-id', sendMessage, onMessage: { addListener() {} }, getURL: (path) => `chrome-extension://extension-id/${path}` },
       storage: { local: { get: async () => ({}), set: async () => {} }, onChanged: { addListener() {} } }
@@ -302,7 +325,8 @@ test('缺少 MutationObserver 等能力时观察器仍能加载并保持原生�
 
 test('默认配置与权限保持既有值，新增模块不引入新权限', () => {
   assert.equal(ASSIST_DEFAULTS.mode, 'always');
-  assert.deepEqual(Object.keys(sanitizeAssistConfig({})).sort(), ['mode', 'preheatColor', 'progressColor', 'showPreheatHighlight']);
+  assert.equal(ASSIST_DEFAULTS.bufferMode, 'adaptive');
+  assert.deepEqual(Object.keys(sanitizeAssistConfig({})).sort(), ['bufferMode', 'mode', 'preheatColor', 'progressColor', 'showPreheatHighlight']);
   assert.deepEqual(manifest.permissions, [
     'activeTab', 'alarms', 'cookies', 'declarativeNetRequestWithHostAccess', 'downloads', 'offscreen', 'storage', 'unlimitedStorage'
   ]);

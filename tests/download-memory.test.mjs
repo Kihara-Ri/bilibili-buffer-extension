@@ -1,5 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {downloadByteRanges} from '../src/range-downloader.js';
+import {createDownloadBudget} from '../src/download-budget.js';
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const url='https://a.bilivideo.com/v.m4s';
 function reply(a,b,total){return new Response(Uint8Array.from({length:b-a+1},(_,i)=>(a+i)%251),{status:206,headers:{'content-range':`bytes ${a}-${b}/${total}`}});}
@@ -26,3 +27,41 @@ test('外部取消唤醒已满的离线窗口',async()=>{
   return new Promise((_,reject)=>init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true}));
  },onCommit:async()=>{}});
  await delay(20);controller.abort();await assert.rejects(job);});
+
+test('两个离线轨道共享正文额度，慢事务与失败都不会超额或泄漏', async () => {
+  const budget = createDownloadBudget({ tasks: 2, requests: 8, playingRequests: 2, bytes: 16 });
+  let releaseCommit;
+  const disk = new Promise(resolve => { releaseCommit = resolve; });
+  const calls = [];
+  let firstCommit;
+  const committing = new Promise(resolve => { firstCommit = resolve; });
+  const failed = new AbortController();
+  const run = (name, signal) => downloadByteRanges({
+    urls: [url], totalBytes: 32, rangeSize: 4, concurrency: 4, budget, signal,
+    fetchImpl: async (_, init) => {
+      const [, start, end] = /bytes=(\d+)-(\d+)/.exec(init.headers.Range);
+      calls.push({ name, start: Number(start) });
+      return reply(Number(start), Number(end), 32);
+    },
+    async onCommit() { firstCommit(); await disk; }
+  });
+  const first = run('A', failed.signal);
+  const second = run('B');
+  const stopped = assert.rejects(first, { name: 'AbortError' });
+  try {
+    await committing;
+    await delay(40);
+    assert.equal(calls.length, 4, '两个轨道等事务的正文应合计至多 16 字节');
+    failed.abort();
+    await delay(20);
+    assert.equal(calls.length, 4, '取消不能提前释放仍由事务持有的正文');
+  } finally {
+    releaseCommit();
+    failed.abort();
+    await Promise.allSettled([stopped, second]);
+  }
+  await stopped;
+  assert.equal((await second).metrics.committedBytes, 32);
+  const final = await run('C');
+  assert.equal(final.metrics.committedBytes, 32, '取消后新任务应可使用全部预算');
+});

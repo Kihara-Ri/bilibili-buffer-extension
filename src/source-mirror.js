@@ -7,14 +7,17 @@ export const SOURCE_MIRROR_RANGE = 2 * 1024 * 1024;
 export const SOURCE_MIRROR_FAILURES = 3;
 
 /**
- * @param {{send:(request:object)=>Promise<{ok?:boolean}|any>, budget?:number, failures?:number}} options
+ * @param {{send:(request:object)=>Promise<{ok?:boolean}|any>, reserve?:(size:number)=>Function|null, budget?:number, failures?:number}} options
  * @returns {{onVerifiedRange:Function, sent:number, skipped:number, disabled:boolean}}
  */
-export function createSourceMirror({ send, budget = SOURCE_MIRROR_BUDGET, failures: maxFailures = SOURCE_MIRROR_FAILURES } = {}) {
+export function createSourceMirror({ send, reserve, budget = SOURCE_MIRROR_BUDGET, failures: maxFailures = SOURCE_MIRROR_FAILURES } = {}) {
   let remaining = budget, failed = 0, disabled = false, sent = 0, skipped = 0, queue = Promise.resolve();
   const onVerifiedRange = ({ url, start, end, total, data, contentType } = {}) => {
     const size = Number(end) - Number(start);
     if (disabled || !send || !data || !Number.isSafeInteger(size) || size <= 0 || size > SOURCE_MIRROR_RANGE || remaining < size) { skipped += 1; return; }
+    // Blob 可能在主分块已落盘后仍由镜像队列持有。镜像只用空余额度，不能推迟主下载。
+    const release = reserve?.(size);
+    if (reserve && !release) { skipped += 1; return; }
     remaining -= size;
     // 严格串行：一次只有一个镜像事务，不与分块提交抢 IndexedDB。
     // 原始 Blob 原样交出：不在下载文档主线程上做 base64，后台降优先级时这正是吃掉 CPU 的地方。
@@ -26,7 +29,7 @@ export function createSourceMirror({ send, budget = SOURCE_MIRROR_BUDGET, failur
       // 连续失败说明后台或存储不可用：本任务内停止镜像，绝不影响下载。
       failed += 1;
       if (failed >= maxFailures) disabled = true;
-    });
+    }).finally(() => release?.());
   };
   return {
     onVerifiedRange,

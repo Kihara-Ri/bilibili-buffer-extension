@@ -176,7 +176,7 @@ try {
   assert(mediaRequests === requestsAtPause, "暂停后仍在发出 CDN 请求");
   assert((await send({ target: "offscreen", type: "GET_ACTIVE_DOWNLOADS" })).videoIds.every((videoId) => videoId !== pauseId), "暂停后任务仍登记为运行中");
 
-  const resumedOnce = await send({ target: "offscreen", type: "START_DOWNLOAD", video: pauseVideo() });
+  const resumedOnce = await send({ target: "offscreen", type: "RESUME_DOWNLOAD", videoId: pauseId });
   assert(resumedOnce.ok && resumedOnce.started, `暂停后的「继续」没有启动：${JSON.stringify(resumedOnce)}`);
 
   // 竞态：用一个全新的任务，START 返回时分块请求都还在途（每块被拖慢 150 ms），
@@ -185,7 +185,7 @@ try {
   const raceResumeVideo = () => ({ ...pauseVideo(), id: raceResumeId, pageId: "BV1integration:103", cid: 103 });
   await send({ target: "offscreen", type: "START_DOWNLOAD", video: raceResumeVideo() });
   const pausing = send({ target: "offscreen", type: "PAUSE_DOWNLOAD", videoId: raceResumeId });
-  const restarted = await send({ target: "offscreen", type: "START_DOWNLOAD", video: raceResumeVideo() });
+  const restarted = await send({ target: "offscreen", type: "RESUME_DOWNLOAD", videoId: raceResumeId });
   const pausedResult = await pausing;
   assert(pausedResult.paused, `下载中途的暂停没有生效：${JSON.stringify(pausedResult)}`);
   assert(restarted.ok && restarted.started, `暂停收尾期间的「继续」被忽略：${JSON.stringify(restarted)}`);

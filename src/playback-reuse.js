@@ -5,6 +5,8 @@
   const CHANNEL = 'bili-buffer-playback-assist-v1';
   // 单次复用请求上限：既限制消息大小，也限制页面内存里额外复制的一份正文。
   const MAX_BYTES = 4 * 1024 * 1024;
+  // 对应 Offscreen 的 COMMITTED_READ_LIMIT，正文通过 Blob 读取和转移。
+  const COMMITTED_MAX_BYTES = 24 * 1024 * 1024;
   const MAX_URLS = 256;
   const TIMEOUT_MS = 1500;
   const PAUSE_AFTER_FAILURES = 3;
@@ -16,6 +18,7 @@
   let idSeed = 0;
   const newId = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `r${Date.now().toString(36)}-${(idSeed += 1).toString(36)}`);
   const authorized = new Map();
+  const authorizedPaths = new Set();
   const sizeHints = new Map();
 
   function isMediaUrl(value) {
@@ -30,6 +33,9 @@
     // 只保留最近授权的有限条数：长会话也不能让地址表无界增长。
     if (authorized.size >= MAX_URLS) authorized.delete(authorized.keys().next().value);
     authorized.set(url, Date.now());
+    const path = new URL(url).pathname;
+    if (!authorizedPaths.has(path) && authorizedPaths.size >= MAX_URLS) authorizedPaths.delete(authorizedPaths.values().next().value);
+    authorizedPaths.add(path);
     return 1;
   }
 
@@ -63,11 +69,22 @@
       }
     };
     walk(payload, 0);
+    const durl = (payload.data || payload.result || payload).durl;
+    if (Array.isArray(durl) && durl.length === 1 && isMediaUrl(durl[0]?.url)) {
+      added += remember(durl[0].url);
+      if (Number.isSafeInteger(durl[0].size) && durl[0].size > 0) sizeHints.set(durl[0].url, durl[0].size);
+    }
     return added;
   }
 
   /** 该地址是否在本次会话被 playurl 授权过。 @param {string} url @returns {boolean} */
   const isAuthorized = (url) => authorized.has(url);
+  /** B 站换主备或签名时路径仍指向同一源；落盘读取还会核对投稿、账户和总长。 */
+  function authorizedMediaPath(url) {
+    if (!isMediaUrl(url)) return "";
+    const path = new URL(url).pathname;
+    return authorizedPaths.has(path) ? path : "";
+  }
   /** 站点声明的文件总长（可能为 0）。 @param {string} url @returns {number} */
   const totalHint = (url) => sizeHints.get(url) || 0;
 
@@ -120,8 +137,83 @@
     };
   }
 
+  /** MAIN 只保留小型目录和在途请求。桥转移 ArrayBuffer 后由调用方决定是否驻留。 */
+  function createCommittedClient() {
+    const pending = new Map();
+    let byPath = new Map();
+    let signature = "";
+    let revision = 0;
+    const sameSource = (a, b) => a.id === b.id && a.createdAt === b.createdAt && a.runStartedAt === b.runStartedAt &&
+      a.role === b.role && a.total === b.total;
+
+    function find(url, total = 0, role = "") {
+      if (!byPath.size) return;
+      return byPath.get(authorizedMediaPath(url))?.find(source => (!total || source.total === total) && (!role || source.role === role));
+    }
+
+    window.addEventListener("message", event => {
+      const message = event.data;
+      if (event.source !== window || message?.channel !== CHANNEL || message.dir !== "ext->page" || message.type !== "committedReply") return;
+      pending.get(message.payload?.rpcId)?.(message.payload.result);
+    });
+
+    return {
+      find,
+      hasSources: () => byPath.size > 0,
+      revision: () => revision,
+      /** @param {object[]} sources @returns {boolean} 是否改变了目录 */
+      setSources(sources) {
+        const entries = Array.isArray(sources) ? sources.slice(0, 80).filter(row =>
+          typeof row?.id === "string" && row.id.length <= 256 && ["video", "audio", "media"].includes(row.role) &&
+          [row.createdAt, row.runStartedAt, row.total, row.end].every(value => Number.isSafeInteger(value) && value > 0) &&
+          row.end <= row.total && Array.isArray(row.paths)) : [];
+        const index = new Map();
+        for (const { id, createdAt, runStartedAt, role, total, end, paths } of entries) {
+          for (const path of paths.slice(0, 8)) {
+            if (typeof path !== "string" || path.length > 512 || !path.startsWith("/")) continue;
+            const rows = index.get(path) || [];
+            rows.push({ id, createdAt, runStartedAt, role, total, end });
+            index.set(path, rows);
+          }
+        }
+        for (const rows of index.values()) rows.sort((a, b) => b.end - a.end || b.runStartedAt - a.runStartedAt);
+        const next = JSON.stringify([...index]);
+        if (signature === next) return false;
+        byPath = index;
+        signature = next;
+        revision++;
+        return true;
+      },
+      /** @param {object} source @param {string} url @param {number} start @param {number} end @param {AbortSignal} signal @param {boolean} [speculative] */
+      async read(source, url, start, end, signal, speculative = false) {
+        if (!source || signal.aborted || pending.size >= 4 || end > source.end || end <= start || end - start > COMMITTED_MAX_BYTES) return null;
+        const rpcId = newId();
+        const result = await new Promise(resolve => {
+          const finish = (value) => {
+            clearTimeout(timer);
+            signal.removeEventListener("abort", cancel);
+            pending.delete(rpcId);
+            resolve(value);
+          };
+          const cancel = () => finish(null);
+          const timer = setTimeout(cancel, 620);
+          pending.set(rpcId, finish);
+          signal.addEventListener("abort", cancel, { once: true });
+          window.postMessage({ channel: CHANNEL, dir: "page->ext", type: "committedRead", payload: {
+            rpcId, request: { ...source, url, start, end, speculative }
+          } }, "*");
+        });
+        // 同一任务的水位可以继续前进。删库、回滚或换世代时，迟到的响应不能再回填播放缓存。
+        if (signal.aborted || !(result?.body instanceof ArrayBuffer) || result.body.byteLength !== end - start ||
+            result.total !== source.total || !byPath.get(authorizedMediaPath(url))?.some(row => sameSource(source, row) && row.end >= end)) return null;
+        return { body: new Uint8Array(result.body), total: result.total, contentType: result.contentType };
+      }
+    };
+  }
+
   globalThis.BiliPlaybackReuse = {
-    notePlayurl, isAuthorized, totalHint, createReuseClient, MAX_BYTES,
+    notePlayurl, isAuthorized, authorizedMediaPath, totalHint, createReuseClient, createCommittedClient, MAX_BYTES, COMMITTED_MAX_BYTES,
+    clearAuthorization() { authorized.clear(); authorizedPaths.clear(); sizeHints.clear(); },
     authorizedCount: () => authorized.size
   };
 })();

@@ -9,6 +9,7 @@ import {
   formatDuration,
   formatSpeed,
   getVideoPageId,
+  hasCompleteByteCount,
   isAudioOnlyCache,
   isVideoCodecSelectionMatch,
   makeBiliSpaceUrl,
@@ -20,6 +21,7 @@ import { choosePopupQuality } from "./popup-snapshot.js";
 import { connectPendingDeletes } from "./pending-deletes.js";
 import {
   DEFAULT_PREHEAT_COLOR,
+  normalizeBufferMode,
   normalizePreheatColor,
   PREHEAT_COLOR_PRESETS
 } from "./assist-config.js";
@@ -46,7 +48,7 @@ if (updateLink) {
 const DEFAULT_PROGRESS_COLOR = "#00a1d6";
 // 删除先从列表隐藏，提示里可撤销；超时（或弹窗关闭）才真正删除数据。
 const DELETE_UNDO_MS = 6000;
-// START_CACHE 成功只代表已提交启动；任务落盘还要经过媒体初始化，不能据响应清掉 pending。
+// 当前视频的 pending 由已登记的任务快照接管，命令回复可能晚于快照。
 const CACHE_START_TIMEOUT_MS = 30_000;
 const CACHE_START_CHECK_MS = 5000;
 // 未登录时「去登录」打开的 B 站登录页；只是新开一个标签，不需要额外权限，也不读取任何账号数据。
@@ -94,9 +96,10 @@ const elements = {
   pauseButton: $("#pause-button"),
   assistPanel: $("#assist-panel"),
   assistToggle: $("#assist-toggle"),
+  bufferMode: $("#assist-buffer-mode"),
+  quickCache: $("#cache-while-watching"),
   assistDetailsToggle: $("#assist-details-toggle"),
   assistMetricsPanel: $("#assist-metrics-panel"),
-  assistStatus: $("#assist-status"),
   assistMetrics: Object.fromEntries(["speed", "hit", "buffer", "ready", "stalls", "residency", "trouble", "node", "accelerated"].map(key => [key, $(`#assist-${key}`)])),
   appearance: $("#assist-appearance"),
   appearanceReset: $("#assist-appearance-reset"),
@@ -168,6 +171,9 @@ const state = {
   assistConfig: null,
   assistStats: null,
   assistReadSequence: 0,
+  fullPhase: "",
+  quickCachePending: false,
+  bufferModeDrag: null,
   healthReport: null,
   // 评价邀请的持久状态；读出之前为 null，此时卡片一律不显示。
   review: null,
@@ -194,6 +200,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && state.settingsOpen) setSettingsOpen(false);
 });
 elements.cacheButton.addEventListener("click", startCache);
+elements.quickCache.addEventListener("click", cacheWhileWatching);
 elements.pauseButton.addEventListener("click", pauseCurrentTask);
 elements.currentOwner.addEventListener("click", (event) => {
   const url = elements.currentOwner.dataset.url;
@@ -222,6 +229,14 @@ elements.assistDetailsToggle.addEventListener("click", () => {
 elements.assistToggle.addEventListener("click", () => {
   if (state.tab?.id) void persistProgressAppearance({ mode: state.assistConfig?.mode === "off" ? "always" : "off" });
 });
+elements.bufferMode.addEventListener("change", (event) => {
+  clearBufferModeDrag();
+  if (event.target.checked) void persistProgressAppearance({ bufferMode: event.target.value, mode: "always" });
+});
+elements.bufferMode.addEventListener("pointerdown", startBufferModeDrag);
+elements.bufferMode.addEventListener("pointermove", followBufferModeDrag);
+for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) elements.bufferMode.addEventListener(type, endBufferModeDrag);
+window.addEventListener("blur", clearBufferModeDrag);
 elements.browserHealthRefresh.addEventListener("click", () => refreshHealth({ refresh: true }));
 elements.progressColor.addEventListener("change", () => persistProgressAppearance({ progressColor: elements.progressColor.value }));
 elements.showPreheatHighlight.addEventListener("change", () => persistProgressAppearance({ showPreheatHighlight: elements.showPreheatHighlight.checked }));
@@ -248,17 +263,10 @@ elements.toastAction.addEventListener("click", () => {
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.target !== "popup" || !TASK_EVENTS.includes(message.type)) return;
   if (message.video) {
-    state.libraryRevision++;
-    const deletedAt = state.deletedAt.get(message.video.id) || 0;
-    if (deletedAt && (message.video.updatedAt || 0) <= deletedAt) return;
-    state.deletedAt.delete(message.video.id);
-    const index = state.videos.findIndex((video) => video.id === message.video.id);
-    if (index >= 0) state.videos.splice(index, 1, newerTask(state.videos[index], message.video));
-    else state.videos.push(message.video);
+    mergeTask(message.video);
+    return;
   } else if (message.type === "CACHE_DELETED") {
-    state.libraryRevision++;
-    state.deletedAt.set(message.videoId, Date.now());
-    state.videos = state.videos.filter((video) => video.id !== message.videoId);
+    rememberDeletion(message.videoId, message.deletedAt);
   } else {
     void refreshLibrary();
     return;
@@ -302,6 +310,7 @@ function setPanelView(view, { focus = false } = {}) {
 
 /** 设置是覆盖在页签之上的二级视图：打开时隐藏页签与当前面板，返回时回到原页签。 */
 function setSettingsOpen(open, { focus = null, restoreFocus = true, moveFocus = true } = {}) {
+  if (!open) clearBufferModeDrag();
   state.settingsOpen = open;
   elements.settingsView.hidden = !open;
   elements.panelTabs.hidden = open;
@@ -324,7 +333,7 @@ async function initialize() {
   // 撤销期内的删除登记到后台：弹窗怎么关闭都由后台提交（见 pending-deletes.js）。
   state.pendingDeleteChannel = connectPendingDeletes({
     connect: (info) => chrome.runtime.connect(info),
-    getPending: () => state.pendingDeletes.keys()
+    getPending: () => [...state.pendingDeletes].map(([videoId, pending]) => [videoId, pending.createdAt])
   });
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   state.tab = tabs[0] || null;
@@ -413,11 +422,11 @@ async function readLibrary() {
     const result = await send("LIST_VIDEOS");
     const previous = new Map(state.videos.map((video) => [video.id, video]));
     const incoming = new Map((result.videos || [])
-      .filter((video) => !state.deletedAt.has(video.id) || video.updatedAt > state.deletedAt.get(video.id))
+      .filter((video) => !wasDeleted(video))
       .map((video) => [video.id, newerTask(previous.get(video.id), video)]));
     // 查询期间收到推送时，旧查询不能删除刚加入的任务，也不能压回进度。
     if (revision !== state.libraryRevision) {
-      for (const video of state.videos) if (!incoming.has(video.id) && !state.deletedAt.has(video.id)) incoming.set(video.id, video);
+      for (const video of state.videos) if (!incoming.has(video.id) && !wasDeleted(video)) incoming.set(video.id, video);
     }
     state.videos = [...incoming.values()].sort(compareLibraryTasks);
     // 打开弹窗时由快照恢复活动画质；此后的轮询不能让迟到的旧任务改掉用户的新选择。
@@ -470,6 +479,7 @@ async function persistCacheMode(value) {
 
 function renderUnsupported(title, detail) {
   setText(elements.currentHeading, title);
+  elements.currentHeading.removeAttribute("title");
   elements.currentOwner.hidden = true;
   setText(elements.currentDetailText, detail);
   elements.pageMark.hidden = true;
@@ -655,29 +665,24 @@ function approxBytes(size) {
 }
 
 /**
- * 账号说明只在「影响这次能选什么」时出现，并且放在画质滑杆下面：
- * - 大会员：不再写一句「已登录大会员」，只在分段控件右侧挂一枚「大会员」小标记；
- * - 未登录：说明登录后能多选哪些档，并给出「去登录」入口（在新标签打开 B 站登录页，不需要新权限）；
- * - 已登录但不是大会员：只在杆尾有大会员档被锁时说一句「4K 需要大会员」；
- * - 读取出错 / 登录态受限：警示色说明，仅音频模式下也保留。
- * B 站声明了、但大会员账号也没拿到的档位，是这个视频本身没有，杆上不画、这里也不提，完整对照在悬停提示里。
+ * 画质以 B 站实际返回的媒体轨为准。页面和后台都能携带浏览器会话，取源位置不能判断登录状态。
+ * 只提示确实未返回且有登录或大会员要求的更高档位。音频模式也保留真实的清单读取错误。
  */
 function renderAuthNote(ladder) {
   const locked = isAudioMode() ? [] : state.qualityStops.locked;
   const list = (items) => items.slice(0, 2).map((item) => item.label).join(t("sep.list")) + (items.length > 2 ? t("list.more") : "");
-  const signedIn = Boolean(state.auth?.viaPageSession);
-  const vip = signedIn && Boolean(state.auth?.vipActive);
+  const vip = state.auth?.vipActive === true;
+  const signedOut = !vip && state.auth?.cookieAccess === true && state.auth.hasSessionCookie === false;
+  const vipOnly = locked.filter((item) => item.requiresVip);
   let text = "", tone = "normal", title = "", action = false;
   if (state.qualityError) {
     text = state.qualityError; tone = "warning"; title = state.qualityError;
-  } else if (!signedIn && state.auth?.hasSessionCookie) {
-    text = t("auth.limited"); tone = "warning"; title = t("auth.limitedTip");
-  } else if (!signedIn && state.auth) {
+  } else if (signedOut && locked.length) {
     const loginOnly = locked.filter((item) => !item.requiresVip);
     text = loginOnly.length ? t("auth.unlockLogin", { list: list(loginOnly) }) : t("auth.signedOut");
     title = t("auth.signedOutTip"); action = true;
-  } else if (signedIn && !vip && locked.length) {
-    text = t("auth.unlockVip", { list: list(locked) }); title = t("auth.signedInTip");
+  } else if (vipOnly.length) {
+    text = t("auth.unlockVip", { list: list(vipOnly) }); title = t("auth.signedInTip");
   }
   const note = elements.authNote;
   note.hidden = !text || isAudioMode() && tone !== "warning";
@@ -713,7 +718,7 @@ function buildQualityStops(options) {
   const open = [...options].sort((left, right) => left.quality - right.quality);
   const top = open.length ? open[open.length - 1].quality : 0;
   const declared = Array.isArray(state.cacheSizeInfo?.declared) ? state.cacheSizeInfo.declared : [];
-  const locked = !open.length || state.auth?.viaPageSession && state.auth?.vipActive ? [] : declared
+  const locked = !open.length || state.auth?.vipActive === true ? [] : declared
     .filter((item) => item.quality > top && (item.requiresVip || item.requiresLogin))
     .sort((left, right) => left.quality - right.quality);
   return { open, locked };
@@ -1038,7 +1043,8 @@ async function startCache() {
   request.timer = setTimeout(() => void checkCacheStart(request), CACHE_START_TIMEOUT_MS);
   renderCurrent();
   try {
-    await send("START_CACHE", { url: selection.url, tabId: selection.tabId, quality: selection.quality, codec: selection.codec, mode: selection.mode });
+    if (cached) await send("RESUME_CACHE", { ...taskTarget(cached), tabId: selection.tabId });
+    else await send("START_CACHE", { url: selection.url, tabId: selection.tabId, quality: selection.quality, codec: selection.codec, mode: selection.mode });
     await refreshLibrary();
   } catch (error) {
     // 真实进度可能先于响应到达；旧请求也可能在超时重试后才失败，不能覆盖新一代状态。
@@ -1056,7 +1062,7 @@ async function pauseCurrentTask() {
   state.pausePending = true;
   elements.pauseButton.disabled = true;
   try {
-    await pauseTask(cached.id);
+    await pauseTask(cached);
   } finally {
     state.pausePending = false;
     if (state.pageInfo) renderCurrent();
@@ -1064,6 +1070,26 @@ async function pauseCurrentTask() {
 }
 
 // ---- 提前加载 ----------------------------------------------------------------
+
+async function cacheWhileWatching() {
+  if (!state.tab?.id || elements.quickCache.hidden || state.quickCachePending) return;
+  state.quickCachePending = true;
+  elements.quickCache.disabled = true;
+  try {
+    const result = await chrome.tabs.sendMessage(state.tab.id, {
+      type: "BILI_BUFFER_CACHE_WHILE_WATCHING", url: state.tab.url
+    }, { frameId: 0 });
+    if (!result?.ok) throw new Error(t("buffering.startFailed"));
+    // 作废点击前读取的空状态，避免轮询把已启动的入口重新露出来。
+    ++state.assistReadSequence;
+    state.fullPhase = result.fullPhase;
+  } catch {
+    showToast(t("buffering.startFailed"));
+  } finally {
+    state.quickCachePending = false;
+    renderAssist();
+  }
+}
 
 async function persistProgressAppearance(patch) {
   const previous = state.assistConfig;
@@ -1100,6 +1126,7 @@ async function refreshAssistState() {
       state.confirmedAssistConfig = state.assistConfig;
     }
     state.assistStats = result.stats || null;
+    state.fullPhase = result.fullPhase || "";
   } catch {
     if (readSequence !== state.assistReadSequence) return;
     state.assistStats = null;
@@ -1109,11 +1136,15 @@ async function refreshAssistState() {
 
 function renderAssist() {
   const config = state.assistConfig || { mode: "always", preheatColor: DEFAULT_PREHEAT_COLOR };
+  renderBufferMode(config);
   renderAppearance(config);
   elements.assistPanel.hidden = !state.pageInfo?.supported;
   if (elements.assistPanel.hidden) return;
   const stats = state.assistStats;
   const enabled = config.mode !== "off";
+  elements.quickCache.hidden = !enabled || isAudioMode() || normalizeBufferMode(config.bufferMode) !== "adaptive" ||
+    Boolean(state.fullPhase && state.fullPhase !== "error");
+  elements.quickCache.disabled = state.quickCachePending;
   const live = enabled && stats && Date.now() - stats.at < 5000;
   const finite = (value) => Math.max(0, Number(value) || 0);
   const metrics = {
@@ -1127,7 +1158,7 @@ function renderAssist() {
     residency: live ? `${finite(stats.cacheResidentMB).toFixed(0)} / 128 MB` : "—",
     accelerated: live ? t("assist.acceleratedValue", { count: finite(stats.acceleratedRequests), rescues: finite(stats.networkRescues) }) : "—",
     trouble: live ? [finite(stats.nativeFallbacks) > 0 ? t("assist.trouble.fallbacks", { count: finite(stats.nativeFallbacks) }) : "", finite(stats.prefetchErrors) > 0 ? t("assist.trouble.prefetch", { count: finite(stats.prefetchErrors) }) : "", finite(stats.blockedNodes) > 0 ? t("assist.trouble.blocked", { count: finite(stats.blockedNodes) }) : ""].filter(Boolean).join(" · ") : "",
-    node: live ? (stats.networkHost || t("assist.node.connecting")) : t(enabled ? "assist.node.waitingData" : "assist.status.off")
+    node: live ? (stats.networkHost || t("assist.node.connecting")) : t(enabled ? "assist.node.waitingData" : "assist.node.off")
   };
   for (const [key, value] of Object.entries(metrics)) setText(elements.assistMetrics[key], value);
   // 「异常」合并交还原生 / 预热失败 / 隔离节点：全是失败信号，为 0 时只是噪音，整行不出现；出现才显示并用警示色。
@@ -1135,17 +1166,60 @@ function renderAssist() {
   troubleRow.hidden = !metrics.trouble;
   troubleRow.classList.toggle("is-warning", Boolean(metrics.trouble));
   setAttr(elements.assistMetrics.node, "title", metrics.node);
-  elements.assistToggle.setAttribute("aria-checked", String(enabled));
+  setAttr(elements.assistToggle, "aria-checked", String(enabled));
+}
 
-  // 状态只看新鲜的统计：页面没在播放或统计过期时，不能沿用旧的「正在加载」。
-  let status = "off", tone = "off";
-  if (enabled && (!live || !stats.activeTracks)) { status = "waiting"; tone = "waiting"; }
-  else if (enabled && stats.prefetchErrors > 0 && !stats.prefetching && !(stats.prefetchAheadSec > 0)) { status = "unstable"; tone = "warning"; }
-  else if (enabled && stats.prefetching > 0) { status = "prefetching"; tone = "active"; }
-  else if (enabled && stats.prefetchAheadSec > 0) { status = "ready"; tone = "active"; }
-  else if (enabled) { status = "on"; tone = "active"; }
-  setText(elements.assistStatus, t(`assist.status.${status}`));
-  elements.assistStatus.dataset.state = tone;
+function renderBufferMode(config) {
+  const mode = normalizeBufferMode(config.bufferMode);
+  const radio = elements.bufferMode.querySelector(`input[value="${mode}"]`);
+  if (!radio.checked) radio.checked = true;
+}
+
+function startBufferModeDrag(event) {
+  const radio = event.target.closest('input[type="radio"]:checked');
+  if (!radio || !event.isPrimary || event.button !== 0 || state.bufferModeDrag) return;
+  const { width } = radio.getBoundingClientRect();
+  if (width <= 0) return;
+  const group = elements.bufferMode;
+  const transform = getComputedStyle(group, "::before").transform;
+  const offset = transform === "none" ? 0 : new DOMMatrixReadOnly(transform).m41;
+  // 由整组捕获指针，拖出边缘仍能松手，松手产生的 click 也不会点中经过的单选项。
+  group.setPointerCapture(event.pointerId);
+  state.bufferModeDrag = { pointerId: event.pointerId, x: event.clientX, offset, width, radios: [...group.querySelectorAll('input[type="radio"]')] };
+  group.dataset.dragging = "true";
+  group.style.setProperty("--buffer-mode-drag-shift", `${offset}px`);
+}
+
+function bufferModeDragOffset(drag, clientX) {
+  return Math.max(0, Math.min(drag.width * (drag.radios.length - 1), drag.offset + clientX - drag.x));
+}
+
+function followBufferModeDrag(event) {
+  const drag = state.bufferModeDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  elements.bufferMode.style.setProperty("--buffer-mode-drag-shift", `${bufferModeDragOffset(drag, event.clientX)}px`);
+}
+
+function endBufferModeDrag(event) {
+  const drag = state.bufferModeDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  if (event.type === "pointerup" && Math.abs(event.clientX - drag.x) >= 4) {
+    const index = Math.round(bufferModeDragOffset(drag, event.clientX) / drag.width);
+    const radio = drag.radios[index];
+    // :checked 在这里才改变，移除预览位置后底块从松手处滑到实际选中的档位。
+    if (!radio.checked) {
+      void persistProgressAppearance({ bufferMode: radio.value, mode: "always" });
+      radio.focus({ preventScroll: true });
+    }
+  }
+  clearBufferModeDrag();
+}
+
+function clearBufferModeDrag() {
+  if (!state.bufferModeDrag) return;
+  state.bufferModeDrag = null;
+  delete elements.bufferMode.dataset.dragging;
+  elements.bufferMode.style.removeProperty("--buffer-mode-drag-shift");
 }
 
 function renderAppearance(config) {
@@ -1338,7 +1412,7 @@ function createVideoItem(video) {
   // 静态骨架只创建一次；外部标题、URL 和状态始终通过安全的属性/textContent 写入。
   item.innerHTML = `<div class="cover-wrap"><img alt="" loading="lazy" referrerpolicy="no-referrer"><span class="cover-status"></span></div>
     <div class="video-copy"><a class="video-link"></a><p class="video-meta"><span class="video-state"></span><span class="owner-separator"> · </span><a class="video-owner"></a></p><div class="item-progress" hidden><span></span></div></div>
-    <div class="video-actions"><button class="item-action toggle-button" type="button"></button><button class="item-action save-button" type="button">${ACTION_ICONS.save}</button><button class="item-action delete-button" type="button">${ACTION_ICONS.delete}</button></div>`;
+    <div class="video-actions"><button class="item-action toggle-button" type="button"></button><button class="item-action play-button" type="button">${ACTION_ICONS.resume}</button><button class="item-action save-button" type="button">${ACTION_ICONS.save}</button><button class="item-action delete-button" type="button">${ACTION_ICONS.delete}</button></div>`;
   const image = item.querySelector("img");
   image.addEventListener("error", () => { image.hidden = true; });
   item.querySelector(".video-link").addEventListener("click", (event) => {
@@ -1355,8 +1429,8 @@ function createVideoItem(video) {
   toggle.addEventListener("click", async () => {
     toggle.disabled = true;
     try {
-      if (item.video.status === "downloading") await pauseTask(item.video.id);
-      else await resumeTask(item.video.id);
+      if (item.video.status === "downloading") await pauseTask(item.video);
+      else await resumeTask(item.video);
     } finally {
       toggle.disabled = false;
     }
@@ -1370,6 +1444,17 @@ function createVideoItem(video) {
       showToast(error.message);
     } finally {
       save.disabled = false;
+    }
+  });
+  const play = item.querySelector(".play-button");
+  play.addEventListener("click", async () => {
+    play.disabled = true;
+    try {
+      await send("OPEN_CACHED_VIDEO", { videoId: item.video.id });
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      play.disabled = false;
     }
   });
   remove.addEventListener("click", () => void deleteWithUndo(item.video));
@@ -1415,11 +1500,15 @@ function updateVideoItem(item, video) {
   bar.hidden = video.status === "complete";
   bar.firstElementChild.style.setProperty("--progress-ratio", String(progress));
 
-  // 第一个按钮按状态切换：下载中 → 暂停；暂停/出错 → 继续；完成 → 保存（位置不变，列对齐）。
+  // 保持按钮节点与 pending 状态，只更新当前记录可用的操作。
   const toggle = item.querySelector(".toggle-button"), save = item.querySelector(".save-button");
   const complete = video.status === "complete";
   toggle.hidden = complete;
   save.hidden = !complete;
+  const play = item.querySelector(".play-button");
+  play.hidden = !complete || !hasCompleteByteCount(video) || Boolean(video.mergeError && !video.merged);
+  setAttr(play, "aria-label", t("item.playLabel", { title }));
+  setAttr(play, "title", t("item.playTip"));
   if (!complete) {
     const mode = video.status === "downloading" ? "pause" : "resume";
     if (toggle.dataset.mode !== mode) { toggle.dataset.mode = mode; toggle.innerHTML = ACTION_ICONS[mode]; }
@@ -1434,9 +1523,13 @@ function updateVideoItem(item, video) {
   setAttr(remove, "title", t("item.deleteTip"));
 }
 
-async function pauseTask(videoId) {
+function taskTarget(video) {
+  return { videoId: video.id, createdAt: Number(video.createdAt) || 0 };
+}
+
+async function pauseTask(video) {
   try {
-    const result = await send("PAUSE_CACHE", { videoId });
+    const result = await send("PAUSE_CACHE", taskTarget(video));
     if (result.video) mergeTask(result.video);
     if (!result.paused && result.video?.status === "complete") showToast(t("toast.alreadyComplete"));
   } catch (error) {
@@ -1444,9 +1537,9 @@ async function pauseTask(videoId) {
   }
 }
 
-async function resumeTask(videoId) {
+async function resumeTask(video) {
   try {
-    const result = await send("RESUME_CACHE", { videoId });
+    const result = await send("RESUME_CACHE", taskTarget(video));
     if (result.video) mergeTask(result.video);
   } catch (error) {
     showToast(error.message);
@@ -1454,12 +1547,26 @@ async function resumeTask(videoId) {
 }
 
 function mergeTask(video) {
+  if (wasDeleted(video)) return;
   state.libraryRevision++;
   const index = state.videos.findIndex((item) => item.id === video.id);
   if (index >= 0) state.videos.splice(index, 1, newerTask(state.videos[index], video));
   else state.videos.push(video);
   renderLibrary();
   if (state.pageInfo) renderCurrent();
+}
+
+function wasDeleted(video) {
+  const deletedAt = state.deletedAt.get(video.id);
+  const generation = Number(video.runStartedAt) || Number(video.updatedAt) || 0;
+  return Boolean(deletedAt && generation <= deletedAt);
+}
+
+function rememberDeletion(videoId, deletedAt) {
+  state.libraryRevision++;
+  // 使用 Offscreen 执行删除时的世代。旧通知即使迟到，新行与它的焦点仍然保留。
+  state.deletedAt.set(videoId, Math.max(state.deletedAt.get(videoId) || 0, Number(deletedAt) || Date.now()));
+  state.videos = state.videos.filter(video => video.id !== videoId || !wasDeleted(video));
 }
 
 /**
@@ -1469,12 +1576,13 @@ function mergeTask(video) {
 function deleteWithUndo(video) {
   if (state.pendingDeletes.has(video.id)) return;
   const title = video.partTitle || video.title || t("video.untitled");
-  const pending = { resume: video.status === "downloading", timer: null };
+  const target = taskTarget(video);
+  const pending = { createdAt: target.createdAt, resume: video.status === "downloading", timer: null };
   state.pendingDeletes.set(video.id, pending);
-  state.pendingDeleteChannel?.schedule(video.id);
+  state.pendingDeleteChannel?.schedule(video.id, pending.createdAt);
   renderLibrary();
   if (state.pageInfo) renderCurrent();
-  if (pending.resume) void send("PAUSE_CACHE", { videoId: video.id }).catch(() => {});
+  if (pending.resume) void send("PAUSE_CACHE", target).catch(() => {});
   pending.timer = setTimeout(() => void commitDelete(video.id), DELETE_UNDO_MS);
   showToast(t("toast.deleted", { title }), {
     action: t("toast.undo"),
@@ -1485,15 +1593,14 @@ function deleteWithUndo(video) {
       state.pendingDeleteChannel?.release(video.id);
       renderLibrary();
       if (state.pageInfo) renderCurrent();
-      if (pending.resume) void resumeTask(video.id);
+      if (pending.resume) void resumeTask(video);
     }
   });
 }
 
 /**
  * 撤销期内对同一缓存内容（同画质、同编码，或仅音频）点「缓存」，等同于点「撤销」。
- * 否则 START_CACHE 会续传那条被暂停的记录，界面却仍把它当待删除隐藏（按钮转一圈又变回「缓存」），
- * 到点后删除照常提交，把刚恢复的任务删掉。选了别的画质时是另一个任务，删除照常进行。
+ * 先取消计时并让原记录参加选择，再由当前视频的按钮继续它。其他画质保留原来的删除安排。
  */
 function cancelPendingDeleteForSelection() {
   const audioMode = isAudioMode();
@@ -1510,12 +1617,11 @@ function cancelPendingDeleteForSelection() {
 }
 
 async function commitDelete(videoId) {
-  if (!state.pendingDeletes.has(videoId)) return;
+  const pending = state.pendingDeletes.get(videoId);
+  if (!pending) return;
   try {
-    await send("DELETE_VIDEO", { videoId });
-    state.libraryRevision++;
-    state.deletedAt.set(videoId, Date.now());
-    state.videos = state.videos.filter((video) => video.id !== videoId);
+    const result = await send("DELETE_VIDEO", { videoId, createdAt: pending.createdAt });
+    if (result.deleted !== false) rememberDeletion(videoId, result.deletedAt);
   } catch (error) {
     showToast(t("toast.deleteFailed", { error: error.message }));
   } finally {

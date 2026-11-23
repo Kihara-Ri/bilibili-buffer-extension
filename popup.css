@@ -719,23 +719,8 @@ svg { flex: none; }
 .preload { display: grid; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 .preload-head { display: flex; align-items: center; gap: 8px; }
 .preload-head h3 { font-size: 12.5px; font-weight: 640; letter-spacing: 0.04em; white-space: nowrap; }
-
-.status-pill {
-  display: inline-flex;
-  flex: 1;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink-soft);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.status-pill::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--track-off); }
-.status-pill[data-state="active"]::before { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent); }
-.status-pill[data-state="warning"] { color: var(--warning); }
-.status-pill[data-state="warning"]::before { background: var(--warning); }
+.preload-head > #assist-details-toggle { margin-inline-start: auto; }
+.preload-head > .quick-cache { color: var(--ink); font-weight: 600; white-space: nowrap; }
 
 .switch, .switch-input {
   position: relative;
@@ -927,7 +912,7 @@ svg { flex: none; }
 }
 .item-action svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .item-action:hover:not(:disabled) { background: var(--surface-soft); color: var(--ink-strong); }
-.save-button:hover:not(:disabled), .toggle-button:hover:not(:disabled) { background: var(--blue-wash); color: var(--blue-deep); }
+.play-button:hover:not(:disabled), .save-button:hover:not(:disabled), .toggle-button:hover:not(:disabled) { background: var(--blue-wash); color: var(--blue-deep); }
 .delete-button:hover:not(:disabled) { background: var(--danger-wash); color: var(--danger); }
 .item-action:active:not(:disabled) { transform: scale(0.94); }
 .item-action:disabled { cursor: wait; opacity: 0.45; }
@@ -951,11 +936,57 @@ svg { flex: none; }
 .setting-note { color: var(--ink-soft); font-size: 11.5px; line-height: 1.5; }
 .setting-note code { padding: 0 4px; border-radius: 4px; background: var(--surface-soft); font-family: var(--mono); font-size: 10.5px; }
 
+.buffer-mode-row > span { flex: none; white-space: nowrap; }
+.buffer-mode-segments {
+  position: relative;
+  flex: 0 1 148px;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  box-shadow: inset 0 0 0 1px var(--line);
+  touch-action: pan-y;
+  user-select: none;
+}
+.buffer-mode-segments::before {
+  content: "";
+  position: absolute;
+  inset: 2px auto 2px 2px;
+  width: calc((100% - 4px) / 2);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-soft), var(--ink-strong) 13%);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  transform: translateX(var(--buffer-mode-drag-shift, var(--buffer-mode-shift, 0%)));
+  transition: transform 160ms var(--glide);
+  pointer-events: none;
+}
+.buffer-mode-segments:has(label:nth-child(2) input:checked) { --buffer-mode-shift: 100%; }
+.buffer-mode-segments[data-dragging="true"]::before { transition: none; }
+.buffer-mode-segments label {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 24px;
+  padding: 4px 1px;
+  border-radius: 8px;
+  color: var(--ink-soft);
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.buffer-mode-segments label:is(:hover, :has(input:checked)) { color: var(--ink-strong); }
+.buffer-mode-segments label:has(input:focus-visible) { outline: 2px solid var(--blue); outline-offset: -2px; }
+.buffer-mode-segments input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.buffer-mode-segments input:checked { cursor: grab; }
+.buffer-mode-segments[data-dragging="true"], .buffer-mode-segments[data-dragging="true"] input { cursor: grabbing; }
+
 .appearance { display: grid; gap: 6px; }
 .timeline-preview { display: flex; height: 4px; margin-top: 4px; overflow: hidden; border-radius: 2px; }
 .preview-played { width: 28%; background: var(--played-color, #00a1d6); }
 .preview-native { width: 18%; background: #aeb8c1; }
-.preview-preheat { width: 34%; background: var(--preheat-color, #ff8a1f); }
+.preview-preheat-ready { width: 16%; }
+.preview-preheat { width: 18%; }
 .preview-empty { width: 20%; background: var(--surface-soft); }
 .timeline-legend { display: flex; gap: 14px; color: var(--ink-soft); font-size: 11px; }
 .timeline-legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
@@ -963,8 +994,12 @@ svg { flex: none; }
 .timeline-legend i { width: 6px; height: 6px; border-radius: 50%; }
 .legend-played { background: var(--played-color, #00a1d6); }
 .legend-native { background: #aeb8c1; }
-.legend-preheat { background: var(--preheat-color, #ff8a1f); }
-.appearance[data-highlight="false"] :is(.preview-preheat, .legend-preheat) { background: #aeb8c1; }
+.preview-preheat-ready, .legend-preheat { background: var(--preheat-color, #ff8a1f); }
+.preview-preheat {
+  background: repeating-linear-gradient(135deg, var(--preheat-color, #ff8a1f) 0 2px, transparent 2px 5px) var(--surface-soft);
+}
+.appearance[data-highlight="false"] .preview-preheat-ready { background: #aeb8c1; }
+.appearance[data-highlight="false"] .preview-preheat { background: var(--surface-soft); }
 
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; font-size: 13px; }
 .color-input { width: 32px; height: 22px; padding: 2px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-raised); cursor: pointer; }
@@ -1050,6 +1085,7 @@ svg { flex: none; }
     transition-duration: 0.01ms !important;
   }
   .download-arrow { animation: none !important; }
+  .buffer-mode-segments::before { transition: none !important; }
   /* 无限循环的水波、画质顶档的浪与气泡在全局 0.01ms 时长下会变成高频闪烁，必须直接停掉（渐变保留，只是不动）。 */
   .button-progress::after, .quality-fill::before, .quality-fill::after,
   .skeleton-bar::after, .cache-button[data-state="reading"]::after, .cache-button[data-state="reading"] .button-glyph { animation: none !important; }

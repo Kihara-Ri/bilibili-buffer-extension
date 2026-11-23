@@ -138,7 +138,7 @@ test('观察器按当前播放位置刷新保留提示，并释放失活轨道',
 
   internals.renderPreheatProgress();
 
-  const expected = { active: true, position: 12, ahead: 90, rewind: 5, duration: 100, protectInit: true };
+  const expected = { active: true, position: 12, ahead: 30, rewind: 5, duration: 100, protectInit: true };
   assert.deepEqual(calls.retained.get(active.url), expected);
   assert.deepEqual(calls.retained.get(audio.url), expected);
   assert.equal(calls.retained.has(old.url), false);

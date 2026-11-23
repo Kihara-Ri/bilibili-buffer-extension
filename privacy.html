@@ -193,7 +193,7 @@
         preferences and task state stay in your local Chrome profile. The GitHub edition contacts release services for updates when you request it, as disclosed below.
       </p>
       <ul lang="en">
-        <li><strong>Login state:</strong> it only checks whether the <code>SESSDATA</code> cookie exists in order to show a login hint. The cookie value is never read, stored or transmitted.</li>
+        <li><strong>Login state:</strong> Chrome sends its Bilibili session to Bilibili. The extension uses the site's sign-in status and an irreversible account identifier for cache separation.</li>
         <li><strong>Current tab URL:</strong> used to identify the video you are watching and to look up its cached copy. Kept in <code>chrome.storage.session</code> only.</li>
         <li><strong>Cached media:</strong> downloaded from Bilibili CDNs only when you click "cache", and stored in your local IndexedDB.</li>
         <li><strong>Preferences and task progress:</strong> stored in <code>chrome.storage.local</code> so progress can resume after a restart.</li>

@@ -1,4 +1,5 @@
 import { t } from "./i18n.js";
+import { hasCompleteByteCount } from "./utils.js";
 
 export const DOWNLOAD_WATCHDOG_ALARM = "bili-buffer-download-watchdog-v1";
 export const DOWNLOAD_WATCHDOG_MINUTES = 1;
@@ -20,6 +21,7 @@ const RETRY_DELAYS_MS = Object.freeze([
  * 都跑一遍，保证换了语言后重试判断不变。
  */
 export function isRecoverableDownloadError(error) {
+  if (error?.code === "MEDIA_VERSION_MISMATCH") return false;
   const message = String(error?.message || error || "");
   if (!message) return false;
   if (/IndexedDB|数据库|database|编码|画质|quality|轨道不完整|总大小不一致|total media size|错误的范围起点|wrong range start/i.test(message)) return false;
@@ -43,6 +45,12 @@ export function makeDownloadRetryState(video, error, now = Date.now()) {
 export function isDownloadRetryDue(video, now = Date.now()) {
   const retryAt = Number(video?.nextRetryAt) || 0;
   return !retryAt || retryAt <= now;
+}
+
+/** @param {object} video 片库记录 @returns {boolean} 是否需要看门狗检查 */
+export function needsDownloadRecovery(video) {
+  return video?.status === "downloading" ||
+    (video?.status === "complete" && !hasCompleteByteCount(video));
 }
 
 export function makeDownloadWatchdogSchedule(nextRetryAt = 0, now = Date.now()) {

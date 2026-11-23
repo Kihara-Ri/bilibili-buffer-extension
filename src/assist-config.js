@@ -14,10 +14,17 @@ export const PREHEAT_COLOR_PRESETS = Object.freeze([
 // （见 playback-observer.js / playback-network.js），不进存储，也就不会被旧版本的保存值卡住。
 export const ASSIST_DEFAULTS = Object.freeze({
   mode: "always",
+  bufferMode: "adaptive",
   progressColor: "#00a1d6",
   showPreheatHighlight: true,
   preheatColor: DEFAULT_PREHEAT_COLOR
 });
+
+export function normalizeBufferMode(value, fallback = ASSIST_DEFAULTS.bufferMode) {
+  // 旧档位均已明确选择进页下载整片，保留这个偏好并统一为可边播的全速策略。
+  if (["complete", "complete-before-play", "full-speed"].includes(value)) return "full-speed";
+  return value === "adaptive" ? value : fallback;
+}
 
 export function normalizeAssistMode(value, fallback = ASSIST_DEFAULTS.mode) {
   if (["always", "auto", "on"].includes(value)) return "always";
@@ -34,12 +41,16 @@ export function sanitizeAssistConfig(patch, current = ASSIST_DEFAULTS) {
   // 只挑已知字段：历史存储里的 cdnMode / maxConcurrency / leadSeconds 等旧策略字段在此丢弃。
   const next = {
     mode: normalizeAssistMode(current?.mode),
+    bufferMode: normalizeBufferMode(current?.bufferMode),
     progressColor: normalizePreheatColor(current?.progressColor, "#00a1d6"),
     showPreheatHighlight: current?.showPreheatHighlight !== false,
     preheatColor: normalizePreheatColor(current?.preheatColor)
   };
   if (patch && Object.hasOwn(patch, "mode")) {
     next.mode = normalizeAssistMode(patch.mode, next.mode);
+  }
+  if (patch && Object.hasOwn(patch, "bufferMode")) {
+    next.bufferMode = normalizeBufferMode(patch.bufferMode, next.bufferMode);
   }
   if (patch && Object.hasOwn(patch, "preheatColor")) {
     next.preheatColor = normalizePreheatColor(patch.preheatColor, next.preheatColor);

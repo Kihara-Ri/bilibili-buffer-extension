@@ -7,7 +7,8 @@ import zhCN from "./locales/zh-CN.js";
  * 为什么不直接用 chrome.i18n.getMessage：
  * - Offscreen Document 只能用 chrome.runtime，拿不到 chrome.i18n，而缓存出错的提示正是在 Offscreen 里产生的；
  * - getMessage 不支持复数与带条件的句式，英文的「1 video / 2 videos」只能写成函数。
- * 所以运行时文案放在 src/locales/*.js，由各上下文直接 import；_locales/ 只保留清单要用的扩展名与描述。
+ * 模块入口的运行时文案放在 src/locales/*.js。清单和 document_start 内容脚本用 _locales/，
+ * 内容脚本的开播限制先于异步模块加载安装，提示由 Chrome 提供本地化。
  *
  * 语言在每个上下文启动时确定一次，之后不再变化（Chrome 改界面语言需要重启浏览器）：
  * - 有 chrome.i18n 的上下文（Service Worker、弹窗）按 Chrome 界面语言；

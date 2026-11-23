@@ -528,7 +528,7 @@ export function createFragmentReader(chunks) {
     return null;
   }
 
-  return { totalBytes: access.totalBytes, readInit, skipToFragments, nextFragment };
+  return { totalBytes: access.totalBytes, get remainingBytes() { return access.totalBytes - position; }, readInit, skipToFragments, nextFragment };
 }
 
 /**
@@ -576,6 +576,8 @@ export async function createMergedFragmentedMp4({ video, audio }) {
 
   return {
     header: init.bytes,
+    // 片段在原大小内改写，索引和尾部盒子可能被丢弃。新头加剩余源字节就是写盘上界。
+    outputBytes: init.bytes.length + videoReader.remainingBytes + audioReader.remainingBytes,
     videoTrackId: init.videoTrackId,
     audioTrackId: init.audioTrackId,
     sourceBytes: videoReader.totalBytes + audioReader.totalBytes,
@@ -886,6 +888,7 @@ export async function createAudioOnlyMp4({ chunks }) {
     }
     return {
       header,
+      outputBytes: header.length + reader.remainingBytes,
       audioTrack: { ...audioTable, trackId: 1 },
       sourceBytes: access.totalBytes,
       fragmented: true,
@@ -958,6 +961,7 @@ export async function createAudioOnlyMp4({ chunks }) {
   }
   return {
     header,
+    outputBytes: header.length + audioBytes,
     audioTrack: { ...audioTable, trackId: 1 },
     sourceBytes: access.totalBytes,
     fragmented: false,

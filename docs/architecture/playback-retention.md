@@ -51,9 +51,9 @@ perSecond    = total / duration
 `updateRetentionHints()` 读取正在播放（或第一个）`<video>` 的 `currentTime` 与 `duration`，然后对每条轨道：
 
 - `active === false` → `release(url)`；
-- 否则 → `retain(url, { active: true, position, ahead: 90, rewind: 5, duration, protectInit: true })`。
+- 否则 → `retain(url, { active: true, position, ahead, rewind: 5, duration, protectInit: true })`，其中 `ahead` 取当前规划器换算出的媒体秒数。
 
-前方窗口与规划器共用 `LEAD_SECONDS = 90`；回看窗口 `RETENTION_REWIND_SECONDS = 5`，覆盖拖动后的小幅回退，又不保护过多历史。
+前方保护长度随倍速、连续余量和剩余时长变化，最多保护 90 媒体秒。5 秒回看窗口覆盖拖动后的小幅回退。
 
 刷新时机：
 

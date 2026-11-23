@@ -29,6 +29,15 @@ test("旧播放模式迁移为开启或关闭，不保留准备流程", () => {
   assert.equal(normalizeAssistMode("off"), "off");
 });
 
+test("新配置默认自适应，已选进页自动缓存的旧配置迁移到全速缓冲", () => {
+  assert.equal(sanitizeAssistConfig({ mode: "always", leadSeconds: 90 }).bufferMode, "adaptive");
+  for (const bufferMode of ["full-speed", "complete", "complete-before-play"]) {
+    const saved = sanitizeAssistConfig({ bufferMode, showPreheatHighlight: false });
+    assert.equal(saved.bufferMode, "full-speed");
+    assert.equal(sanitizeAssistConfig({ bufferMode: "bogus" }, saved).bufferMode, "full-speed");
+  }
+});
+
 test("无效颜色不会覆盖用户已有颜色或其他合法配置", () => {
   const current = sanitizeAssistConfig({ mode: "always", preheatColor: "#20c997" });
   const config = sanitizeAssistConfig({ preheatColor: "transparent", maxConcurrency: 99 }, current);

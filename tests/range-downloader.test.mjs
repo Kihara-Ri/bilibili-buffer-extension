@@ -83,6 +83,23 @@ test("CDN 测速的卡死候选会超时，不会拖住已成功的节点", asyn
   assert.ok(performance.now() - startedAt < 100);
 });
 
+test("一条 CDN 可用后提前结束慢探针，并保留备用 URL 供正式下载使用", async () => {
+  let backupCancellation;
+  const urls = ["https://fast.example/video", "https://stalled.example/video"];
+  const result = await rankRangeCandidates(urls, {
+    probeSize: 128, timeoutMs: 800,
+    fetchImpl: async (url, { signal }) => {
+      if (url === urls[0]) return rangeResponse(new Uint8Array(1024), 0, 127);
+      return new Promise((_resolve, reject) => signal.addEventListener("abort", () => {
+        backupCancellation = signal.reason.name;
+        reject(signal.reason);
+      }, { once: true }));
+    }
+  });
+  assert.deepEqual(result.urls, urls);
+  assert.equal(backupCancellation, "AbortError", "可用节点就绪后应主动停止探测");
+});
+
 test("默认 fetch 保留浏览器 Window 调用上下文", async () => {
   const originalFetch = globalThis.fetch;
   const data = Uint8Array.from({ length: 8 }, (_, index) => index);
@@ -161,6 +178,46 @@ test("某个 CDN 分块失败时切换备用地址并保持范围不变", async 
   assert.deepEqual(committed, [0, 1, 2]);
   assert.ok(calls.some(([url, range]) => url.includes("backup") && range === "bytes=4-7"));
   assert.equal(result.metrics.retryCount, 1);
+});
+
+test("同长度的不同 ETag 不能在换 CDN 后拼进已提交的轨道", async () => {
+  const committed = [];
+  await assert.rejects(downloadByteRanges({
+    urls: ["https://primary.example/video", "https://backup.example/video"],
+    totalBytes: 8,
+    rangeSize: 4,
+    concurrency: 1,
+    maxAttempts: 2,
+    fetchImpl: async (url, { headers }) => {
+      const primary = url.includes("primary");
+      if (primary && headers.Range === "bytes=4-7") return new Response(null, { status: 403 });
+      const start = primary ? 0 : 4;
+      return new Response(new Uint8Array(4).fill(primary ? 1 : 2), {
+        status: 206,
+        headers: { "Content-Range": `bytes ${start}-${start + 3}/8`, ETag: primary ? '"v1"' : '"v2"' }
+      });
+    },
+    onCommit: async batch => committed.push(...batch.map(entry => entry.range.start))
+  }), { code: "MEDIA_VERSION_MISMATCH" });
+  assert.deepEqual(committed, [0]);
+});
+
+test("续传带上已保存的强 ETag，并拒绝 If-Range 返回的整文件", async () => {
+  let headers;
+  await assert.rejects(downloadByteRanges({
+    urls: ["https://cdn.example/video"],
+    start: 4,
+    totalBytes: 8,
+    rangeSize: 4,
+    maxAttempts: 1,
+    etag: '"old"',
+    fetchImpl: async (_url, init) => {
+      headers = init.headers;
+      return new Response(new Uint8Array(8), { headers: { ETag: '"new"' } });
+    },
+    onCommit: async () => assert.fail("新的媒体版本不能接在旧断点上")
+  }), { code: "MEDIA_VERSION_MISMATCH" });
+  assert.equal(new Headers(headers).get("If-Range"), '"old"');
 });
 
 test("CDN 分块连接卡死时按超时切换备用地址", async () => {

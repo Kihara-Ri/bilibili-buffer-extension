@@ -45,7 +45,7 @@ test("当前视频：内容二选一、画质是一根滑杆（无下拉）、�
   const quality = between('id="quality-row"', 'id="auth-note"');
   assert.match(quality, /<input[^>]*id="quality-slider"[^>]*type="range"/);
   assert.match(quality, /id="quality-slider"[^>]*aria-labelledby="quality-label"/);
-  assert.doesNotMatch(html, /quality-options|aria-haspopup|popovertarget|\bpopover\b|<select/);
+  assert.doesNotMatch(between('id="current-view"', 'id="library-view"'), /quality-options|aria-haspopup|popovertarget|\bpopover\b|<select/);
   // 看得见的拇指与登顶水花是装饰层，放在 range 之后（CSS 用相邻选择器把悬停 / 焦点状态传给拇指）。
   assert.match(quality, /id="quality-slider"[^>]*>\s*(?:<!--[\s\S]*?-->\s*)?<span class="quality-knob" aria-hidden="true"><\/span>\s*<span class="quality-splash" aria-hidden="true"><\/span>/);
   assert.match(quality, /<span class="quality-fill" aria-hidden="true"><span class="quality-surge"><\/span><\/span>/);
@@ -68,11 +68,13 @@ test("当前视频：内容二选一、画质是一根滑杆（无下拉）、�
 
 test("提前加载并入当前视频：开关、三个概览数字，其余诊断折叠在标题行「详情」之后", () => {
   const preload = between('id="assist-panel"', "</section>");
-  assert.match(preload, /id="assist-toggle"[^>]*role="switch"/);
+  assert.match(preload, /id="assist-toggle"[^>]*role="switch"[^>]*aria-labelledby="preload-heading"/);
+  assert.doesNotMatch(preload, /assist-status|status-pill/, "开关表达开启与关闭，标题行无需重复状态");
   const summary = between('class="assist-summary"', "</dl>");
   for (const id of ["assist-speed", "assist-ready", "assist-hit"]) assert.match(summary, new RegExp(`<dd id="${id}"[^>]*>—</dd>`), `概览缺少 ${id}`);
   for (const id of ["assist-buffer", "assist-stalls", "assist-node"]) assert.doesNotMatch(summary, new RegExp(`id="${id}"`), `诊断 ${id} 不应出现在概览`);
   assert.match(preload, /id="assist-details-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="assist-metrics-panel"/);
+  assert.match(preload, /id="cache-while-watching"[^>]*hidden/);
   const diagnostics = between('id="assist-metrics-panel"', "</dl>");
   assert.match(diagnostics, /^[^>]*hidden/, "详细数据默认折叠");
   for (const id of ["assist-buffer", "assist-stalls", "assist-residency", "assist-accelerated", "assist-trouble", "assist-node"]) {
@@ -84,8 +86,12 @@ test("提前加载并入当前视频：开关、三个概览数字，其余诊�
   assert.doesNotMatch(html, /id="assist-(cdn-mode|concurrency)"/);
 });
 
-test("设置：进度条外观（唯一一条预览）、浏览器自检、关于", () => {
+test("设置：两档缓冲切换、进度条外观（唯一一条预览）、浏览器自检、关于", () => {
   const settings = between('id="settings-view"', "</main>");
+  const buffering = between('aria-labelledby="buffering-heading"', "</section>");
+  assert.match(buffering, /id="assist-buffer-mode"[^>]*role="radiogroup"[^>]*aria-labelledby="buffer-mode-label"/);
+  assert.deepEqual([...buffering.matchAll(/type="radio" name="buffer-mode" value="([^"]+)"/g)].map(match => match[1]),
+    ["adaptive", "full-speed"]);
   assert.equal((settings.match(/class="timeline-preview"/g) || []).length, 1);
   for (const id of ["assist-progress-color", "assist-show-highlight", "assist-colors", "assist-custom-color", "assist-appearance-reset", "browser-health-refresh", "browser-health-status", "about-version"]) {
     assert.match(settings, new RegExp(`id="${id}"`), `设置缺少 ${id}`);

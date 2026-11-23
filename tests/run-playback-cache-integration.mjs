@@ -52,16 +52,17 @@ try {
   });
   await page.goto(origin + '/tests/playback-progress-integration.html');
   await page.waitForFunction(() => document.querySelector('#result').textContent !== 'running');
-  const progress = JSON.parse(await page.locator('#result').textContent()); assert.equal(progress.ok, true, JSON.stringify(progress));
+  const progress = JSON.parse(await page.locator('#result').textContent());
+  assert.equal(progress.ok, true, JSON.stringify(progress));
   await page.goto(origin + '/tests/playback-cache-integration.html');
   const initial = Object.fromEntries(Object.entries(fixtures).map(([key, value]) => [key, { initEnd: value.initEnd, total: value.bytes.length }]));
   await page.evaluate(value => window.fixtureInfo = value, initial);
   await page.addScriptTag({ path: path.join(root, 'src/playback-cache.js') });
   await page.addScriptTag({ path: path.join(root, 'src/playback-network.js') });
   await page.addScriptTag({ path: path.join(root, 'src/playback-observer.js') });
-  const run = async (warm, xhr) => {
+  const run = async (warm, xhr, promote = false) => {
     const before = network.length;
-    const result = await page.evaluate(async ({ warm, xhr }) => {
+    const result = await page.evaluate(async ({ warm, xhr, promote }) => {
       const cache = window.__biliBufferCache, observer = window.__biliBufferPlaybackAssistInternals;
       observer.cfg.mode = warm ? 'always' : 'off'; cache.clear(); observer.tracks.clear();
       const video = document.querySelector('video'); video.pause();
@@ -110,11 +111,46 @@ try {
           await new Promise(resolve => setTimeout(resolve, 30));
         }
       }
+      let promotion;
+      if (promote) {
+        const oldTargets = { StableBufferTime: 3, BufferTimeAtTopQuality: 3, BufferTimeAtTopQualityLongForm: 4 };
+        const targets = { ...oldTargets };
+        const adapter = {};
+        let appendAhead;
+        const requestCountBefore = await window.readNetworkCount();
+        const hitsBefore = cache.stats.hits;
+        for (const key of Object.keys(targets)) {
+          adapter[`get${key}`] = () => targets[key];
+          adapter[`set${key}`] = value => {
+            targets[key] = value;
+            // 模拟站点自己的异步调度：只有播放器提高缓冲目标后，才发两条真实 Range 并按原序追加。
+            if (!appendAhead && value > 5.5) appendAhead = Promise.all(Object.keys(buffers).map(async role => {
+              const segment = cache.index(urls[role]).segments[1];
+              await append(buffers[role], await request(urls[role], segment.start, segment.end));
+            }));
+          };
+        }
+        const dash = { video, getCurrentPlayURLFor: role => urls[role], getCorePlayer: () => adapter };
+        window.player = { __core: () => dash };
+        await video.play();
+        const deadline = performance.now() + 3000;
+        while (!appendAhead) {
+          if (performance.now() > deadline) throw new Error('预取音视频没有在跳转前送入播放器');
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        await appendAhead;
+        const ready = video.buffered.end(0) > 6 && video.currentTime < 4;
+        video.pause();
+        await new Promise(resolve => setTimeout(resolve, 30));
+        promotion = { ready, hits: cache.stats.hits - hitsBefore, requests: await window.readNetworkCount() - requestCountBefore,
+          restored: Object.keys(targets).every(key => targets[key] === oldTargets[key]) };
+        delete window.player;
+      }
       const seekNetworkBefore = await window.readNetworkCount();
       const hitsBefore = cache.stats.hits, start = performance.now();
       video.currentTime = 6;
       const playing = once(video, 'playing');
-      await Promise.all(['video', 'audio'].map(async role => {
+      if (!promote) await Promise.all(['video', 'audio'].map(async role => {
         const second = cache.index(urls[role]).segments[1];
         await append(buffers[role], await request(urls[role], second.start, second.end));
       }));
@@ -124,20 +160,50 @@ try {
       const seekNetworkRequests = await window.readNetworkCount() - seekNetworkBefore;
       const decodedFrames = video.getVideoPlaybackQuality().totalVideoFrames;
       video.pause();
+      // 第二次跳转已经完全在两个 SourceBuffer 的交集内。验证目标帧，不能用 currentTime 改了来代替出画。
+      const nativeSeekBefore = await window.readNetworkCount();
+      const nativeSeek = await new Promise((resolve, reject) => {
+        const target = 1.5;
+        if (!Array.from({ length: video.buffered.length }, (_, i) => i)
+          .some(i => video.buffered.start(i) <= target && target < video.buffered.end(i))) {
+          reject(new Error('前一段已追加的音视频缺失')); return;
+        }
+        const started = performance.now();
+        let callback;
+        const timer = setTimeout(() => {
+          video.cancelVideoFrameCallback(callback); reject(new Error('播放器缓冲内跳转未出画'));
+        }, 3000);
+        const onFrame = (_now, metadata) => {
+          if (Math.abs(metadata.mediaTime - target) > .12) { callback = video.requestVideoFrameCallback(onFrame); return; }
+          clearTimeout(timer);
+          resolve({ target, frame: metadata.mediaTime, ms: Math.round(metadata.expectedDisplayTime - started) });
+        };
+        callback = video.requestVideoFrameCallback(onFrame);
+        video.currentTime = target;
+      });
+      nativeSeek.networkRequests = await window.readNetworkCount() - nativeSeekBefore;
       for (const buffer of Object.values(buffers)) media.removeSourceBuffer(buffer);
       video.removeAttribute("src"); video.load(); URL.revokeObjectURL(objectUrl);
-      return { warm, xhr, seekNetworkRequests, seekMs: Math.round(seekMs), newHits: cache.stats.hits - hitsBefore, yellow, decodedFrames, cacheStats: { ...cache.stats } };
-    }, { warm, xhr });
+      return { warm, xhr, seekNetworkRequests, seekMs: Math.round(seekMs), newHits: cache.stats.hits - hitsBefore, yellow, decodedFrames, nativeSeek, promotion, cacheStats: { ...cache.stats } };
+    }, { warm, xhr, promote });
     result.networkRequests = network.length - before;
     return result;
   };
   const cold = await run(false, false);
   const warmFetch = await run(true, false);
   const warmXhr = await run(true, true);
+  const promoted = await run(true, false, true);
+  assert.deepEqual(promoted.promotion, { ready: true, hits: 2, requests: 0, restored: true });
+  assert.equal(promoted.seekNetworkRequests, 0);
+  assert.equal(promoted.newHits, 0, '已经进入浏览器缓冲的目标无需在点击后读取媒体字节');
   assert.equal(warmFetch.newHits, 2, '两轨 Fetch 均命中'); assert.equal(warmXhr.newHits, 2, '两轨 XHR 均命中');
   assert(warmFetch.seekMs < cold.seekMs && warmXhr.seekMs < cold.seekMs, JSON.stringify({ cold, warmFetch, warmXhr }));
   assert(warmFetch.yellow.length && warmXhr.yellow.length);
   assert.equal(warmFetch.seekNetworkRequests, 0); assert.equal(warmXhr.seekNetworkRequests, 0); assert.equal(cold.seekNetworkRequests, 2);
+  for (const sample of [cold, warmFetch, warmXhr]) {
+    assert.equal(sample.nativeSeek.networkRequests, 0, '播放器缓冲内跳转无需媒体请求');
+    assert(Math.abs(sample.nativeSeek.frame - sample.nativeSeek.target) < .12);
+  }
   const beforeProbes = network.length;
   const probes = await page.evaluate(async () => {
     const cache = window.__biliBufferCache, url = 'https://cache-test.bilivideo.com/video.m4s';
@@ -160,12 +226,43 @@ try {
       xhr.onabort = () => events.push('abort'); xhr.onload = () => events.push('load');
       xhr.send(); xhr.abort(); setTimeout(() => resolve({ events, state: xhr.readyState, status: xhr.status }), 20);
     });
+    // B 站跳回被播放器淘汰的位置时会连续请求小块。用命中正文的真实 XHR 链检查没有嵌套定时器。
+    const originalSetTimeout = window.setTimeout;
+    let sending = false;
+    let timerTasks = 0;
+    window.setTimeout = (callback, delay, ...args) => {
+      if (sending && delay === 0) timerTasks++;
+      return originalSetTimeout(callback, delay, ...args);
+    };
+    const started = performance.now();
+    const count = 32;
+    try {
+      await new Promise((resolve, reject) => {
+        let received = 0;
+        const next = () => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', url); xhr.responseType = 'arraybuffer'; xhr.setRequestHeader('Range', 'bytes=1-17');
+          xhr.onloadend = () => {
+            if (sending || xhr.status !== 206 || xhr.response?.byteLength !== 17) {
+              reject(new Error('XHR 命中必须异步交付完整正文')); return;
+            }
+            if (++received < count) next();
+            else resolve();
+          };
+          sending = true;
+          try { xhr.send(); } finally { sending = false; }
+        };
+        next();
+      });
+    } finally { window.setTimeout = originalSetTimeout; }
+    result.xhrBurst = { count, timerTasks, ms: Math.round(performance.now() - started) };
     return result;
   });
   assert.equal(network.length, beforeProbes, '完整命中和取消都不能产生网络请求');
   assert(probes.fetch && probes.fetchAbort); assert.deepEqual(probes.xhr.states, [2, 3, 4]);
   assert.equal(probes.xhr.bytes, 17); assert.equal(probes.xhr.status, 206);
   assert.deepEqual(probes.xhrAbort, { events: ['abort'], state: 0, status: 0 });
+  assert.equal(probes.xhrBurst.timerTasks, 0, JSON.stringify(probes.xhrBurst));
   const beforeMiss = network.length;
   await page.evaluate(async () => {
     const url = 'https://cache-test.bilivideo.com/video.m4s?new-quality=1';
@@ -192,5 +289,5 @@ try {
   });
   assert.deepEqual(prefetchFailure, { status: 206, bytes: 11 }, '单节点失败后应在加速链路内换节点恢复');
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ ok: true, progress, cold, warmFetch, warmXhr, probes, navigation, prefetchFailure, acceleratedMissAndReuse: true }, null, 2));
+  console.log(JSON.stringify({ ok: true, progress, cold, warmFetch, warmXhr, promoted, probes, navigation, prefetchFailure, acceleratedMissAndReuse: true }, null, 2));
 } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }

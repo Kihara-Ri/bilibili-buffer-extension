@@ -5,54 +5,44 @@
 // 2.12.1 的 HTTP 412（老 view 端点被风控）这类「站点端行为变了」的问题，mock 测不出来，
 // 只有对真实站点跑一次完整链路才能暴露。需要联网，因此不进 npm test。
 //
-// 用法：npm run test:live [-- <视频地址>]   （默认 BV11En46qETe；匿名身份，只能取到 480P）
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+// 用法：npm run test:live [-- <视频地址> --anonymous] （默认 BV11En46qETe；已初始化时复用独立测试资料）
 import { fileURLToPath } from "node:url";
+import { openLiveBrowser } from "./lib/live-browser.mjs";
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
-import { chromiumLaunchOptions } from "./lib/browser-launch.mjs";
 
 const extension = fileURLToPath(new URL("../", import.meta.url));
-const url = process.argv[2] || "https://www.bilibili.com/video/BV11En46qETe/";
+const url = process.argv.slice(2).find(arg => !arg.startsWith("--")) || "https://www.bilibili.com/video/BV11En46qETe/";
 const TIMEOUT_MS = 10 * 60 * 1000;
-const profile = await mkdtemp(`${tmpdir()}/haineicunzhi-live-`);
-const context = await chromium.launchPersistentContext(profile, {
-  ...chromiumLaunchOptions({ headless: false }),
-  // B 站会对 navigator.webdriver / --enable-automation 的浏览器返回 412 风控页，
-  // 必须抹掉自动化特征，否则测到的是风控而不是扩展。
-  ignoreDefaultArgs: ["--enable-automation"],
-  args: [
-    `--disable-extensions-except=${extension}`,
-    `--load-extension=${extension}`,
-    "--disable-blink-features=AutomationControlled"
-  ]
-});
+const browser = await openLiveBrowser(chromium, { extension, mode: process.argv.includes("--anonymous") ? "anonymous" : "saved" });
+const { context } = browser;
 let failure = "";
 try {
-  const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
+  const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker", { timeout: 20000 });
   const page = await context.newPage();
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("video", { timeout: 60000 });
+  await page.bringToFront();
+  // 使用站点跳转后的真实地址。复用资料目录时可能有其他视频标签和旧下载任务。
+  const tabId = await worker.evaluate(async href => (await chrome.tabs.query({ active: true }))
+    .find(tab => tab.url === href)?.id, page.url());
   const ui = await context.newPage();
   await ui.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
   const send = (type, data = {}) => ui.evaluate(
     ([type, data]) => chrome.runtime.sendMessage({ target: "background", type, ...data }), [type, data]);
-  // 页面地址可能带语言前缀（/zh-Hans/video/…），这里用后台实际看到的标签。
-  const tabId = await worker.evaluate(async () => (await chrome.tabs.query({}))
-    .find((tab) => /bilibili\.com\/(?:[\w-]+\/)?video\//.test(tab.url || ""))?.id);
-
   const options = await send("GET_QUALITY_OPTIONS", { url, tabId });
-  if (!options?.qualities?.length) throw new Error(`取画质失败：${options?.error || JSON.stringify(options)}`);
+  if (!options?.qualities?.length) throw new Error(`取画质失败：${options?.error || "缺少画质列表"}`);
   console.log("可选画质", options.qualities.map((q) => q.quality).join(","), "→ 选", options.defaultQuality);
   const started = await send("START_CACHE", { url, tabId, quality: options.defaultQuality, codec: options.defaultCodec, mode: "video" });
   if (!started?.ok) throw new Error(`启动缓存失败：${started?.error}`);
+  const videoId = started.video?.id || started.pageInfo?.id;
+  if (!videoId) throw new Error("缓存启动响应缺少任务 ID。");
 
   const t0 = Date.now();
   let last = "";
   let video;
   while (Date.now() - t0 < TIMEOUT_MS) {
     await new Promise((resolve) => setTimeout(resolve, 3000));
-    video = (await send("LIST_VIDEOS")).videos?.[0];
+    video = (await send("GET_VIDEO", { videoId })).video;
     const line = video ? `${video.status} ${video.downloadedBytes}/${video.totalBytes}` : "（无任务）";
     if (line !== last) console.log(`${Math.round((Date.now() - t0) / 1000)}s ${line}`);
     last = line;
@@ -80,8 +70,7 @@ try {
 } catch (error) {
   failure = error?.message || String(error);
 } finally {
-  await context.close();
-  await rm(profile, { recursive: true, force: true });
+  await browser.close();
 }
 if (failure) {
   console.error(`失败：${failure}`);

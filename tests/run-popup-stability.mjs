@@ -105,18 +105,106 @@ try {
   // 详细数据默认折叠、设置默认关闭；外观控件在设置里。
   assert(await page.evaluate(() => document.querySelector('#assist-details-toggle').getAttribute('aria-expanded') === 'false' && document.querySelector('#assist-metrics-panel').hidden && document.querySelector('#settings-view').hidden), '详细数据默认折叠，设置默认关闭');
   await page.locator('#settings-button').click();
+  const bufferModes = page.getByRole('radiogroup', { name: '进页默认', exact: true });
+  const adaptiveMode = bufferModes.getByRole('radio', { name: '自适应缓冲', exact: true });
+  const fullSpeedMode = bufferModes.getByRole('radio', { name: '全速缓冲', exact: true });
+  assert.equal(await bufferModes.getByRole('radio').count(), 2);
+  assert(await adaptiveMode.isChecked());
+  assert(await bufferModes.evaluate(group => {
+    const bounds = group.getBoundingClientRect();
+    const row = group.parentElement.getBoundingClientRect();
+    const label = document.querySelector('#buffer-mode-label').getBoundingClientRect();
+    return bounds.width <= 148 && label.right < bounds.left && Math.abs(bounds.right - row.right) < 1;
+  }), '两档控件应和进页默认放在同一行');
+  const configWrites = () => window.__popupTest.calls.filter(type => type === 'SET_ASSIST_CONFIG').length;
+  const waitForBufferPill = index => page.waitForFunction(index => {
+    const group = document.querySelector('#assist-buffer-mode');
+    const offset = new DOMMatrixReadOnly(getComputedStyle(group, '::before').transform).m41;
+    return Math.abs(offset - index * group.querySelector('label').getBoundingClientRect().width) < .5;
+  }, index);
+  const beforeModeChange = await page.evaluate(configWrites);
+  await fullSpeedMode.click();
+  await page.waitForFunction(() => window.__popupTest.config.bufferMode === 'full-speed');
+  assert.equal(await page.evaluate(configWrites), beforeModeChange + 1, '点选只保存实际选中的档位');
+  await waitForBufferPill(1);
+  await fullSpeedMode.press('ArrowLeft');
+  await page.waitForFunction(() => window.__popupTest.config.bufferMode === 'adaptive');
+  assert(await adaptiveMode.evaluate(radio => document.activeElement === radio));
+  await waitForBufferPill(0);
+  const adaptiveBox = await adaptiveMode.boundingBox();
+  assert(adaptiveBox);
+  const grabX = adaptiveBox.x + adaptiveBox.width / 2;
+  const grabY = adaptiveBox.y + adaptiveBox.height / 2;
+  const dragDistance = adaptiveBox.width * .72;
+  const beforeDrag = await page.evaluate(configWrites);
+  await page.mouse.move(grabX, grabY);
+  await page.mouse.down();
+  await page.mouse.move(grabX + dragDistance, grabY, { steps: 8 });
+  const assistReads = await page.evaluate(() => window.__popupTest.calls.filter(type => type === 'GET_ASSIST_STATE').length);
+  await page.waitForFunction(previous => window.__popupTest.calls.filter(type => type === 'GET_ASSIST_STATE').length > previous, assistReads);
+  const previewOffset = await bufferModes.evaluate(group => new DOMMatrixReadOnly(getComputedStyle(group, '::before').transform).m41);
+  assert(Math.abs(previewOffset - dragDistance) < 2, '按住时底块应连续跟手并保持在轮询前的位置');
+  assert(await adaptiveMode.isChecked());
+  assert.equal(await page.evaluate(configWrites), beforeDrag, '松手前不应保存任意中间档');
+  await page.mouse.up();
+  await page.waitForFunction(() => window.__popupTest.config.bufferMode === 'full-speed');
+  await waitForBufferPill(1);
+  assert.equal(await page.evaluate(configWrites), beforeDrag + 1, '松手后只保存最近的档位');
+  assert(await fullSpeedMode.evaluate(radio => document.activeElement === radio));
+  const fullSpeedBox = await fullSpeedMode.boundingBox();
+  assert(fullSpeedBox);
+  const rightGrabX = fullSpeedBox.x + fullSpeedBox.width / 2;
+  await page.mouse.move(rightGrabX, grabY);
+  await page.mouse.down();
+  await page.mouse.move(rightGrabX - fullSpeedBox.width * .85, grabY, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForFunction(() => window.__popupTest.config.bufferMode === 'adaptive');
+  await waitForBufferPill(0);
+  const beforeCancel = await page.evaluate(configWrites);
+  await page.mouse.move(grabX, grabY);
+  await page.mouse.down();
+  await page.mouse.move(grabX + dragDistance, grabY, { steps: 8 });
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  assert.equal(await page.evaluate(configWrites), beforeCancel, '关闭设置取消这次拖动');
+  await page.locator('#settings-button').click();
+  assert(await adaptiveMode.isChecked());
   await page.locator('#assist-appearance-reset').click();
   await page.waitForTimeout(50);
-  const reset=await page.evaluate(()=>({config:window.__popupTest.config,disabled:document.querySelector('#assist-preheat-controls').disabled,preview:getComputedStyle(document.querySelector('.preview-preheat')).backgroundColor}));
+  const reset = await page.evaluate(() => ({
+    config: window.__popupTest.config,
+    disabled: document.querySelector('#assist-preheat-controls').disabled,
+    preview: getComputedStyle(document.querySelector('.preview-preheat')).backgroundImage,
+    ready: getComputedStyle(document.querySelector('.preview-preheat-ready')).backgroundColor,
+  }));
   assert.equal(reset.config.progressColor,'#00a1d6'); assert.equal(reset.config.preheatColor,'#ff8a1f'); assert.equal(reset.disabled,false);
+  assert.match(reset.preview,/repeating-linear-gradient/, '预取预览使用斜线');
+  assert.equal(reset.ready, 'rgb(255, 138, 31)', '插件缓冲就绪的示意段使用实色');
   await page.locator('#assist-show-highlight').click();
   assert(await page.locator('#assist-custom-color').isDisabled(), JSON.stringify(await page.evaluate(()=>({checked:document.querySelector('#assist-show-highlight').checked,disabled:document.querySelector('#assist-preheat-controls').disabled,config:window.__popupTest.config}))));
-  const colors=await page.evaluate(()=>[getComputedStyle(document.querySelector('.preview-preheat')).backgroundColor,getComputedStyle(document.querySelector('.preview-native')).backgroundColor]); assert.equal(colors[0],colors[1]);
+  const hiddenPreview=await page.evaluate(()=>{
+    const preheat=getComputedStyle(document.querySelector('.preview-preheat'));
+    const empty=getComputedStyle(document.querySelector('.preview-empty'));
+    const ready = getComputedStyle(document.querySelector('.preview-preheat-ready'));
+    const native = getComputedStyle(document.querySelector('.preview-native'));
+    return { image:preheat.backgroundImage, color:preheat.backgroundColor, empty:empty.backgroundColor,
+      ready: ready.backgroundColor, native: native.backgroundColor };
+  });
+  assert.equal(hiddenPreview.image,'none');
+  assert.equal(hiddenPreview.color,hiddenPreview.empty,'关闭标记后预览保留空白，不能把预取画成播放器缓冲');
+  assert.equal(hiddenPreview.ready, hiddenPreview.native, '关闭标记后已进入播放器的预取恢复灰色');
   await page.locator('#assist-show-highlight').click();
   await page.locator('[data-assist-color][aria-checked="true"]').focus(); await page.keyboard.press('ArrowRight'); await page.waitForTimeout(30);
   assert.equal(await page.locator('[data-assist-color][aria-checked="true"]').count(),1);
   // 统计检查必须在主视图可见时做，否则隐藏节点的尺寸为 0，溢出检查会被空过。
   await page.locator('#settings-back').click();
+  const preloadHead = page.locator('.preload-head');
+  const preloadSwitch = preloadHead.getByRole('switch', { name: '提前加载', exact: true });
+  assert.equal(await preloadSwitch.getAttribute('aria-checked'), 'true');
+  assert.equal(await preloadHead.locator('[role="status"], .status-pill').count(), 0, '标题行仅用开关表示状态');
+  const headBox = await preloadHead.boundingBox();
+  const switchBox = await preloadSwitch.boundingBox();
+  assert(headBox && switchBox && Math.abs(headBox.x + headBox.width - switchBox.x - switchBox.width) < 1, '开关靠标题行右边缘对齐');
   await page.locator('#assist-details-toggle').click();
   const statsStable = await page.evaluate(async () => {
     const nodes = [...document.querySelectorAll('.assist-metrics dd')];
@@ -161,6 +249,19 @@ try {
   await page.evaluate(()=>window.__popupTest.emit({type:'CACHE_PROGRESS',video:window.taskB}));
   await page.waitForTimeout(850);
   assert.equal(await page.locator('[data-video-id="popup-live-b"]').count(),0,'已删除任务不能被旧消息或旧查询复活');
+  const recreated = await page.evaluate(() => {
+    const id = 'popup-recreated';
+    const deletedAt = Date.now() + 10_000;
+    const replacement = { ...window.taskB, id, title: '重新缓存的任务 B', runStartedAt: deletedAt + 1, updatedAt: deletedAt + 1 };
+    window.__popupTest.emit({ type: 'CACHE_PROGRESS', video: replacement });
+    const row = document.querySelector('[data-video-id="popup-recreated"]');
+    window.__popupTest.emit({ type: 'CACHE_DELETED', videoId: id, deletedAt });
+    window.__popupTest.emit({ type: 'CACHE_PROGRESS', video: { ...window.taskB, id, runStartedAt: deletedAt - 1, updatedAt: deletedAt + 10 } });
+    const preserved = row && row === document.querySelector('[data-video-id="popup-recreated"]') && row.textContent.includes(replacement.title);
+    window.__popupTest.emit({ type: 'CACHE_DELETED', videoId: id, deletedAt: deletedAt + 11 });
+    return preserved;
+  });
+  assert(recreated, '旧删除事件不能移除同 ID 的新世代或替换它的节点');
   await page.emulateMedia({reducedMotion:'reduce'}); await page.locator('#library-tab').click(); await save.hover();
   assert.equal(await save.locator('.download-arrow').evaluate(node=>getComputedStyle(node).animationName),'none');
   // 浏览器自检：主视图只在能力缺失时出现提示条与齿轮红点；重复检测不重建节点，恢复后收起。
@@ -227,9 +328,10 @@ try {
   assert.equal(await page.evaluate(()=>document.querySelector('#button-progress').getAnimations({subtree:true}).find(item=>item.animationName==='progress-tide')?.playState),'paused','暂停时水面应停住');
   await page.emulateMedia({reducedMotion:'reduce'});
   await page.locator('.app-shell').screenshot({path:path.join(shots,'paused.png')});
+  const callsBeforeContinue = await page.evaluate(() => window.__popupTest.calls.length);
   await page.locator('#pause-button').click();
   await page.waitForFunction(()=>document.querySelector('#cache-button').dataset.state==='downloading');
-  assert(await page.evaluate(()=>window.__popupTest.calls.includes('START_CACHE')||window.__popupTest.calls.includes('RESUME_CACHE')),'圆钮「继续」必须真正续传');
+  assert(await page.evaluate(from => window.__popupTest.calls.slice(from).includes('RESUME_CACHE'), callsBeforeContinue), '圆钮「继续」必须续传现有任务');
   await page.evaluate(async()=>{const video=window.__popupTest.videos.find(item=>item.id===window.taskA.id);const at=Date.now()+600000;Object.assign(video,{status:'paused',runStartedAt:at,updatedAt:at});window.__popupTest.emit({type:'CACHE_PAUSED',video:{...video}});await new Promise(resolve=>setTimeout(resolve,60));});
   await page.locator('#library-tab').click();
   await page.locator(`.video-item[data-video-id="${'popup-live-a'}"] .delete-button`).click();
@@ -388,9 +490,16 @@ try {
       size:[ns.fontSize,rs.fontSize],weight:[+ns.fontWeight,+rs.fontWeight],color:[ns.color,rs.color],clear:r[r.length-1].right<g.left-4};
   });
   assert(verse.lines.join()==='1,1'&&verse.gap>=-0.5&&verse.gap<3&&verse.baseline<1&&verse.size[0]===verse.size[1]&&verse.weight[0]>verse.weight[1]&&verse.color[0]!==verse.color[1]&&verse.clear,JSON.stringify(verse));
-  // 左右边距必须对称：一整句不含「 · 」的长警告曾被当成一个不换行的段，把整列撑出右侧 16px 边距。
+  await page.goto(origin + '/store/scene/popup-scene.html?auth=background-vip');
+  await page.waitForFunction(()=>globalThis.__storeScene&&document.querySelector('#quality-row').dataset.empty==='false');
+  assert(await page.locator('#account-chip').isVisible(), '后台返回的大会员信息同样有效');
+  assert(await page.locator('#auth-note').isHidden(), '已确认的大会员无需账号提示');
+  // 模拟页面接不上而后台成功取得清单。4K 仍可选时，取源位置无需占一行提示。
   await page.goto(origin + '/store/scene/popup-scene.html?auth=limited');
-  await page.waitForFunction(()=>globalThis.__storeScene&&document.querySelector('#auth-note').textContent.includes('登录状态受限'));
+  await page.waitForFunction(()=>globalThis.__storeScene&&document.querySelector('#quality-row').dataset.empty==='false');
+  assert(await page.locator('#auth-note').isHidden(), '后台取得完整画质清单时不应显示登录状态受限');
+  assert.match(await page.locator('#quality-name').textContent(), /4K/);
+  // 左右边距必须对称，且切换取源路径后弹窗不溢出。
   const gutters=await page.evaluate(()=>{
     const shell=document.querySelector('.app-shell').getBoundingClientRect(),tabs=document.querySelector('#panel-tabs').getBoundingClientRect();
     const wide=[...document.querySelectorAll('#current-view *')].filter(node=>node.getClientRects().length).map(node=>({node:node.id||node.className,right:node.getBoundingClientRect().right})).filter(item=>item.right>tabs.right+0.5);
@@ -412,7 +521,7 @@ try {
   assert.equal(bar.left,beforeTabs,'内容不能因滚动条被挤向左侧');
   await page.evaluate(()=>document.querySelector('#overflow-spacer').remove());
   await page.setViewportSize({width:360,height:900});
-  for(const fixture of ['background-popup-integration','offscreen-integration','offscreen-merge-integration']){
+  for(const fixture of ['background-popup-integration','offscreen-integration','offscreen-merge-integration','download-control-integration']){
     await page.goto(`${origin}/tests/${fixture}.html`);
     await page.waitForFunction(()=>document.querySelector('#result').textContent !== 'running',{},{timeout:45000});
     const result=JSON.parse(await page.locator('#result').textContent()); assert.equal(result.ok,true,JSON.stringify(result));

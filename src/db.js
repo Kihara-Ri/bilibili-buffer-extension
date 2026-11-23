@@ -71,6 +71,15 @@ export async function listVideos() {
   return values.sort(compareLibraryTasks);
 }
 
+/** BVID 是新旧任务主键的共同前缀。按主键范围查单个投稿，无需升级片库或扫描其他视频。 */
+export async function listVideosForBvid(bvid) {
+  const db = await openCacheDb();
+  const transaction = db.transaction(VIDEO_STORE, "readonly");
+  const prefix = bvid + ":";
+  const range = IDBKeyRange.bound(prefix, prefix + "\uffff");
+  return requestToPromise(transaction.objectStore(VIDEO_STORE).getAll(range));
+}
+
 export async function putChunk(videoId, track, index, data) {
   const db = await openCacheDb();
   const transaction = db.transaction(CHUNK_STORE, "readwrite");
@@ -96,12 +105,49 @@ export async function putChunksAndVideo(video, chunks) {
   return video;
 }
 
+function trackRange(videoId, track) {
+  return IDBKeyRange.bound([videoId, track, 0], [videoId, track, Number.MAX_SAFE_INTEGER]);
+}
+
+/**
+ * 发布写完并校验过的本地产物。终态与源分块释放同一事务提交，避免恢复时按已删除的源轨道续传。
+ * @param {object} video 完成记录
+ * @param {string[]} sourceTracks 被产物替代的轨道名
+ * @returns {Promise<object>} 已提交的记录
+ */
+export async function publishVideoAsset(video, sourceTracks) {
+  const db = await openCacheDb();
+  const transaction = db.transaction([VIDEO_STORE, CHUNK_STORE], "readwrite");
+  const chunks = transaction.objectStore(CHUNK_STORE);
+  for (const track of sourceTracks) chunks.delete(trackRange(video.id, track));
+  transaction.objectStore(VIDEO_STORE).put(video);
+  await transactionDone(transaction);
+  return video;
+}
+
 export async function getChunks(videoId, track = "media") {
   const db = await openCacheDb();
   const transaction = db.transaction(CHUNK_STORE, "readonly");
-  const range = IDBKeyRange.bound([videoId, track, 0], [videoId, track, Number.MAX_SAFE_INTEGER]);
+  const range = trackRange(videoId, track);
   const chunks = await requestToPromise(transaction.objectStore(CHUNK_STORE).getAll(range));
   return chunks.sort((a, b) => a.index - b.index);
+}
+
+/** 记录水位和分块从同一个读事务取得。直接用主键去读交叉的块，长视频跳转无须遍历源轨道。
+ * @param {string} videoId @param {string} role @param {number} start @param {number} end
+ * @param {(video: object) => object|null} select @returns {Promise<{track: object, chunks: object[]}|null>}
+ */
+export async function readCommittedChunks(videoId, role, start, end, select) {
+  const db = await openCacheDb();
+  const transaction = db.transaction([VIDEO_STORE, CHUNK_STORE], "readonly");
+  const video = await requestToPromise(transaction.objectStore(VIDEO_STORE).get(videoId));
+  const track = select(video);
+  if (!track || end > track.end) return null;
+  const first = Math.floor(start / track.chunkBytes), last = Math.floor((end - 1) / track.chunkBytes);
+  const store = transaction.objectStore(CHUNK_STORE);
+  const chunks = await Promise.all(Array.from({ length: last - first + 1 }, (_, i) =>
+    requestToPromise(store.get([videoId, role, first + i]))));
+  return { track, chunks };
 }
 
 export async function clearChunks(videoId, track = null) {
@@ -109,7 +155,7 @@ export async function clearChunks(videoId, track = null) {
   const transaction = db.transaction(CHUNK_STORE, "readwrite");
   const store = transaction.objectStore(CHUNK_STORE);
   const range = track
-    ? IDBKeyRange.bound([videoId, track, 0], [videoId, track, Number.MAX_SAFE_INTEGER])
+    ? trackRange(videoId, track)
     : IDBKeyRange.bound([videoId, ""], [videoId, "\uffff"]);
   store.delete(range);
   await transactionDone(transaction);

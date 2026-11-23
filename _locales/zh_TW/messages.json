@@ -6,5 +6,8 @@
   "extDescription": {
     "message": "提前加载 B 站 CDN 后续内容，并把最高可用画质的音视频合并缓存到本地播放，也可只缓存保留原始音质的音频。",
     "description": "Manifest description, at most 132 characters"
-  }
+  },
+  "fullBufferReady": { "message": "全片可跳转" },
+  "fullBufferFailed": { "message": "整片缓存未完成" },
+  "fullBufferPlayLocal": { "message": "播放本地视频" }
 }

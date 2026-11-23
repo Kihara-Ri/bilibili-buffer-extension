@@ -50,7 +50,8 @@ globalThis.chrome = {
           if (test.holdLists) await new Promise(() => {});
           return { ok: true, videos: structuredClone(videos) };
         }
-        case 'START_CACHE': return new Promise(resolve => starts.push({ message, resolve }));
+        case 'START_CACHE':
+        case 'RESUME_CACHE': return new Promise(resolve => starts.push({ message, resolve }));
         default: throw new Error(`未实现的消息 ${message.type}`);
       }
     }

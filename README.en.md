@@ -49,18 +49,21 @@ Watching Bilibili from abroad usually means three headaches: constant buffering,
 | | |
 | --- | --- |
 | ![Cache this video](store/assets/en/screenshot-1-cache.png) | **Keep it on your device, watch it offline**<br>Caches the best quality your account gets (AV1 / HEVC / AVC) and joins video and audio into one MP4 locally, without re-encoding. Close the video page once it starts; the extension finishes in the background and resumes after interruptions. Audio-only is also available (Hi-Res lossless first). Reopen a cached video and it switches to local playback, with danmaku and playback speed as usual. |
-| ![Prefetch while playing](store/assets/en/screenshot-2-assist.png) | **Prefetch while you watch, less buffering**<br>While playing, it fetches roughly the next 90 seconds ahead, so seeking doesn't mean waiting again; the prefetched part gets its own color on the progress bar. Slow nodes are swapped for backup addresses, and one slow sample can't drag auto quality down afterwards. |
-| ![Library](store/assets/en/screenshot-3-library.png) | **One library for everything**<br>Every cache task lives in the Library: pause and resume without opening the original video; export or delete finished ones, with undo for deletes. If a Chrome update breaks something, the "Browser check" lists exactly what. |
+| ![Prefetch while playing](store/assets/en/screenshot-2-assist.png) | **Prefetch based on your playback buffer**<br>Prefetch fills gaps ahead based on the player's buffer, playback rate and network speed. Gray marks regular player buffering. Solid orange marks extension data in the player. Orange stripes mark data waiting in cache. Slow routes can switch to backup addresses. |
+| ![Library](store/assets/en/screenshot-3-library.png) | **Manage your saved media**<br>Pause, resume, export or delete caches from the Library. Use the play button to open a completed single-file cache in Chrome while offline. You can undo deletes and check browser support after a Chrome update. |
 
 > [!IMPORTANT]
 > **Scope**: standard BV / av videos, multi-part videos and Watch Later pages. Bangumi and interactive videos are not supported yet. It cannot bypass Premium, paid or regional restrictions; everything follows what your account is actually entitled to.
+
+Adaptive buffering is the default. Use **Cache while watching** in the popup to save the current video, or select **Full speed** under **Settings → Buffering → On open** to start caching every video at its selected quality. Full speed uses the available download slots while playback is stable. The extension icon shows cache progress. Dots on the timeline mark ranges whose audio and video are both available from disk. Once the cache is complete, the player switches to local playback at the current position.
 
 <details>
 <summary>How it works (for the curious)</summary>
 
 - Prefetch: after the player's first media request, multiple Range chunks are pipelined in parallel to warm up the window ahead. When a player request is fully covered it's answered from local data; gaps are split and filled, reusing in-flight chunks.
 - Slow or failed manifest routes can fall back to compatible mirrors after checking the original media prefix and total size; healthy routes do not trigger mirror probes. Language-prefixed video and list pages are supported.
-- Progress bar coloring maps the real SIDX segment index onto the timeline instead of estimating from byte ratios.
+- The progress bar draws actual `video.buffered` ranges. It uses the SIDX segment index to position prefetch markers.
+- During steady playback, the player can accept contiguous cached video and audio early. Stripes turn solid in the extension color once both tracks are in the player buffer.
 - The in-page memory cache is capped at 128 MiB, with the window ahead capped separately at 96 MiB; turning the switch off cancels prefetching and cleans up.
 - Full caching writes chunks in IndexedDB transactions and only counts progress once chunks are contiguously committed; expired playback addresses are refreshed and tasks resume automatically in the background.
 

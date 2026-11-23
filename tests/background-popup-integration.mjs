@@ -61,7 +61,10 @@ globalThis.chrome = {
   },
   alarms: {
     onAlarm: { addListener(listener) { alarmListener = listener; } },
-    async create(name, options) { alarms.set(name, options); },
+    async create(name, options) {
+      alarms.set(name, { ...options, scheduledTime: options.when || Date.now() + options.delayInMinutes * 60_000 });
+    },
+    async get(name) { return alarms.get(name); },
     async clear(name) { return alarms.delete(name); }
   },
   action: {
@@ -107,6 +110,7 @@ const url = "https://www.bilibili.com/video/BV1Kg8t6NEmN/?spm_id_from=test&t=10"
 try {
   const first = await send({ type: "REFRESH_POPUP_DATA", tabId: 7, url });
   assert(first.ok && first.snapshot?.selectedQuality === 112, "首次合并解析失败");
+  assert(first.snapshot?.auth?.viaPageSession, "应由实际消息路径记录页面取源");
   assert(first.snapshot?.selectedCodec === "auto", "默认编码应为自动省流");
   assert(viewRequests === 1 && playurlRequests === 1, "首次打开应只请求一次视频信息和一次播放清单");
   assert(legacyViewRequests === 0, "wbi 端点可用时不应再请求会被 412 的老端点");
@@ -215,6 +219,8 @@ try {
   });
   assert(refreshedAfterClose.ok && refreshedAfterClose.playurlData?.dash, "关闭原页后未能从扩展后台刷新播放地址");
   assert(extensionPlayurlRequests === 1, "关页续传应使用扩展源播放接口");
+  assert(refreshedAfterClose.auth?.viaPageSession === false && refreshedAfterClose.auth.hasSessionCookie && refreshedAfterClose.auth.vipActive,
+    "后台取源仍可返回完整的会员画质和会员状态");
   assert(typeof alarmListener === "function", "下载看门狗没有注册");
 
   const taskA = { id: 'badge-a', tabId: 70, status: 'downloading', createdAt: 1, updatedAt: 100, downloadedBytes: 20, resumeBytes: 20, totalBytes: 100, progress: .2 };
@@ -273,7 +279,6 @@ function makeViewPayload() {
 function makePlayurlPayload() {
   return {
     code: 0,
-    __fromBiliPage: true,
     data: {
       quality: 112,
       vip_status: 1,

@@ -8,6 +8,8 @@ const VIDEO = new Uint8Array(await (await fetch("./fixtures/dash-video-2frag.mp4
 const AUDIO = new Uint8Array(await (await fetch("./fixtures/dash-audio-2frag.mp4")).arrayBuffer());
 const PROGRESSIVE = new Uint8Array(await (await fetch("./fixtures/progressive-avc-aac.mp4")).arrayBuffer());
 const broadcasts = [];
+let cdnRequests = 0;
+let sourceRequests = 0;
 let messageListener;
 const stepElement = () => document.querySelector("#step");
 function mark(label) {
@@ -28,6 +30,10 @@ globalThis.chrome = {
       }
     },
     async sendMessage(message) {
+      if (message.type === "REFRESH_DOWNLOAD_SOURCE") {
+        sourceRequests += 1;
+        return { ok: true, playurlData: makePlayurl() };
+      }
       broadcasts.push(message);
       return { ok: true };
     }
@@ -41,6 +47,7 @@ globalThis.fetch = async function (url, init = {}) {
   if (this !== undefined && this !== globalThis) throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
   const text = String(url);
   if (!text.includes("/fixtures/")) return nativeFetch(url, init);
+  cdnRequests += 1;
   const source = text.includes("progressive")
     ? PROGRESSIVE
     : text.includes("flac") || text.includes("audio")
@@ -112,6 +119,27 @@ try {
   assert(mergedChunks.length === mergedRecord.merged.chunkCount, "合并文件分块数不一致");
   verifyMergedHeader(mergedBytes.subarray(0, 4096));
 
+  // 旧版在发布 merged 并删除源轨道后被关闭，数据库留下完整产物与 downloading 状态。
+  mark("recover-finalized");
+  const requestsBeforeRecovery = cdnRequests;
+  await putVideo({ ...mergedRecord, status: "downloading" });
+  const recovered = await send({ type: "RESUME_DOWNLOAD", videoId });
+  assert(recovered.ok, "旧版已落盘的合并产物应能恢复");
+  await waitFor(async () => (await get(videoId))?.status === "complete", 5000);
+  assert(cdnRequests === requestsBeforeRecovery, "合并结果已经完整，不应再请求源轨道");
+  assert(sourceRequests === 0, "已经完整的产物应离线恢复");
+
+  const missingAsset = { ...mergedRecord, id: videoId + ":missing", status: "downloading" };
+  created.push(missingAsset.id);
+  await putVideo(missingAsset);
+  const missing = await send({ type: "RESUME_DOWNLOAD", videoId: missingAsset.id });
+  assert(missing.ok && missing.started && missing.video.resumeBytes === 0, "缺失产物必须开始新下载");
+  const rebuilt = await waitFor(async () => {
+    const item = await get(missingAsset.id);
+    return item?.status === "complete" ? item : null;
+  }, 5000);
+  assert(sourceRequests === 1 && rebuilt.merged.totalBytes === mergedRecord.merged.totalBytes, "缺失产物没有通过新清单重建");
+
   const topLevel = listBoxes(mergedBytes).map((box) => box.type);
   assert(topLevel[0] === "ftyp" && topLevel[1] === "moov", "合并文件缺少初始化段");
   const fragmentTracks = listBoxes(mergedBytes)
@@ -132,7 +160,7 @@ try {
   element.preload = "auto";
   document.body.append(element);
   const playbackResult = await probePlayback(element, playback.playbackUrl);
-  assert(playbackResult.decodedVideoFrames > 0, `合并文件没有解出视频帧：${JSON.stringify(playbackResult)}`);
+  assert(!playbackResult.error && playbackResult.decodedVideoFrames > 0, `合并文件没有解出视频帧：${JSON.stringify(playbackResult)}`);
   assert(playbackResult.decodedAudioBytes > 0, `合并文件没有解出音频：${JSON.stringify(playbackResult)}`);
 
   // 页面自动播放会先取一次 URL；片库首次下载和再次下载都将命中同一内存缓存。
@@ -310,8 +338,8 @@ try {
   audioElement.muted = true;
   audioElement.preload = "auto";
   document.body.append(audioElement);
-  const audioPlaybackResult = await probePlayback(audioElement, extractedPlayback.playbackUrl);
-  assert(audioPlaybackResult.decodedAudioBytes > 0, `提取出的音轨没有解出音频：${JSON.stringify(audioPlaybackResult)}`);
+  const audioPlaybackResult = await probePlayback(audioElement, extractedPlayback.playbackUrl, { expectVideo: false });
+  assert(!audioPlaybackResult.error && audioPlaybackResult.decodedAudioBytes > 0, `提取出的音轨没有解出音频：${JSON.stringify(audioPlaybackResult)}`);
   assert(audioPlaybackResult.decodedVideoFrames === 0, "提取出的音轨不应包含视频帧");
 
   document.querySelector("#result").textContent = JSON.stringify({
@@ -360,30 +388,34 @@ function makePlayurl() {
   };
 }
 
-function probePlayback(element, url) {
-  return new Promise((resolve) => {
-    const state = { duration: 0, currentTime: 0, decodedVideoFrames: 0, decodedAudioBytes: 0, error: "" };
-    element.addEventListener("error", () => {
-      state.error = element.error ? String(element.error.message) : "媒体加载失败";
-    });
-    element.addEventListener("loadedmetadata", () => {
-      state.duration = element.duration;
-    });
-    element.src = url;
-    element.play().catch((error) => {
-      state.error = String(error.message);
-    });
-    setTimeout(() => {
-      state.currentTime = Number(element.currentTime.toFixed(2));
-      state.decodedVideoFrames = element.webkitDecodedFrameCount || 0;
-      state.decodedAudioBytes = element.webkitAudioDecodedByteCount || 0;
-      element.pause();
-      element.removeAttribute("src");
-      element.load();
-      element.remove();
-      resolve(state);
-    }, 2500);
-  });
+async function probePlayback(element, url, { expectVideo = true } = {}) {
+  let startError, started = false;
+  let error = "";
+  element.src = url;
+  void element.play().then(() => { started = true; }, cause => { startError = cause; });
+  try {
+    // 解码器启动时间受浏览器负载影响，等到确实出帧再清理元素。
+    await waitFor(() => {
+      if (startError) throw startError;
+      if (element.error) throw new Error(element.error.message || "媒体加载失败");
+      return started && element.webkitAudioDecodedByteCount > 0 &&
+        (!expectVideo || element.webkitDecodedFrameCount > 0);
+    }, 10000);
+  } catch (failure) {
+    error = String(failure.message);
+  }
+  const state = {
+    duration: element.duration || 0,
+    currentTime: Number(element.currentTime.toFixed(2)),
+    decodedVideoFrames: element.webkitDecodedFrameCount || 0,
+    decodedAudioBytes: element.webkitAudioDecodedByteCount || 0,
+    error
+  };
+  element.pause();
+  element.removeAttribute("src");
+  element.load();
+  element.remove();
+  return state;
 }
 
 async function get(videoId) {
