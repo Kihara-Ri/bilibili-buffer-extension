@@ -44,6 +44,7 @@ import { ASSIST_DEFAULTS, sanitizeAssistConfig } from "./assist-config.js";
 import { createSourceRepository, createSourceService, sourceRangeScope } from "./source-range-store.js";
 import { collectHealthChecks } from "./health-check.js";
 import { createMcpNativeBridge } from "./mcp-native-bridge.js";
+import { isTemporaryCache, TEMPORARY_CACHE_ALARM } from "./temporary-cache.js";
 
 // 离线已下载的源范围镜像：只接收逐字节校验过的 CDN 范围，供播放侧按「路径 + 总长」复用。
 const sourceRanges = createSourceService({
@@ -77,6 +78,8 @@ const HEALTH_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 let creatingOffscreen;
 let restoringDownloads;
 let watchdogQueue = Promise.resolve();
+let temporaryCacheQueue = Promise.resolve();
+let temporaryPageTabs = new Set();
 let popupSnapshotQueue = Promise.resolve();
 let badgeQueue = Promise.resolve();
 const popupSnapshotMemory = new Map();
@@ -141,7 +144,9 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm?.name === DOWNLOAD_WATCHDOG_ALARM) void restoreActiveDownloads();
+  if (alarm?.name === TEMPORARY_CACHE_ALARM) void syncTemporaryCaches();
 });
+chrome.runtime.onStartup?.addListener(() => { void restoreActiveDownloads(); });
 chrome.cookies.onChanged.addListener((changeInfo) => {
   const cookie = changeInfo?.cookie;
   if (cookie?.name === "SESSDATA" && String(cookie.domain || "").endsWith("bilibili.com")) {
@@ -149,7 +154,16 @@ chrome.cookies.onChanged.addListener((changeInfo) => {
   }
 });
 // 监听器在 SW 启动时同步注册。Offscreen 保存使用者，唤醒后的首个关闭或下载事件即可释放。
-chrome.tabs?.onRemoved?.addListener(tabId => { void updateCachePlaybackUse("closeTab", { tabId }); });
+function onCacheTabRemoved(tabId) {
+  void updateCachePlaybackUse("closeTab", { tabId }).then(syncTemporaryCaches);
+}
+chrome.tabs?.onRemoved?.addListener(onCacheTabRemoved);
+chrome.tabs?.onReplaced?.addListener((_, removedTabId) => onCacheTabRemoved(removedTabId));
+chrome.tabs?.onUpdated?.addListener((tabId, change, tab) => {
+  // 同文档切分 P 一般只更新 URL。导航到无权限的站点可能读不到新 URL，由 complete 补一次。
+  if ((change.url || change.status === "complete") &&
+      (temporaryPageTabs.has(tabId) || parseBiliVideoUrl(change.url || tab.url).supported)) void syncTemporaryCaches();
+});
 chrome.downloads?.onChanged?.addListener(({ id, state }) => {
   if (["complete", "interrupted"].includes(state?.current)) void updateCachePlaybackUse("endDownload", { downloadId: id });
 });
@@ -254,6 +268,9 @@ async function handleMessage(message, sender) {
         sourceRangeScope(sender, { runtimeId: chrome.runtime.id }) === "reader" ? sender.tab?.id : undefined);
     case "RELEASE_CACHE_PLAYBACK":
       if (Number.isInteger(sender.tab?.id)) await updateCachePlaybackUse("release", { leaseId: message.leaseId, tabId: sender.tab.id });
+      return {};
+    case "TEMPORARY_CACHE_USE_ENDED":
+      if (!sender.tab && sender.url === chrome.runtime.getURL(OFFSCREEN_PATH)) void syncTemporaryCaches();
       return {};
     case "OPEN_CACHED_VIDEO":
       return openCachedVideo(message.videoId);
@@ -455,8 +472,8 @@ async function startAutomaticCache(message, sender) {
   if (!enabled(await getAssistConfig())) return { skipped: true };
   await updater.assertUnlocked();
   const pageInfo = await getPageInfo(sender.url);
-  return startCacheForPage(pageInfo, {
-    tabId, quality, automatic: true,
+  const result = await startCacheForPage(pageInfo, {
+    tabId, quality, automatic: true, cacheOrigin: onDemand ? "manual" : "full-speed",
     // 取 CID 和查库期间可能切分 P、换画质或关闭自动缓冲。交给 Offscreen 前复核发起文档。
     canStart: async () => {
       const [tab, config, player] = await Promise.all([
@@ -468,9 +485,11 @@ async function startAutomaticCache(message, sender) {
       return tab?.active && sameVideoPage(tab.url, sender.url) && enabled(config) && player?.confirmed === true ? player : null;
     }
   });
+  if (!onDemand && !result.skipped) void syncTemporaryCaches();
+  return result;
 }
 
-async function startCacheForPage(pageInfo, { tabId, quality, codec, mode, automatic = false, canStart }) {
+async function startCacheForPage(pageInfo, { tabId, quality, codec, mode, automatic = false, cacheOrigin = "manual", canStart }) {
   if (!pageInfo.supported) throw new Error(pageInfo.message);
   const selectedQuality = normalizeQualityId(quality);
   const requestedQuality = selectedQuality || AUTO_QUALITY;
@@ -487,7 +506,7 @@ async function startCacheForPage(pageInfo, { tabId, quality, codec, mode, automa
     ? makeAudioCacheVideoId(pageId)
     : makeQualityVideoId(pageId, requestedQuality, requestedCodec));
   const video = {
-    ...pageInfo, id, pageId, tabId, requestedQuality, requestedCodec, cacheMode, automatic,
+    ...pageInfo, id, pageId, tabId, requestedQuality, requestedCodec, cacheMode, automatic, cacheOrigin,
     requestedQualityExplicit: selectedQuality > 0
   };
   if (canStart) {
@@ -617,7 +636,7 @@ async function syncPlaybackPressure() {
 
 async function sendToOffscreen(message) {
   await ensureOffscreenDocument();
-  if (["START_DOWNLOAD", "RESUME_DOWNLOAD", "RECOVER_DOWNLOADS", "GET_PLAYBACK_URL", "DELETE_VIDEO", "PAUSE_DOWNLOAD"].includes(message.type)) {
+  if (["START_DOWNLOAD", "RESUME_DOWNLOAD", "RECOVER_DOWNLOADS", "GET_PLAYBACK_URL", "DELETE_VIDEO", "PAUSE_DOWNLOAD", "SYNC_TEMPORARY_CACHES"].includes(message.type)) {
     await updater.assertUnlocked();
   }
   return chrome.runtime.sendMessage({ ...message, target: "offscreen" });
@@ -665,6 +684,36 @@ function syncDownloadWatchdog() {
     }
   }).catch(error => console.warn("[海内存知] 无法同步下载看门狗", toPublicError(error)));
   return watchdogQueue;
+}
+
+function syncTemporaryCaches() {
+  if (!chrome.tabs?.query) return;
+  temporaryCacheQueue = temporaryCacheQueue.then(async () => {
+    let nextExpiry;
+    const videoTabs = new Set();
+    if ((await listVideos()).some(isTemporaryCache)) {
+      // 直接从浏览器读全部标签；SW 休眠期间无需保活或保存标签计数。
+      const tabs = await chrome.tabs.query({ url: BILI_PLAYBACK_TABS });
+      const pages = [];
+      for (const tab of tabs) {
+        const page = parseBiliVideoUrl(tab.pendingUrl || tab.url);
+        if (!page.supported) continue;
+        videoTabs.add(tab.id);
+        pages.push(page);
+      }
+      ({ nextExpiry } = unwrap(await sendToOffscreen({ type: "SYNC_TEMPORARY_CACHES", pages })));
+    }
+    // 仅用于减少无关页面的 IndexedDB 查询。下一轮保留判定仍以浏览器快照为准。
+    temporaryPageTabs = videoTabs;
+    if (!Number.isFinite(nextExpiry)) await chrome.alarms.clear(TEMPORARY_CACHE_ALARM);
+    else if ((await chrome.alarms.get(TEMPORARY_CACHE_ALARM))?.scheduledTime !== nextExpiry) {
+      await chrome.alarms.create(TEMPORARY_CACHE_ALARM, { when: nextExpiry });
+    }
+  }).catch(async () => {
+    // 更新锁或浏览器暂时不可查询时保留原记录。重试用持久闹钟，避免开着 SW 等待。
+    await chrome.alarms.create(TEMPORARY_CACHE_ALARM, { delayInMinutes: 1 }).catch(() => {});
+  });
+  return temporaryCacheQueue;
 }
 
 function unwrap(result) {
@@ -953,6 +1002,7 @@ async function restoreActiveDownloads() {
 async function restoreActiveDownloadsNow() {
   try {
     if (await updater.isLocked()) return;
+    await syncTemporaryCaches();
     await syncDownloadWatchdog();
     if ((await listVideos()).some(needsDownloadRecovery)) {
       unwrap(await sendToOffscreen({ type: "RECOVER_DOWNLOADS" }));

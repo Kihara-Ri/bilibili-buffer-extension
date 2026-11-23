@@ -1,5 +1,6 @@
 import { isAudioOnlyCache, parseBiliVideoUrl } from "./utils.js";
 import { readCommittedChunks } from "./db.js";
+import { isExpiredCache } from "./temporary-cache.js";
 
 // 有些 4K 的单个 SIDX 分段超过 16 MiB。单次读保持低于全局 32 MiB，
 // 大画轨在途时给同一次跳转的音轨留出额度。
@@ -32,7 +33,7 @@ function matchesPage(video, page) {
  * @param {object} video @param {object} page @param {string} partition @returns {object[]}
  */
 export function committedSources(video, page, partition) {
-  if (!video || !partition || video.sourcePartition !== partition || video.merged || video.extractedFrom ||
+  if (!video || isExpiredCache(video) || !partition || video.sourcePartition !== partition || video.merged || video.extractedFrom ||
       isAudioOnlyCache(video) || !matchesPage(video, page) ||
       !positive(video.createdAt) || !positive(video.runStartedAt)) return [];
   const descriptors = [];

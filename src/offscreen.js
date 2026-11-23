@@ -55,6 +55,7 @@ import {
 } from "./range-downloader.js";
 import { createSourceMirror } from "./source-mirror.js";
 import { createSourceRepository, createSourceWriter, sourceRangeScope } from "./source-range-store.js";
+import { isCachePageOpen, isExpiredCache, isTemporaryCache, TEMPORARY_CACHE_TTL } from "./temporary-cache.js";
 
 // 镜像直写共享的 IndexedDB（原因见 createSourceWriter）；账户分区仍由后台用 cookies API 计算。
 const sourceRepository = typeof indexedDB === "undefined" ? null : createSourceRepository();
@@ -71,7 +72,6 @@ const requestSourcePartition = async (type = "SOURCE_RANGE") => {
   }
 };
 /** 每个下载任务一个写入器：账户分区按任务取一次。 */
-const createMirrorWriter = () => createSourceWriter({ repository: sourceRepository, partition: requestSourcePartition });
 
 import { isDownloadRetryDue, isRecoverableDownloadError, makeDownloadRetryState, needsDownloadRecovery } from "./download-retry.js";
 import { startDevReloadPolling } from "./dev-reload.js";
@@ -96,7 +96,11 @@ const PLAYBACK_OPEN_TIMEOUT = 5 * 60_000;
 const automaticReservations = new Map();
 let automaticAdmission = Promise.resolve();
 const downloadBudget = createDownloadBudget();
-const createDownloadMirror = () => createSourceMirror({ send: createMirrorWriter(), reserve: downloadBudget.tryReserveBytes });
+const createDownloadMirror = video => createSourceMirror({
+  send: createSourceWriter({ repository: sourceRepository, partition: requestSourcePartition,
+    videoId: isTemporaryCache(video) ? video.id : undefined }),
+  reserve: downloadBudget.tryReserveBytes
+});
 const committedSourceReader = createCommittedSourceReader();
 let latestTaskStamp = 0;
 
@@ -156,7 +160,7 @@ async function handleMessage(message, sender) {
     const paused = await Promise.all(ids.map(id => runTaskCommand(id, () => pauseDownload(id, { forUpdate: true }))));
     return { pausedIds: paused.filter(result => result.paused).map(result => result.video.id) };
   }
-  if (["START_DOWNLOAD", "RESUME_DOWNLOAD", "RECOVER_DOWNLOADS", "GET_PLAYBACK_URL", "DELETE_VIDEO", "PAUSE_DOWNLOAD"].includes(message.type)) {
+  if (["START_DOWNLOAD", "RESUME_DOWNLOAD", "RECOVER_DOWNLOADS", "GET_PLAYBACK_URL", "DELETE_VIDEO", "PAUSE_DOWNLOAD", "SYNC_TEMPORARY_CACHES"].includes(message.type)) {
     return updateGate.run(() => handleCacheCommand(message));
   }
   return handleCacheCommand(message);
@@ -172,6 +176,8 @@ async function handleCacheCommand(message) {
       }));
     case "RECOVER_DOWNLOADS":
       return recoverDownloads();
+    case "SYNC_TEMPORARY_CACHES":
+      return syncTemporaryCaches(message.pages);
     case "GET_ACTIVE_DOWNLOADS":
       return { videoIds: [...activeDownloads.keys()] };
     case "LIST_VIDEOS":
@@ -182,11 +188,15 @@ async function handleCacheCommand(message) {
       // 旧双轨读取可能触发合并并写库，要与同任务的删除互斥。
       return runTaskCommand(videoId, async () => {
         const result = await createPlaybackUrl(videoId);
+        const temporary = isTemporaryCache(result.video);
         if (message.leaseId) {
-          beginPlaybackUse(message.leaseId, videoId, message.tabId);
+          beginPlaybackUse(message.leaseId, videoId, message.tabId, temporary);
         } else {
           // 旧的直接 URL 调用没有关闭事件，用有限租约维持同一地址供近期复用。
-          beginPlaybackUse(`raw:${videoId}`, videoId);
+          beginPlaybackUse(`raw:${videoId}`, videoId, undefined, temporary);
+        }
+        if (temporary && result.video.cacheExpiresAt) {
+          result.video = await putVideo({ ...result.video, cacheExpiresAt: null });
         }
         return result;
       });
@@ -199,10 +209,10 @@ async function handleCacheCommand(message) {
   }
 }
 
-function beginPlaybackUse(leaseId, videoId, tabId) {
+function beginPlaybackUse(leaseId, videoId, tabId, temporary) {
   const previous = playbackUses.get(leaseId);
   clearTimeout(previous?.timer);
-  const use = { videoId, tabId, downloads: new Set(), opening: !Number.isInteger(tabId) };
+  const use = { videoId, tabId, temporary, downloads: new Set(), opening: !Number.isInteger(tabId) };
   if (use.opening) use.timer = setTimeout(() => finishOpening(leaseId, use), PLAYBACK_OPEN_TIMEOUT);
   playbackUses.set(leaseId, use);
 }
@@ -215,7 +225,10 @@ function hasPlaybackUse(videoId) {
 function releasePlaybackUse(leaseId, use) {
   clearTimeout(use.timer);
   playbackUses.delete(leaseId);
-  if (!hasPlaybackUse(use.videoId)) revokePlayback(use.videoId);
+  if (!hasPlaybackUse(use.videoId)) {
+    revokePlayback(use.videoId);
+    if (use.temporary) chrome.runtime.sendMessage({ target: "background", type: "TEMPORARY_CACHE_USE_ENDED" }).catch(() => {});
+  }
 }
 
 function finishOpening(leaseId, use) {
@@ -248,7 +261,8 @@ function updatePlaybackUse({ action, leaseId, tabId, downloadId }) {
 
 async function createPlaybackUrl(videoId) {
   let video = await getVideo(videoId);
-  if (!video || video.status !== "complete" || !hasCompleteByteCount(video)) {
+  if (!video || (isExpiredCache(video) && !hasPlaybackUse(videoId)) ||
+      video.status !== "complete" || !hasCompleteByteCount(video)) {
     throw new Error(t("err.notComplete"));
   }
 
@@ -369,9 +383,25 @@ async function startDownload(videoId, { request, recovery, createdAt, tabId, aft
     return { started: false, video: existing || null };
   }
   if ((!existing && !request) || !matchesTaskCreation(existing, createdAt)) throw new Error(t("err.taskGone"));
+  const keepManually = request && request.automatic !== true;
+  if (isExpiredCache(existing) && !keepManually && !hasPlaybackUse(videoId)) {
+    if (!request) return { started: false, video: existing };
+    await deleteVideo(videoId, Number(existing.createdAt) || 0);
+    existing = null;
+  }
+  if (keepManually && existing?.automatic) {
+    // 下载快照会覆盖旧元数据。先结束该世代再转手动，从同一确认水位继续，完成的文件直接保留。
+    await stopDownload(videoId);
+    existing = await putVideo({ ...await getVideo(videoId), automatic: false, cacheOrigin: "manual",
+      cacheExpiresAt: null, pausedByDeparture: false });
+  }
+  if (isTemporaryCache(existing) && existing.cacheExpiresAt > 0 && !request) {
+    return { started: false, video: existing };
+  }
   if (activeDownloads.has(videoId)) return { started: false, video: existing };
   if (request?.automatic && existing &&
-      (["paused", "error"].includes(existing.status) || !isDownloadRetryDue(existing))) return { started: false, video: existing };
+      ((existing.status === "paused" && !existing.pausedByDeparture) || existing.status === "error" ||
+      !isDownloadRetryDue(existing))) return { started: false, video: existing };
   if (existing?.status === "complete" && hasCompleteByteCount(existing)) {
     return { started: false, alreadyComplete: true, video: existing };
   }
@@ -396,6 +426,10 @@ async function startDownload(videoId, { request, recovery, createdAt, tabId, aft
     ...safe,
     remux: existing?.remux || null,
     automatic: existing ? existing.automatic === true && (!request || request.automatic === true) : request?.automatic === true,
+    // 旧条目的 automatic 也可能由手动快捷键产生。复用旧条目时不得补记为进页自动。
+    cacheOrigin: existing ? existing.cacheOrigin : request?.cacheOrigin,
+    cacheExpiresAt: null,
+    pausedByDeparture: false,
     // 从当前视频页继续时，用该页的会话取源，并在完成后通知该页接管播放。
     tabId: Number.isInteger(tabId) ? tabId : safe.tabId,
     // 旧合并记录已核实缺块。保留视频身份，断点和旧轨道地址按无可续数据处理。
@@ -431,6 +465,39 @@ async function recoverDownloads() {
   return {};
 }
 
+/** 浏览器标签快照由 SW 提供；Offscreen 按任务 ID 串行变更保留期限、停下载与删除。 */
+async function syncTemporaryCaches(pages) {
+  if (!Array.isArray(pages)) return {};
+  const observedAt = Date.now();
+  const rows = (await listVideos()).filter(isTemporaryCache);
+  const deadlines = await Promise.all(rows.map(({ id }) => runTaskCommand(id, async () => {
+    let video = await getVideo(id);
+    if (!isTemporaryCache(video)) return 0;
+    const held = hasPlaybackUse(id);
+    if (!held && isExpiredCache(video, observedAt)) {
+      await deleteVideo(id, Number(video.createdAt) || 0);
+      return 0;
+    }
+    if (held || pages.some(page => isCachePageOpen(video, page))) {
+      if (video.cacheExpiresAt) await putVideo({ ...video, cacheExpiresAt: null });
+      return 0;
+    }
+    if (video.cacheExpiresAt > 0) return video.cacheExpiresAt;
+    await stopDownload(id);
+    video = await getVideo(id);
+    const cacheExpiresAt = observedAt + TEMPORARY_CACHE_TTL;
+    const departed = video.status === "downloading";
+    const next = await putVideo({
+      ...(departed ? pausedRecord(video, false) : video), cacheExpiresAt,
+      pausedByDeparture: departed || video.pausedByDeparture === true
+    });
+    if (departed) broadcastProgress(next, "CACHE_PAUSED");
+    return cacheExpiresAt;
+  })));
+  const nextExpiry = deadlines.reduce((earliest, deadline) => deadline > 0 ? Math.min(earliest, deadline) : earliest, Infinity);
+  return { nextExpiry: Number.isFinite(nextExpiry) ? nextExpiry : null };
+}
+
 async function stopDownload(videoId, deleted = false) {
   const job = activeDownloads.get(videoId);
   if (!job) return;
@@ -446,15 +513,19 @@ async function pauseDownload(videoId, { createdAt, forUpdate = false } = {}) {
   const video = await getVideo(videoId);
   if (!video || video.status === "complete") return { paused: false, video: video || null };
   if (forUpdate && video.status !== "downloading") return { paused: false, video };
-  if (video.status === "paused" && !video.pausedByUpdate) return { paused: true, video };
-  const stamp = nextTaskStamp(video);
-  const paused = {
-    ...video, status: "paused", pausedByUpdate: forUpdate, stage: "", speed: 0, error: "",
-    nextRetryAt: 0, retryDelayMs: 0, runStartedAt: stamp, updatedAt: stamp
-  };
+  if (video.status === "paused" && !video.pausedByUpdate && !video.pausedByDeparture) return { paused: true, video };
+  const paused = pausedRecord({ ...video, pausedByDeparture: false }, forUpdate);
   await putVideo(paused);
   broadcastProgress(paused, "CACHE_PAUSED");
   return { paused: true, video: paused };
+}
+
+function pausedRecord(video, forUpdate) {
+  const stamp = nextTaskStamp(video);
+  return {
+    ...video, status: "paused", pausedByUpdate: forUpdate, stage: "", speed: 0, error: "",
+    nextRetryAt: 0, retryDelayMs: 0, runStartedAt: stamp, updatedAt: stamp
+  };
 }
 
 function toDashTrack(name, representation) {
@@ -634,10 +705,12 @@ class AutomaticCacheError extends Error {}
 
 /** 只为已知真实大小的自动任务预留。与其他任务共用 Offscreen，但手动片库有独立的空间策略。 */
 function reserveAutomaticBytes(video, bytes, signal) {
-  if (!video.automatic) return;
+  if (!isTemporaryCache(video)) return;
   if (!Number.isSafeInteger(bytes) || bytes <= 0) throw new AutomaticCacheError(t("err.autoCacheUnknownSize"));
   if (bytes > AUTOMATIC_CACHE_BYTES) throw new AutomaticCacheError(t("err.autoCacheSpace"));
-  const canEvict = row => row?.automatic && ["complete", "error"].includes(row.status) &&
+  const evictable = row => isTemporaryCache(row) && row.cacheExpiresAt > 0 &&
+    (["complete", "error"].includes(row.status) || row.pausedByDeparture === true);
+  const canEvict = row => evictable(row) &&
     !activeDownloads.has(row.id) && !taskCommands.has(row.id) && !hasPlaybackUse(row.id);
   const sizeOf = row => Math.max(
     Math.max(committedBytesOf(row), row.merged?.totalBytes || 0, row.remux?.sourceBytes || 0) + (row.remux?.bytes || 0),
@@ -645,11 +718,11 @@ function reserveAutomaticBytes(video, bytes, signal) {
   );
   const admission = automaticAdmission.then(async () => {
     signal?.throwIfAborted();
-    const rows = (await listVideos()).filter(row => row.automatic && row.id !== video.id);
+    const rows = (await listVideos()).filter(row => isTemporaryCache(row) && row.id !== video.id);
     let excess = bytes + rows.reduce((sum, row) => sum + sizeOf(row), 0) - AUTOMATIC_CACHE_BYTES;
     if (excess > 0) {
       const candidates = rows.filter(row => canEvict(row) && sizeOf(row) > 0)
-        .sort((left, right) => (left.completedAt || left.createdAt) - (right.completedAt || right.createdAt));
+        .sort((left, right) => left.cacheExpiresAt - right.cacheExpiresAt);
       if (candidates.reduce((sum, row) => sum + sizeOf(row), 0) < excess) throw new AutomaticCacheError(t("err.autoCacheSpace"));
       for (const row of candidates) {
         signal?.throwIfAborted();
@@ -657,7 +730,7 @@ function reserveAutomaticBytes(video, bytes, signal) {
         if (!canEvict(row)) continue;
         excess -= await runTaskCommand(row.id, async () => {
           const current = await getVideo(row.id);
-          if (!matchesTaskCreation(current, Number(row.createdAt) || 0) || !current.automatic || !["complete", "error"].includes(current.status)) return 0;
+          if (!matchesTaskCreation(current, Number(row.createdAt) || 0) || !evictable(current) || hasPlaybackUse(row.id)) return 0;
           signal?.throwIfAborted();
           return (await deleteVideo(row.id, Number(row.createdAt) || 0)).deleted ? sizeOf(current) : 0;
         });
@@ -914,7 +987,7 @@ async function downloadProgressiveSource(video, existing, source, job) {
   }
 
   await reserveAutomaticBytes(meta, ranking.totalBytes, job.controller.signal);
-  const mirror = createDownloadMirror();
+  const mirror = createDownloadMirror(meta);
   const coordinator = createDownloadCoordinator({ ...meta, totalBytes: ranking.totalBytes }, {
     media: { resumeBytes, chunkCount: resumeChunks, totalBytes: ranking.totalBytes, etag }
   });
@@ -940,6 +1013,8 @@ async function downloadProgressiveSource(video, existing, source, job) {
     await coordinator.persistSafeState();
     await coordinator.stop();
     throw error;
+  } finally {
+    if (isTemporaryCache(meta)) await mirror.drain();
   }
 
   meta = coordinator.snapshot({ durableOnly: true, speed: 0 });
@@ -1395,7 +1470,7 @@ async function downloadTrackSource(video, existing, source, job) {
   else job.controller.signal.addEventListener("abort", abortFromJob, { once: true });
   let primaryError = null;
   // 每个下载任务共享一份镜像配额与熔断状态；轨道各自的回调都指向同一个 mirror。
-  const mirror = createDownloadMirror();
+  const mirror = createDownloadMirror(meta);
 
   const rankings = sourceEntries.map(([trackName, sourceTrack]) => {
     const state = coordinator.getState(trackName);
@@ -1409,7 +1484,7 @@ async function downloadTrackSource(video, existing, source, job) {
     });
   });
   // 两条轨道合起来有足够空间才开始正文，避免先挤出旧片又因另一轨超额而中止。
-  const admission = video.automatic ? Promise.all(rankings).then(results =>
+  const admission = isTemporaryCache(video) ? Promise.all(rankings).then(results =>
     reserveAutomaticBytes(meta, results.reduce((sum, rank) => sum + rank.totalBytes, 0), localController.signal)
   ) : null;
   const tasks = sourceEntries.map(async ([trackName], index) => {
@@ -1444,6 +1519,7 @@ async function downloadTrackSource(video, existing, source, job) {
 
   const results = await Promise.allSettled(tasks);
   await Promise.allSettled(rankings);
+  if (isTemporaryCache(meta)) await mirror.drain();
   job.controller.signal.removeEventListener("abort", abortFromJob);
   const failure = primaryError || results.find((result) => result.status === "rejected")?.reason;
   if (failure) await coordinator.persistSafeState();
@@ -1599,7 +1675,7 @@ async function fetchCandidate(url, meta, job) {
         }
         totalBytes = contentLength;
       }
-      if (meta.automatic && automaticReservations.get(meta.id) !== totalBytes) {
+      if (isTemporaryCache(meta) && automaticReservations.get(meta.id) !== totalBytes) {
         await reserveAutomaticBytes(meta, totalBytes, signal);
       }
 
@@ -1612,7 +1688,7 @@ async function fetchCandidate(url, meta, job) {
           const { done, value } = await reader.read();
           signal.throwIfAborted();
           if (done) break;
-          if (meta.automatic && downloadedBytes + value.byteLength > totalBytes) throw new Error(t("err.videoSizeMismatch"));
+          if (isTemporaryCache(meta) && downloadedBytes + value.byteLength > totalBytes) throw new Error(t("err.videoSizeMismatch"));
           // Chrome 返回的读取片段大小不固定。复制进已预约的固定窗口后再开始下一次读取。
           for (let offset = 0; offset < value.byteLength;) {
             const count = Math.min(CHUNK_SIZE - pendingBytes, value.byteLength - offset);
@@ -2046,6 +2122,7 @@ async function deleteVideo(videoId, createdAt) {
   if (Number.isFinite(createdAt) && !matchesTaskCreation(await getVideo(videoId), createdAt)) return { deleted: false };
   await stopDownload(videoId, true);
   const deletedVideo = await getVideo(videoId);
+  if (isTemporaryCache(deletedVideo)) await sourceRepository?.deleteForVideo(videoId);
   await deleteVideoData(videoId);
   revokePlayback(videoId);
   // 删除通知晚于重新缓存抵达时，弹窗仍可按控制端的世代判断这次删除的范围。

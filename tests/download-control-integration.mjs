@@ -1,5 +1,6 @@
 import { getChunks, getVideo, putChunk, putVideo } from "../src/db.js";
 import { DOWNLOAD_WATCHDOG_ALARM } from "../src/download-retry.js";
+import { createSourceRepository, createSourceWriter } from "../src/source-range-store.js";
 
 // 使用真实 SW/Offscreen 入口和浏览器 IndexedDB，由夹具暂停播放清单的返回。
 const listeners = [];
@@ -8,6 +9,9 @@ const alarms = new Map();
 const sources = new Map();
 const MiB = 1024 * 1024;
 const cacheCapacity = 8 * 1024 * MiB;
+const expiryAlarm = "bili-buffer-temporary-cache-expiry-v1";
+const fullSpeed = { automatic: true, cacheOrigin: "full-speed" };
+const departedFullSpeed = { ...fullSpeed, cacheExpiresAt: Date.now() + 30 * 60_000 };
 const tabRemoved = [];
 const downloadChanged = [];
 const tabs = new Map();
@@ -53,7 +57,8 @@ globalThis.chrome = {
     async get(id) {
       if (!tabs.has(id)) throw new Error("Tab closed");
       return tabs.get(id);
-    }
+    },
+    async query() { return [...tabs.values()]; }
   },
   downloads: {
     onChanged: { addListener(listener) { downloadChanged.push(listener); } },
@@ -348,26 +353,28 @@ await scenario("进页自动启动尊重暂停和看门狗的退避时间", asyn
 await scenario("自动完整缓存的逻辑空间只回收较早的自动缓存", async () => {
   const completed = finished(cacheCapacity);
   const manual = await seed(919, completed);
-  const automatic = await seed(920, { ...completed, automatic: true });
+  const automatic = await seed(920, { ...completed, ...departedFullSpeed });
+  const legacy = await seed(944, { ...completed, automatic: true });
   const next = await seed(921);
   await send("DELETE_VIDEO", next.video.id);
   next.source.release.resolve();
   try {
-    const result = await dispatch({ target: "offscreen", type: "START_DOWNLOAD", video: { ...next.video, automatic: true } });
+    const result = await dispatch({ target: "offscreen", type: "START_DOWNLOAD", video: { ...next.video, ...fullSpeed } });
     assert(result.started && result.video.automatic, "自动任务没有归类");
     await until(async () => (await getVideo(next.video.id))?.status === "complete", "自动缓存未完成");
     assert(!(await getVideo(automatic.video.id)) && (await getVideo(manual.video.id))?.status === "complete", "回收误伤手动缓存或遗漏旧自动缓存");
+    assert((await getVideo(legacy.video.id))?.status === "complete", "自动空间不足也不能删除来源不明的旧缓存");
   } finally {
-    await Promise.all([manual, automatic, next].map(({ video }) => send("DELETE_VIDEO", video.id)));
+    await Promise.all([manual, automatic, legacy, next].map(({ video }) => send("DELETE_VIDEO", video.id)));
   }
 });
 
 await scenario("本地播放和导出分别持有保护，最后一个消费者关闭或取消才释放", async () => {
-  const playing = await seed(922, { ...finished(8), automatic: true, chunkCount: 1 });
-  const paused = await seed(923, { ...finished(cacheCapacity - 16), status: "paused", automatic: true });
+  const playing = await seed(922, { ...finished(8), ...fullSpeed, chunkCount: 1 });
+  const paused = await seed(923, { ...finished(cacheCapacity - 16), status: "paused", ...fullSpeed });
   await putChunk(playing.video.id, "media", 0, new Blob([new Uint8Array(8)]));
   const manual = await seed(924, finished(8));
-  const old = await seed(932, { ...finished(8), automatic: true, completedAt: Date.now() - 60_000 });
+  const old = await seed(932, { ...finished(8), ...departedFullSpeed, completedAt: Date.now() - 60_000 });
   const admitted = [];
   try {
     const opened = await send("OPEN_CACHED_VIDEO", playing.video.id);
@@ -384,6 +391,7 @@ await scenario("本地播放和导出分别持有保护，最后一个消费者�
     admitted.push(await startAutomatic(926, "error"));
     assert((await getVideo(playing.video.id))?.status === "complete", "本地页关闭误释放了尚在进行的导出");
     finishExport(exported.downloadIds[0], "interrupted");
+    await syncTemporary([]);
     admitted.push(await startAutomatic(927, "complete"));
     assert(!(await getVideo(playing.video.id)), "关闭本地页且导出取消后仍无法回收自动缓存");
   } finally {
@@ -392,12 +400,13 @@ await scenario("本地播放和导出分别持有保护，最后一个消费者�
 });
 
 await scenario("导出先完成、后登记时也能释放自动缓存", async () => {
-  const exported = await seed(928, { ...finished(8), automatic: true, chunkCount: 1 });
-  const paused = await seed(929, { ...finished(cacheCapacity - 8), status: "paused", automatic: true });
+  const exported = await seed(928, { ...finished(8), ...fullSpeed, chunkCount: 1 });
+  const paused = await seed(929, { ...finished(cacheCapacity - 8), status: "paused", ...fullSpeed });
   await putChunk(exported.video.id, "media", 0, new Blob([new Uint8Array(8)]));
   try {
     finishExportOnStart = true;
     assert((await send("SAVE_VIDEO", exported.video.id)).ok, "快速导出没有开始");
+    await syncTemporary([]);
     await startAutomatic(930, "complete");
     assert(!(await getVideo(exported.video.id)), "早于登记的导出完成事件没有释放保护");
   } finally {
@@ -411,10 +420,10 @@ await scenario("整片重封装先给源轨和输出同时留空间，再写入�
     (await fetch("./fixtures/dash-" + role + "-2frag.mp4")).blob()));
   const track = blob => ({ totalBytes: blob.size, downloadedBytes: blob.size, resumeBytes: blob.size, chunkCount: 1 });
   const sourceBytes = videoBlob.size + audioBlob.size;
-  const dash = await seed(933, { ...finished(sourceBytes), automatic: true, mediaKind: "dash",
+  const dash = await seed(933, { ...finished(sourceBytes), ...fullSpeed, mediaKind: "dash",
     tracks: { video: track(videoBlob), audio: track(audioBlob) } });
-  const old = await seed(934, { ...finished(sourceBytes), automatic: true });
-  const paused = await seed(935, { ...finished(cacheCapacity - sourceBytes * 2), status: "paused", automatic: true });
+  const old = await seed(934, { ...finished(sourceBytes), ...departedFullSpeed });
+  const paused = await seed(935, { ...finished(cacheCapacity - sourceBytes * 2), status: "paused", ...fullSpeed });
   await Promise.all([putChunk(dash.video.id, "video", 0, videoBlob), putChunk(dash.video.id, "audio", 0, audioBlob)]);
   try {
     const loaded = await send("GET_PLAYBACK_URL", dash.video.id);
@@ -428,9 +437,9 @@ await scenario("整片重封装先给源轨和输出同时留空间，再写入�
 });
 
 await scenario("中断后留在磁盘的临时成品仍计入自动缓存预算", async () => {
-  const interrupted = await seed(936, { ...finished(8), status: "error", automatic: true,
+  const interrupted = await seed(936, { ...finished(8), status: "error", ...departedFullSpeed,
     remux: { track: "merged", sourceBytes: 8, bytes: 8 } });
-  const paused = await seed(937, { ...finished(cacheCapacity - 16), status: "paused", automatic: true });
+  const paused = await seed(937, { ...finished(cacheCapacity - 16), status: "paused", ...fullSpeed });
   await putChunk(interrupted.video.id, "merged", 0, new Blob([new Uint8Array(8)]));
   try {
     await startAutomatic(938, "complete");
@@ -441,7 +450,106 @@ await scenario("中断后留在磁盘的临时成品仍计入自动缓存预算"
   }
 });
 
+await scenario("最后一个标签离开才停止写入，短时回来从已提交的 Range 继续", async () => {
+  const { video, source } = await seed(939);
+  await send("DELETE_VIDEO", video.id);
+  const url = "https://www.bilibili.com/video/BVcontrol/";
+  const page = { supported: true, bvid: "BVcontrol", page: 1 };
+  source.release.resolve();
+  source.size = 6 * MiB;
+  let returning = false;
+  const resumedStarts = [];
+  source.fetch = async ({ headers, signal }) => {
+    const [, first, last] = /^bytes=(\d+)-(\d+)$/.exec(headers.Range);
+    const start = Number(first), end = Math.min(Number(last), source.size - 1);
+    const bytes = end - start + 1;
+    if (bytes > 64 * 1024) {
+      if (returning) resumedStarts.push(start);
+      else if (start) {
+        signal.throwIfAborted();
+        await new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+      }
+    }
+    return new Response(new Uint8Array(bytes), {
+      status: 206, headers: { "Content-Range": `bytes ${start}-${end}/${source.size}`, ETag: '"fixture-939"'
+      }
+    });
+  };
+  try {
+    assert((await syncTemporary([page, page])).ok, "无法同步两个视频标签");
+    assert((await dispatch({ target: "offscreen", type: "START_DOWNLOAD",
+      video: { ...video, ...fullSpeed, url, playurlData: manifest(video.cid) } })).started, "自动任务未启动");
+    await until(async () => (await getVideo(video.id))?.resumeBytes === 2 * MiB, "首块未持久化");
+    assert((await syncTemporary([page])).ok && (await getVideo(video.id)).status === "downloading",
+      "关闭一个标签误停另一标签的任务");
+    const before = Date.now();
+    assert((await syncTemporary([])).ok, "最后一个标签离开未同步");
+    const paused = await getVideo(video.id);
+    assert(paused.status === "paused" && paused.pausedByDeparture && paused.resumeBytes === 2 * MiB &&
+      Math.abs(paused.cacheExpiresAt - before - 30 * 60_000) < 1000, "离开后未停止且保存断点和保留期限");
+    await dispatch({ target: "offscreen", type: "RECOVER_DOWNLOADS" });
+    assert((await getVideo(video.id)).status === "paused", "看门狗重启已离开的自动任务");
+    returning = true;
+    await syncTemporary([page]);
+    const resumed = await dispatch({ target: "offscreen", type: "START_DOWNLOAD",
+      video: { ...video, ...fullSpeed, url, playurlData: manifest(video.cid) } });
+    assert(resumed.started, "再次打开同一视频未续传");
+    await until(async () => (await getVideo(video.id))?.status === "complete", "断点没有下载完成");
+    assert(resumedStarts.length && Math.min(...resumedStarts) === paused.resumeBytes, "返回后重新下载了已提交分块");
+  } finally {
+    await send("DELETE_VIDEO", video.id);
+  }
+});
+
+await scenario("到期闹钟只清理可确认来源的整片、断点、临时成品及其镜像", async () => {
+  const past = Date.now() - 1000;
+  const ended = await seed(940, { ...fullSpeed, cacheExpiresAt: past,
+    remux: { track: "merged", sourceBytes: 8, bytes: 8 }, resumeBytes: 8 });
+  const old = await seed(941, { automatic: true, cacheExpiresAt: past, ...finished(8) });
+  const manual = await seed(942, { cacheOrigin: "manual", cacheExpiresAt: past, ...finished(8) });
+  const repository = createSourceRepository();
+  const source = "/fixture-mirror.m4s\n8";
+  const data = new Blob([new Uint8Array(8)]);
+  try {
+    await Promise.all([putChunk(ended.video.id, "media", 0, data), putChunk(ended.video.id, "merged", 0, data)]);
+    const options = { repository, partition: async () => "fixture" };
+    const request = { url: `https://a.bilivideo.com/fixture-mirror.m4s?expires=${Math.floor(Date.now() / 1000) + 60}`,
+      start: 0, end: 8, total: 8, data };
+    assert((await createSourceWriter(options)(request)).ok, "旧格式镜像写入失败");
+    assert((await createSourceWriter({ ...options, videoId: ended.video.id })(request)).ok, "自动缓存镜像写入失败");
+    assert((await repository.list(source)).length === 2, "同一范围必须独立保存旧镜像和任务镜像");
+    onAlarm({ name: expiryAlarm });
+    await until(async () => !(await getVideo(ended.video.id)), "到期没有真正清理自动缓存");
+    assert((await getChunks(ended.video.id)).length === 0, "到期后留下媒体或临时重封装分块");
+    const mirrors = await repository.list(source);
+    assert(mirrors.length === 1 && !mirrors[0].videoId, "清理遗漏自动镜像或误删了其他镜像");
+    assert(await getVideo(old.video.id) && await getVideo(manual.video.id), "误删旧缓存或手动缓存");
+  } finally {
+    await Promise.all([ended, old, manual].map(({ video }) => send("DELETE_VIDEO", video.id)));
+    await repository.clear();
+  }
+});
+
+await scenario("用户手动保留同一已完成的临时缓存，复用分块并移除期限", async () => {
+  const { video, source } = await seed(943, { ...finished(8), ...departedFullSpeed, chunkCount: 1 });
+  try {
+    await putChunk(video.id, "media", 0, new Blob([new Uint8Array(8)]));
+    const retained = await dispatch({ target: "offscreen", type: "START_DOWNLOAD", video: { id: video.id, automatic: false } });
+    assert(retained.alreadyComplete && retained.video.automatic === false && retained.video.cacheOrigin === "manual" &&
+      !retained.video.cacheExpiresAt && retained.video.createdAt === video.createdAt, "手动保留未复用已经完成的缓存");
+    await syncTemporary([]);
+    assert(!(await getVideo(video.id)).cacheExpiresAt && (await getChunks(video.id)).length === 1 &&
+      source.manifestRequests === 0, "手动保留触发了新下载或被再次设置期限");
+  } finally {
+    await send("DELETE_VIDEO", video.id);
+  }
+});
+
 document.querySelector("#result").textContent = JSON.stringify({ ok: tests.every(test => test.ok), tests });
+
+function syncTemporary(pages) {
+  return dispatch({ target: "offscreen", type: "SYNC_TEMPORARY_CACHES", pages });
+}
 
 function finished(bytes) {
   return { status: "complete", totalBytes: bytes, committedBytes: bytes, resumeBytes: bytes, downloadedBytes: bytes };
@@ -456,7 +564,7 @@ async function startAutomatic(cid, expected) {
   const row = await seed(cid);
   await send("DELETE_VIDEO", row.video.id);
   row.source.release.resolve();
-  const result = await dispatch({ target: "offscreen", type: "START_DOWNLOAD", video: { ...row.video, automatic: true } });
+  const result = await dispatch({ target: "offscreen", type: "START_DOWNLOAD", video: { ...row.video, ...fullSpeed } });
   assert(result.started, "自动任务没有启动");
   await until(async () => ["complete", "error"].includes((await getVideo(row.video.id))?.status), "自动任务未进入终态");
   const status = (await getVideo(row.video.id)).status;

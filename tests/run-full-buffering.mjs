@@ -176,7 +176,7 @@ try {
   // 从弹窗实际选择档位，进页后验证自动任务使用保存的策略。
   await configure("full-speed");
   gate.set("BVwhile", deferred());
-  const whilePlaying = await open("BVwhile");
+  let whilePlaying = await open("BVwhile");
   await whilePlaying.waitForFunction(() => document.querySelector("video").currentTime > 0.15);
   await delay(400);
   assert.equal(await getTask("BVwhile"), undefined, "播放器画质还未确认时不能创建整片任务");
@@ -186,6 +186,7 @@ try {
   assert.equal(whileTask.status, "downloading");
   assert.equal(whileTask.requestedQuality, 32);
   assert.equal(whileTask.requestedQualityExplicit, true);
+  assert.equal(whileTask.cacheOrigin, "full-speed");
   await until(() => (mediaRequests.get("BVwhile") || 0) >= 2, "全速缓冲没有在播放中开始读取整片正文");
   await until(() => worker.evaluate(async url => {
     const [tab] = await chrome.tabs.query({ url });
@@ -195,6 +196,23 @@ try {
   const beforeCompletion = await whilePlaying.locator("video").evaluate(video => video.currentTime);
   await whilePlaying.waitForFunction(previous => window.playedBeforeLocal && document.querySelector("video").currentTime > previous + 0.15, beforeCompletion);
   assert.equal((await getTask("BVwhile")).status, "downloading", "缓存未完成时原播放器继续播放");
+  const secondViewer = await open("BVwhile");
+  await secondViewer.evaluate(() => window.confirmPlayerQuality(32));
+  await secondViewer.waitForFunction(() => document.querySelector("video").currentTime > 0.15);
+  await secondViewer.close();
+  assert.equal((await getTask("BVwhile")).status, "downloading", "关闭一个视频标签不能停掉另一标签的下载");
+  await whilePlaying.close();
+  const retained = await until(async () => {
+    const record = await getTask("BVwhile");
+    return record?.pausedByDeparture && record;
+  }, "实际关闭最后一个标签未暂停自动缓存");
+  assert(retained.cacheExpiresAt - Date.now() > 29 * 60_000, "最后一个标签关闭后应保留约 30 分钟");
+  whilePlaying = await open("BVwhile");
+  await whilePlaying.evaluate(() => window.confirmPlayerQuality(32));
+  await until(async () => {
+    const record = await getTask("BVwhile");
+    return record?.status === "downloading" && !record.cacheExpiresAt;
+  }, "短时重新打开视频未恢复自动缓存");
   await whilePlaying.evaluate(() => { document.querySelector("video").playbackRate = 1.5; });
   gate.get("BVwhile").resolve();
   await expectWholeLocal(whilePlaying);
@@ -207,6 +225,25 @@ try {
   assert.equal((await getTask("BVwhile")).createdAt, whileTask.createdAt);
   assert.equal(mediaRequests.get("BVwhile"), whileRequests, "重开已有整片的页面应直接复用");
   await whilePlaying.close();
+
+  await until(async () => (await getTask("BVwhile"))?.cacheExpiresAt, "完整视频离开后未登记期限");
+  const alarmName = "bili-buffer-temporary-cache-expiry-v1";
+  await until(() => panel.evaluate(async name => Boolean(await chrome.alarms.get(name)), alarmName), "未为临时缓存注册 Chrome 闹钟");
+  await worker.evaluate(name => {
+    globalThis.temporaryExpiryAlarmFired = false;
+    chrome.alarms.onAlarm.addListener(alarm => {
+      if (alarm.name === name) globalThis.temporaryExpiryAlarmFired = true;
+    });
+  }, alarmName);
+  // 只在隔离资料里推进记录期限，仍让实际 Chrome 闹钟唤醒真实 SW/Offscreen 来清理。
+  await panel.evaluate(async ({ id, alarmName }) => {
+    const { getVideo, putVideo } = await import(chrome.runtime.getURL("src/db.js"));
+    await putVideo({ ...await getVideo(id), cacheExpiresAt: Date.now() - 1000 });
+    await chrome.alarms.create(alarmName, { when: Date.now() + 500 });
+  }, { id: whileTask.id, alarmName });
+  await until(() => worker.evaluate(() => globalThis.temporaryExpiryAlarmFired), "真实 Chrome 未派发到期闹钟");
+  await until(async () => !(await getTask("BVwhile")), "实际 Chrome 闹钟未清理过期缓存");
+  assert.equal((await getTask("BVadaptive")).status, "complete", "自动清理不得删除手动边播边缓存");
 
   // 第一轮收到 360P 后卡在后台取 CID。第二次选择必须在交给 Offscreen 前替代它。
   const changing = await open("BVrace");
@@ -312,6 +349,7 @@ try {
     ok: true, adaptiveDefault: true, autoStart: true, waitedForQuality: true, latestQualityAtStart: true, cachedSelected4k: true,
     inPageQualitySwitch: true, ignoredLateCompletions: true,
     reuseOnReload: true, quickCache: true, playingBeforeComplete: true, migratedLegacyMode: true, progressInToolbarOnly: true,
+    temporaryCache: { multiTab: true, reopened: true, expiredByAlarm: true },
     offlineSeek: { progressive: localLatency, mergedDash: dashLatency, native: nativeLatency, mediaNetworkRequests: 0 }
   }));
 } finally {

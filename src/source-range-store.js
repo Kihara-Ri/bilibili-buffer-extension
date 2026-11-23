@@ -51,7 +51,7 @@ export function sourceRangeScope(sender, { runtimeId, offscreenUrl } = {}) {
 export function createSourceRepository(factory = globalThis.indexedDB, name = "bili-buffer-source-ranges-v1") {
   // 能力缺失（无 IndexedDB 或无 open）时返回一个恒为空的服务仓库：调用方无需分支，也永远不会抛错。
   if (!factory || typeof factory.open !== "function") {
-    return { disabled: true, list: async () => [], put: async () => false, clear: async () => {} };
+    return { disabled: true, list: async () => [], put: async () => false, deleteForVideo: async () => {}, clear: async () => {} };
   }
   let opening = null;
   const open = () => opening ||= new Promise((resolve, reject) => {
@@ -93,6 +93,21 @@ export function createSourceRepository(factory = globalThis.indexedDB, name = "b
         tx.onabort = () => reject(tx.error);
       });
     },
+    async deleteForVideo(videoId) {
+      const db = await open();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction("ranges", "readwrite");
+        const cursor = tx.objectStore("ranges").openCursor();
+        cursor.onsuccess = () => {
+          const row = cursor.result;
+          if (!row) return;
+          if (row.value.videoId === videoId) row.delete();
+          row.continue();
+        };
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error);
+      });
+    },
     async clear() {
       const db = await open();
       return new Promise((resolve, reject) => {
@@ -109,15 +124,17 @@ export function createSourceRepository(factory = globalThis.indexedDB, name = "b
  * @param {object} repository @param {object} request @param {string} partition @param {Blob} data @param {number} now
  * @returns {Promise<boolean>} 事务成功且真实写入才为 true
  */
-async function storeSourceRange(repository, request, partition, data, now) {
+async function storeSourceRange(repository, request, partition, data, now, videoId) {
   const facts = sourceFacts(request, now);
   if (!facts || facts.start !== request.start || facts.end !== request.end) return false;
   if (!data || typeof data.size !== "number" || data.size !== facts.end - facts.start) return false;
   const contentType = /^(video|audio)\/[-\w.+]+$/.test(request.contentType || "") ? request.contentType : "application/octet-stream";
   // 停用/被拒的仓库返回 false，调用方据此判未命中。
   const stored = await repository.put({
-    id: `${facts.source}\u0000${partition}\u0000${facts.start}`,
+    // 自动任务的镜像单独标记，避免到期清理时删掉同一源范围的手动或旧镜像。
+    id: `${facts.source}\u0000${partition}\u0000${facts.start}${videoId ? "\u0000" + videoId : ""}`,
     source: facts.source, partition, start: facts.start, end: facts.end, total: facts.total,
+    ...(videoId ? { videoId } : {}),
     expires: facts.expires, created: now, contentType, data
   });
   return stored !== false;
@@ -130,10 +147,10 @@ async function storeSourceRange(repository, request, partition, data, now) {
  * 两个上下文同属扩展源、共用同一个 IndexedDB，Blob 直接入库不经主线程拷贝。
  * 账户分区只能由后台算（cookies API 不在 offscreen 里），每个写入器只取一次；
  * 期间账户切换只会让这些行在新账户下未命中，读取侧仍会再次校验分区。
- * @param {{repository:object, partition:() => Promise<string>, now?:() => number}} options
+ * @param {{repository:object, partition:() => Promise<string>, now?:() => number, videoId?:string}} options
  * @returns {(request:{url:string,start:number,end:number,total:number,data:Blob,contentType?:string}) => Promise<{ok:boolean}>}
  */
-export function createSourceWriter({ repository, partition, now = Date.now }) {
+export function createSourceWriter({ repository, partition, now = Date.now, videoId }) {
   let partitionOnce = null;
   return async (request) => {
     if (!repository || repository.disabled) return { ok: false };
@@ -143,7 +160,7 @@ export function createSourceWriter({ repository, partition, now = Date.now }) {
     });
     // 分区取不到时抛给镜像写入器计入熔断；同一个失败的 Promise 不缓存，下一次重新取。
     const owner = await partitionOnce.catch((error) => { partitionOnce = null; throw error; });
-    return { ok: await storeSourceRange(repository, request, owner, request?.data, now()) };
+    return { ok: await storeSourceRange(repository, request, owner, request?.data, now(), videoId) };
   };
 }
 

@@ -1,5 +1,6 @@
 import { listVideos, listVideosForBvid } from "./db.js";
 import { getVideoPageId, hasCompleteByteCount, isAudioOnlyCache, parseBiliVideoUrl } from "./utils.js";
+import { isExpiredCache } from "./temporary-cache.js";
 
 function bestCache(videos) {
   return videos.sort((left, right) => (
@@ -27,7 +28,7 @@ export async function lookupCachedPage(url, resolvePage, quality = 0) {
   const parsed = parseBiliVideoUrl(url);
   if (!parsed.supported) return { video: null };
   const rows = parsed.bvid ? await listVideosForBvid(parsed.bvid) : await listVideos();
-  const playable = rows.filter(video => video.status === "complete" && hasCompleteByteCount(video) &&
+  const playable = rows.filter(video => video.status === "complete" && !isExpiredCache(video) && hasCompleteByteCount(video) &&
     !isAudioOnlyCache(video) && (!quality || Number(video.quality) === quality));
   const candidates = parsed.aid ? playable.filter(video => Number(video.aid) === parsed.aid) : playable;
   const exact = candidates.filter(video => pageNumber(video) === parsed.page);
