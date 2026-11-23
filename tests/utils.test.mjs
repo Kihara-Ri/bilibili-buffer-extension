@@ -297,6 +297,35 @@ test("仅音频缓存保存为原始扩展名，合并缓存保存为单个 MP4"
   });
 });
 
+test("分 P 音频使用实际序号，并按分 P 名去重", () => {
+  const cases = [
+    ["城外探索", "测试 - P5 - 城外探索 [AAC 192K].m4a"],
+    ["", "测试 - P5 [AAC 192K].m4a"],
+    ["05", "测试 - P5 [AAC 192K].m4a"],
+    ["P05", "测试 - P5 [AAC 192K].m4a"],
+    ["第５Ｐ", "测试 - P5 [AAC 192K].m4a"],
+    ["2026", "测试 - P5 - 2026 [AAC 192K].m4a"]
+  ];
+  for (const [partTitle, filename] of cases) {
+    const video = { title: "测试", page: 5, pageCount: 24, partTitle, cacheMode: "audio", qualityLabel: "AAC 192K" };
+    assert.equal(buildCachedDownloadPlan({ video, playbackUrl: "blob:audio" }).items[0].filename, filename);
+  }
+});
+
+test("旧分 P 音频从原视频地址恢复序号，单 P 音频沿用原名", () => {
+  const video = { title: "测试", cacheMode: "audio", qualityLabel: "AAC 192K" };
+  const filename = fields => buildCachedDownloadPlan({ video: { ...video, ...fields }, playbackUrl: "blob:audio" }).items[0].filename;
+  assert.equal(filename({ url: "https://www.bilibili.com/video/BV1fixture/?p=1", partTitle: "开场" }), "测试 - P1 - 开场 [AAC 192K].m4a");
+  assert.equal(filename({ url: "https://www.bilibili.com/video/BV1fixture/", page: 1, pageCount: 1 }), "测试 [AAC 192K].m4a");
+});
+
+test("长标题分 P 音频截断时保留实际序号、分 P 名和音质", () => {
+  const video = { title: "长标题".repeat(50), page: 5, pageCount: 24, partTitle: "城外探索", cacheMode: "audio", qualityLabel: "AAC 192K" };
+  const { filename } = buildCachedDownloadPlan({ video, playbackUrl: "blob:audio" }).items[0];
+  assert.match(filename, /^长标题.* - P5 - 城外探索 \[AAC 192K\]\.m4a$/);
+  assert(Buffer.byteLength(filename) <= 240);
+});
+
 test("关闭原标签页后可从仅音频记录恢复地址", () => {
   const source = getPersistedMediaSource({
     mediaKind: "audio",

@@ -449,6 +449,51 @@ export function sanitizeDownloadFilename(input, fallback = t("file.fallbackName"
   return (sanitized || fallback).slice(0, 160).replace(/[. ]+$/g, "") || fallback;
 }
 
+export const DOWNLOAD_FILENAME_BYTE_LIMIT = 240;
+const filenameEncoder = new TextEncoder();
+
+/** @param {string} value @param {number} maxBytes @returns {string} */
+export function truncateUtf8(value, maxBytes) {
+  let bytes = 0;
+  let end = 0;
+  for (const character of value) {
+    bytes += filenameEncoder.encode(character).length;
+    if (bytes > maxBytes) break;
+    end += character.length;
+  }
+  return value.slice(0, end);
+}
+
+function multipartAudioPage(video) {
+  const count = Number(video.pageCount);
+  if (count === 1) return 0;
+  const page = Number(video.page);
+  const hasPage = Number.isSafeInteger(page) && page > 0;
+  if (hasPage && (count > 1 || page > 1)) return page;
+  // 旧缓存可能只留下投稿链接。只使用明确保存的 p 参数，不能把 URL 解析器默认的 P1 当成实际分 P。
+  if (!parseBiliVideoUrl(video.url).supported) return 0;
+  const param = new URL(video.url).searchParams.get("p");
+  const urlPage = Number(param);
+  if (!/^\d+$/.test(param || "") || !Number.isSafeInteger(urlPage) || urlPage < 1) return 0;
+  return hasPage ? page : urlPage;
+}
+
+function multipartAudioFilename(video, page, quality, extension) {
+  const title = sanitizeDownloadFilename(video.title || video.bvid);
+  const partTitle = String(video.partTitle || "").trim();
+  const number = /^(?:(?:p\s*)?(\d+)|第\s*(\d+)\s*[p集话話]?)$/i.exec(partTitle.normalize("NFKC"));
+  const part = Number(number?.[1] ?? number?.[2]) === page ? "" : sanitizeDownloadFilename(partTitle, "");
+  const pageLabel = ` - P${page}`;
+  const partSeparator = part ? " - " : "";
+  const suffix = `${quality ? ` ${sanitizeDownloadFilename(quality)}` : ""}.${extension}`;
+  // 预留编号、音质和扩展名的字节，长中文标题不能把后面的分 P 标识挤掉。
+  const budget = DOWNLOAD_FILENAME_BYTE_LIMIT - filenameEncoder.encode(pageLabel + partSeparator + suffix).length;
+  const titleBudget = Math.max(budget - filenameEncoder.encode(part).length, Math.floor(budget / 2));
+  const fittedTitle = truncateUtf8(title, titleBudget).trimEnd();
+  const fittedPart = truncateUtf8(part, budget - filenameEncoder.encode(fittedTitle).length).trimEnd();
+  return `${fittedTitle}${pageLabel}${fittedPart ? partSeparator + fittedPart : ""}${suffix}`;
+}
+
 export function buildCachedDownloadPlan(cached) {
   const video = cached?.video || {};
   const title = video.partTitle
@@ -459,10 +504,13 @@ export function buildCachedDownloadPlan(cached) {
 
   if (cached?.playbackUrl) {
     // 仅音频缓存直接用源容器扩展名（.m4a / .flac），合并后的视频缓存保存为单个 .mp4。
-    const extension = isAudioOnlyCache(video) ? getAudioFileExtension(video) : "mp4";
+    const audioOnly = isAudioOnlyCache(video);
+    const extension = audioOnly ? getAudioFileExtension(video) : "mp4";
+    const page = audioOnly ? multipartAudioPage(video) : 0;
+    const filename = page ? multipartAudioFilename(video, page, quality, extension) : `${baseName}.${extension}`;
     return {
       splitTracks: false,
-      items: [{ url: cached.playbackUrl, filename: `${baseName}.${extension}` }]
+      items: [{ url: cached.playbackUrl, filename }]
     };
   }
 
