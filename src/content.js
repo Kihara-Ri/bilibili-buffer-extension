@@ -5,6 +5,9 @@
   const QUALITY_OPTION = ".bpx-player-ctrl-quality-menu-item[data-value]";
   const QUALITY_LABEL = ".bpx-player-ctrl-quality-result";
   const QUALITY_TEXT = ".bpx-player-ctrl-quality-text";
+  const PLAYER_CONTAINER = ".bpx-player-container";
+  const PLAYER_EPISODE = ".bpx-player-ctrl-eplist-multi-menu-item[data-cid]";
+  const SIDEBAR_EPISODE = ".video-pod__item[data-key]";
   let bufferMode = null;
   let configRevision = 0;
   let session;
@@ -41,13 +44,8 @@
   for (const type of ["resize", "loadeddata"]) document.addEventListener(type, event => {
     if (session?.nativeSizeWait && event.target === document.querySelector("video")) queueCacheLookup(session);
   }, true);
-  document.addEventListener("loadedmetadata", event => {
-    if (event.target !== document.querySelector("video")) return;
-    syncPage();
-    if (!session?.watchLaterId) return;
-    session.watchLaterMetadata = event.target;
-    onPlayerQualityChanged();
-  }, true);
+  document.addEventListener("loadedmetadata", onPlayerMedia, true);
+  document.addEventListener("playing", onPlayerMedia, true);
   window.addEventListener("online", () => queueCacheLookup(session));
   window.navigation?.addEventListener("currententrychange", syncPage);
   window.addEventListener("pagehide", () => {
@@ -180,10 +178,16 @@
   function syncPage() {
     const key = pageKey();
     if (session?.key === key) return;
-    const previousWatchLaterPlayer = session?.watchLaterPlayer;
+    const previousPlayerMedia = session?.playerMedia || session?.previousPlayerMedia;
+    const ready = session?.readyPlayerMedia;
+    const preloadedPlayerMedia = ready?.awaitingFirstPlay ? ready : null;
     endSession();
+    const address = new URL(location.href);
+    const videoPart = /\/video\/(?:BV[0-9A-Za-z]+|av\d+)\/?$/i.test(address.pathname)
+      ? Math.max(1, Number.parseInt(address.searchParams.get("p"), 10) || 1)
+      : null;
     session = { key, url: location.href, mode: bufferMode, controller: new AbortController(), failed: new Map(),
-      watchLaterId: watchLaterVideoId(new URL(location.href)), previousWatchLaterPlayer };
+      watchLaterId: watchLaterVideoId(address), videoPart, previousPlayerMedia, preloadedPlayerMedia };
     observeQualityMenu();
     if (isFull(session)) paintFull(session, "caching");
     if (bufferMode !== null) queueCacheLookup(session);
@@ -237,9 +241,37 @@
     });
   }
 
+  function onPlayerMedia(event) {
+    const video = event.target;
+    if (!(video instanceof HTMLVideoElement) || !video.currentSrc ||
+        video.closest(PLAYER_CONTAINER)?.querySelector("video") !== video) return;
+    syncPage();
+    const current = session;
+    if (!current?.watchLaterId && !current?.videoPart) return;
+    const ready = current.readyPlayerMedia;
+    if (event.type === "playing") {
+      if (matchesPlayerSource(ready, video)) ready.awaitingFirstPlay = false;
+      const preloaded = current.preloadedPlayerMedia;
+      if (!matchesPlayerSource(preloaded, video)) return;
+      // B 站可能在更新地址前加载下一分 P 的元数据。只在已换源且首次出现在新分 P 播放时承接。
+      preloaded.awaitingFirstPlay = false;
+      current.readyPlayerMedia = preloaded;
+    } else if (!matchesPlayerSource(ready, video)) {
+      const previous = ready || current.playerMedia;
+      current.readyPlayerMedia = { video, source: video.currentSrc,
+        awaitingFirstPlay: Boolean(previous) && !matchesPlayerSource(previous, video) };
+    }
+    current.preloadedPlayerMedia = null;
+    onPlayerQualityChanged();
+  }
+
+  function matchesPlayerSource(media, video) {
+    return media?.video === video && media.source === video.currentSrc;
+  }
+
   function onPlayerQualityChanged() {
     const current = session;
-    if (!current || (!current.watchLaterId && !tracksSelectedQuality(current)) || !isCurrent(current)) return;
+    if (!current || (!current.watchLaterId && !current.videoPart && !tracksSelectedQuality(current)) || !isCurrent(current)) return;
     if (isFull(current)) reflectLocalQuality(current);
     const quality = siteQuality(current);
     if (quality !== (current.observedQuality || 0)) {
@@ -463,19 +495,42 @@
 
   function playerQualityMenu(current) {
     const menu = document.querySelector(QUALITY_MENU);
-    if (!menu || pagePlayurlQuality(current)) return menu;
-    if (!current.watchLaterId) return null;
-    // 「稍后再看」可由播放器内部取得清单，document-start 拦截未必见到画质。
-    // 等标题链接与标签 URL 一致且同一播放器有媒体元数据，换稿时还要排除上一条的媒体源。
+    if (!menu) return null;
+    const player = menu.closest(PLAYER_CONTAINER);
+    const video = player?.querySelector("video");
+    const hasPlayurl = Boolean(pagePlayurlQuality(current));
+    // 播放器可在内部取流，普通分 P 和「稍后再看」都可能拿不到可观测的播放清单。
+    if (!hasPlayurl && !matchesPlayerPage(current, player)) return null;
+    if (!video?.currentSrc || video.readyState < 1) return hasPlayurl ? menu : null;
+    // 分 P 菜单可能比播放器先更新。同一媒体源需要新分 P 的元数据或预载后的首次播放来确认归属。
+    if (matchesPlayerSource(current.previousPlayerMedia, video) && !matchesPlayerSource(current.readyPlayerMedia, video)) {
+      return hasPlayurl ? menu : null;
+    }
+    if (!matchesPlayerSource(current.playerMedia, video)) {
+      current.playerMedia = { video, source: video.currentSrc };
+    }
+    return menu;
+  }
+
+  function matchesPlayerPage(current, player) {
+    if (!player) return false;
+    if (current.videoPart) {
+      const native = player.querySelector(`${PLAYER_EPISODE}.bpx-state-multi-active-item`);
+      const sidebar = document.querySelector(`${SIDEBAR_EPISODE}.active`);
+      if (native) {
+        return episodeNumber(native, PLAYER_EPISODE) === current.videoPart &&
+          (!sidebar || native.dataset.cid === sidebar.dataset.key);
+      }
+      return current.videoPart === 1 || Boolean(sidebar && episodeNumber(sidebar, SIDEBAR_EPISODE) === current.videoPart);
+    }
+    if (!current.watchLaterId) return false;
     const titlePath = document.querySelector("h1.video-title a[href]")?.pathname;
     const titleId = titlePath?.match(/\/video\/([a-zA-Z0-9]+)\/?$/)?.[1];
-    if (titleId !== current.watchLaterId) return null;
-    const video = menu.closest(".bpx-player-container")?.querySelector("video");
-    if (!video?.currentSrc || video.readyState < 1) return null;
-    const previous = current.previousWatchLaterPlayer;
-    if (previous?.video === video && previous.source === video.currentSrc && current.watchLaterMetadata !== video) return null;
-    current.watchLaterPlayer = { video, source: video.currentSrc };
-    return menu;
+    return titleId === current.watchLaterId;
+  }
+
+  function episodeNumber(item, selector) {
+    return [...item.parentElement.children].filter(sibling => sibling.matches(selector)).indexOf(item) + 1;
   }
 
   function readPlayerQuality(current, includeSources) {
@@ -532,7 +587,7 @@
     if (attachment?.quality && attachment.video === document.querySelector("video") && ownsSource(attachment) &&
         (!current.qualitySwitch || current.qualitySwitch.quality === attachment.quality)) return attachment.quality;
     const quality = pagePlayurlQuality(current);
-    if (!quality && !menu && !current.watchLaterPlayer) return 0;
+    if (!quality && !menu && !current.playerMedia) return 0;
     // 控件收起或重建时保留本页已确认的选项。自动档优先使用菜单所显示的实际档位。
     if (validPlayerQuality(selected, 0)) current.menuQuality = selected || autoPlayerQuality(menu);
     return current.menuQuality || quality;

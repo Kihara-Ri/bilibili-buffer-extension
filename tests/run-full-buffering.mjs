@@ -66,6 +66,16 @@ try {
     };
     window.finishNative480 = () => loadNative(originalSource);
   </script>`;
+  const multipartControls = `<div class="bpx-player-ctrl-quality">
+    <div class="bpx-player-ctrl-quality-result"><span class="bpx-player-ctrl-quality-result-name">4K 超高清</span></div>
+    <ul><li class="bpx-player-ctrl-quality-menu-item" data-value="32"><span class="bpx-player-ctrl-quality-text">480P 标清</span></li>
+    <li class="bpx-player-ctrl-quality-menu-item bpx-state-active" data-value="120"><span class="bpx-player-ctrl-quality-text">4K 超高清</span></li></ul>
+  </div><div class="bpx-player-ctrl-eplist-multi-menu">${Array.from({ length: 12 }, (_, index) =>
+    `<div class="bpx-player-ctrl-eplist-multi-menu-item${index === 9 ? ' bpx-state-multi-active-item' : ''}" data-cid="${1001 + index}">${index + 1}</div>`
+  ).join("")}</div>`;
+  const multipartSidebar = `<div class="video-pod__list">${Array.from({ length: 12 }, (_, index) =>
+    `<div class="video-pod__item${index === 9 ? ' active' : ''}" data-key="${1001 + index}">${index + 1}</div>`
+  ).join("")}</div>`;
   await context.route("https://www.bilibili.com/**", route => {
     const address = new URL(route.request().url());
     const videoId = address.searchParams.get("bvid") || address.pathname.split("/")[2];
@@ -73,7 +83,7 @@ try {
       contentType: "text/html",
       body: `<!doctype html><html><head><script>
       const videoId = ${JSON.stringify(videoId)};
-      if (!["BVwhile", "BVdash", "BVchoice"].includes(videoId)) window.__playinfo__ = { data: { quality: videoId === "BVswitch" ? 32 : 16 } };
+      if (!["BVwhile", "BVdash", "BVchoice", "BVmultip"].includes(videoId)) window.__playinfo__ = { data: { quality: videoId === "BVswitch" ? 32 : 16 } };
       window.confirmPlayerQuality = quality => fetch("https://api.bilibili.com/x/player/playurl?bvid=" + videoId + "&qn=" + quality).then(response => response.json());
       window.playedBeforeLocal = false;
       document.addEventListener("playing", event => {
@@ -82,12 +92,13 @@ try {
     </script></head><body><h1 class="video-title"><a href="/video/${videoId}">${videoId}</a></h1>
     <div class="bpx-player-container"><video controls autoplay muted src="data:video/mp4;base64,${fixture.toString("base64")}"></video>${
       videoId === "BVswitch" ? qualitySwitchControls(120, "4K") :
-        videoId === "BVchoice" ? qualitySwitchControls(80, "1080P") : ""
-    }</div></body></html>`
+        videoId === "BVchoice" ? qualitySwitchControls(80, "1080P") :
+          videoId === "BVmultip" ? multipartControls : ""
+    }</div>${videoId === "BVmultip" ? multipartSidebar : ""}</body></html>`
     });
   });
-  const selectedQuality = bvid => bvid === "BVdash" ? 120 : ["BVwhile", "BVchoice"].includes(bvid) ? 32 : 16;
-  const dashQualities = { BVdash: [125, 120], BVchoice: [112, 80, 64, 32] };
+  const selectedQuality = bvid => ["BVdash", "BVmultip"].includes(bvid) ? 120 : ["BVwhile", "BVchoice"].includes(bvid) ? 32 : 16;
+  const dashQualities = { BVdash: [125, 120], BVchoice: [112, 80, 64, 32], BVmultip: [125, 120, 32] };
   const playurl = (bvid, quality = selectedQuality(bvid)) => ({
     code: 0, data: dashQualities[bvid] ? {
       quality: selectedQuality(bvid), accept_quality: dashQualities[bvid], dash: {
@@ -127,11 +138,13 @@ try {
       if (bvid === "BVrace" && !globalThis.releaseQualityView) {
         await new Promise(resolve => { globalThis.releaseQualityView = resolve; });
       }
-      return Promise.resolve(Response.json({ code: 0, data: {
-        bvid, title: bvid, pages: [{ cid: 11, page: 1, duration: 19 }]
-      } }));
+      const pages = bvid === "BVmultip"
+        ? Array.from({ length: 12 }, (_, index) => ({ cid: 1001 + index, page: index + 1, duration: 19 }))
+        : [{ cid: 11, page: 1, duration: 19 }];
+      return Promise.resolve(Response.json({ code: 0, data: { bvid, title: bvid, pages } }));
     };
-  }, Object.fromEntries(["BVadaptive", "BVnext", "BVwhile", "BVlegacy", "BVdash", "BVrace", "BVswitch", "BVchoice"].map(bvid => [bvid, playurl(bvid)])));
+  }, Object.fromEntries(["BVadaptive", "BVnext", "BVwhile", "BVlegacy", "BVdash", "BVrace", "BVswitch", "BVchoice", "BVmultip"]
+    .map(bvid => [bvid, playurl(bvid)])));
 
   const panel = await context.newPage();
   await panel.goto("chrome-extension://" + new URL(worker.url()).hostname + "/popup.html");
@@ -248,6 +261,90 @@ try {
   }, choicePage.url());
   assert.equal(nextPlayer.playerQuality, 0, "稍后再看切下一条时，标题已换但上一条的播放器还在，不能沿用旧菜单");
   await choicePage.close();
+
+  const multipart = await open("BVmultip", base + "BVmultip/?p=10");
+  await multipart.waitForFunction(() => document.querySelector("video").currentTime > 0.15);
+  assert.equal(await multipart.locator("html").getAttribute("data-bili-buffer-quality"), null,
+    "普通多分页测试须只依赖正在播放的原生菜单");
+  const multipartPopup = await openPopupForActiveVideo();
+  assert.match(await multipartPopup.locator("#quality-name").textContent(), /^4K\b/,
+    "P10 播放 4K 时不应一直等待播放接口");
+  gate.set("BVmultip", deferred());
+  await multipartPopup.locator("#cache-button").evaluate(button => button.click());
+  const multipartTask = await until(() => getTask("BVmultip"), "未按当前 P10 的 4K 启动缓存");
+  assert.deepEqual([multipartTask.page, multipartTask.cid, multipartTask.requestedQuality], [10, 1010, 120]);
+  await multipartPopup.close();
+
+  const readMultipartPlayer = () => panel.evaluate(async url => {
+    const [tab] = await chrome.tabs.query({ url });
+    const response = await chrome.runtime.sendMessage({ target: "background", type: "GET_CACHE_PLAYER", tabId: tab.id, url });
+    return response.playerQuality;
+  }, multipart.url());
+  await multipart.evaluate(() => {
+    history.pushState(null, "", "?p=11");
+    document.querySelector(".video-pod__item.active").classList.remove("active");
+    document.querySelector('.video-pod__item[data-key="1011"]').classList.add("active");
+  });
+  assert.equal(await readMultipartPlayer(), 0, "P11 换页后，不能把旧媒体源和 P10 的菜单当作现行画质");
+  await multipart.evaluate(() => {
+    document.querySelector(".bpx-state-multi-active-item").classList.remove("bpx-state-multi-active-item");
+    document.querySelector('.bpx-player-ctrl-eplist-multi-menu-item[data-cid="1011"]').classList.add("bpx-state-multi-active-item");
+    document.querySelector(".bpx-player-ctrl-quality-menu-item.bpx-state-active").classList.remove("bpx-state-active");
+    document.querySelector('.bpx-player-ctrl-quality-menu-item[data-value="32"]').classList.add("bpx-state-active");
+    document.querySelector(".bpx-player-ctrl-quality-result-name").textContent = "480P 标清";
+  });
+  assert.equal(await readMultipartPlayer(), 0, "P11 两处菜单都已更新时，仍须等待旧媒体源被替换");
+  await multipart.evaluate(async () => {
+    const video = document.querySelector("video");
+    video.pause();
+    await video.play();
+  });
+  assert.equal(await readMultipartPlayer(), 0, "P10 的旧源再次触发播放时，仍不能当作 P11 的媒体");
+  await multipart.evaluate(async () => {
+    const video = document.querySelector("video");
+    const media = await (await fetch(video.currentSrc)).blob();
+    // 复用同一个播放器元素，但等新媒体源的真实元数据到达后再确认该分 P。
+    video.src = URL.createObjectURL(media);
+  });
+  await multipart.waitForFunction(() => {
+    const video = document.querySelector("video");
+    return video.currentSrc.startsWith("blob:") && video.readyState >= 1;
+  });
+  await until(async () => (await readMultipartPlayer()) === 32, "P11 新源没有恢复读取 480P");
+
+  // 真实站点有时先载入下一分 P 的元数据，再更新地址，最后开始播放。
+  await multipart.evaluate(async () => {
+    const video = document.querySelector("video");
+    await video.play();
+    const media = await (await fetch(video.currentSrc)).blob();
+    video.autoplay = false;
+    video.pause();
+    const loaded = new Promise(resolve => video.addEventListener("loadedmetadata", resolve, { once: true }));
+    video.src = URL.createObjectURL(media);
+    await loaded;
+  });
+  assert.equal(await readMultipartPlayer(), 32, "P12 加载元数据时，地址和菜单仍指向 P11");
+  await multipart.evaluate(() => {
+    history.pushState(null, "", "?p=12");
+    document.querySelector(".video-pod__item.active").classList.remove("active");
+    document.querySelector('.video-pod__item[data-key="1012"]').classList.add("active");
+    document.querySelector(".bpx-state-multi-active-item").classList.remove("bpx-state-multi-active-item");
+    document.querySelector('.bpx-player-ctrl-eplist-multi-menu-item[data-cid="1012"]').classList.add("bpx-state-multi-active-item");
+    document.querySelector(".bpx-player-ctrl-quality-menu-item.bpx-state-active").classList.remove("bpx-state-active");
+    document.querySelector('.bpx-player-ctrl-quality-menu-item[data-value="120"]').classList.add("bpx-state-active");
+    document.querySelector(".bpx-player-ctrl-quality-result-name").textContent = "4K 超高清";
+  });
+  assert.equal(await readMultipartPlayer(), 0, "切到 P12 后要等已预载的新源开始播放");
+  await multipart.evaluate(() => document.querySelector("video").play());
+  assert.equal(await readMultipartPlayer(), 120, "元数据先于地址更新时，P12 开播后应识别自己的 4K 档");
+  gate.get("BVmultip").resolve();
+  const savedPart = await until(async () => {
+    const task = await getTask("BVmultip");
+    return task?.status === "complete" && task;
+  }, "P10 的 4K 缓存没有完成");
+  assert.deepEqual([savedPart.page, savedPart.cid, savedPart.quality, savedPart.tracks.video.representationId], [10, 1010, 120, 120]);
+  assert.equal(savedPart.committedBytes, savedPart.totalBytes);
+  await multipart.close();
 
   // 从弹窗实际选择档位，进页后验证自动任务使用保存的策略。
   await configure("full-speed");
@@ -432,7 +529,7 @@ try {
     `本地拖动延迟超出受控线路阈值 ${JSON.stringify({ localLatency, nativeLatency })}`);
   console.log(JSON.stringify({
     ok: true, adaptiveDefault: true, autoStart: true, waitedForQuality: true, latestQualityAtStart: true, cachedSelected4k: true,
-    inPageQualitySwitch: true, popupQualitySync: true, ignoredLateCompletions: true,
+    inPageQualitySwitch: true, popupQualitySync: true, multipartWithoutPlayurl: true, multipartPreloadedSource: true, ignoredLateCompletions: true,
     reuseOnReload: true, unifiedCache: { playerQuality: true, explicitQualityAndCodec: true, audioOnly: true, keepTemporary: true },
     temporaryCache: { multiTab: true, reopened: true, expiredByAlarm: true },
     playingBeforeComplete: true, migratedLegacyMode: true, progressInToolbarOnly: true,

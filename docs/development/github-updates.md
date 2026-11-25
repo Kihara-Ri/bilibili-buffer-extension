@@ -6,6 +6,8 @@
 
 `npm run build:github` 生成 `dist/github/unpacked/`、`haineicunzhi-github-<version>.zip` 与 `.update.json`。首次安装需手动解压并加载；以后通过扩展设置的更新入口操作。两种安装 ID 和存储独立，没有片库迁移功能。
 
+从 2.16.x 的 GitHub 版升级到 2.17.0 时，请解压 GitHub ZIP 到原安装目录，再在 Chrome 中重新加载扩展。本次新增可选的 `nativeMessaging` 权限，旧版更新器要求这类变更走手动升级。保留原目录和安装 ID 可继续使用片库与下载断点。
+
 直接加载仓库根目录时也能检查更新：源码清单必须声明与 `GITHUB_ORIGINS` 一致的四个可选域名，仍由检查按钮按需申请；商店构建会剔除这些权限。修改 manifest 后，需在 `chrome://extensions` 原位重新加载扩展，再重新打开更新页，刷新普通网页不足以让 Chrome 读取新权限。源码目录仍禁止被更新器覆盖；内部安装更新应使用 GitHub 发布包的解压目录。
 
 安装目录是含 `manifest.json` 的当前扩展原目录，不是新建的缓存／数据文件夹。缺少或损坏清单、版本不匹配以及源码仓库（含 `.git` 文件的 worktree）会在写入探针前拒绝，并显示对应的中英文指引；读写权限等其他错误继续保留原始原因。
